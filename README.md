@@ -12,9 +12,9 @@ A PyTorch extension for second-order optimization & variational inference in tra
  
 ## Curvatures
 You can specify a type of matrix to be used as curvature from the following.
-- Hessian: `torchcurv.curv.Hessian` [[source](https://github.com/rioyokotalab/pytorch-curv/blob/master/torchcurv/curv/hessian.py)]
-- Gauss-Newton matrix: `torchcurv.curv.GN` [[source](https://github.com/rioyokotalab/pytorch-curv/blob/master/torchcurv/curv/gn.py)] 
-- Fisher information matrix (Empirical Fisher): `torchcurv.curv.Fisher` [[source](https://github.com/rioyokotalab/pytorch-curv/blob/master/torchcurv/curv/fisher.py)] 
+- Hessian
+- Gauss-Newton matrix 
+- Fisher information matrix (Empirical Fisher)
 
 Refer Section 6 of [Optimization Methods for Large-Scale Machine Learning](https://arxiv.org/abs/1606.04838) by L´eon Bottou et al. (2018) for a clear explanation of the second-order optimzation using these matrices as curvature.
 
