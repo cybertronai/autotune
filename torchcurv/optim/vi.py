@@ -1,5 +1,4 @@
 from torchcurv.optim import SecondOrderOptimizer
-from torchcurv.curv import *
 
 
 class VIOptimizer(SecondOrderOptimizer):
