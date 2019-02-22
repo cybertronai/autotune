@@ -1,4 +1,5 @@
 from torch.optim import Optimizer
+from torchcurv.curv import *
 
 
 class SecondOrderOptimizer(Optimizer):
