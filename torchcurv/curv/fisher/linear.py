@@ -1,19 +1,19 @@
 from torchcurv.curv import Curvature, DiagCurvature, KronCurvature
 
 
-class Hessian(Curvature):
+class FisherLinear(Curvature):
 
     def __init__(self):
         pass
 
 
-class DiagHessian(DiagCurvature):
+class DiagFisherLinear(DiagCurvature):
 
     def __init__(self):
         pass
 
 
-class KronHessian(KronCurvature):
+class KronFisherLinear(KronCurvature):
 
     def __init__(self):
         pass

@@ -1,19 +1,19 @@
 from torchcurv.curv import Curvature, DiagCurvature, KronCurvature
 
 
-class Fisher(Curvature):
+class FisherConv2d(Curvature):
 
     def __init__(self):
         pass
 
 
-class DiagFisher(DiagCurvature):
+class DiagFisherConv2d(DiagCurvature):
 
     def __init__(self):
         pass
 
 
-class KronFisher(KronCurvature):
+class KronFisherConv2d(KronCurvature):
 
     def __init__(self):
         pass
