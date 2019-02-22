@@ -2,14 +2,14 @@
 A PyTorch extension for second-order optimization & variational inference in training neural networks.
  
 ## Optimizers
-- torchcurv.optim.SecondOrderOptimizer [[source](https://github.com/rioyokotalab/pytorch-curv/blob/master/torchcurv/optim/secondorder.py)]: updates the parameters with the gradients pre-conditioned by the curvature of the loss function (`torch.nn.functional.cross_entropy`) for each `param_group`.
-- [torchcurv.optim.VIOptimizer](https://github.com/rioyokotalab/pytorch-curv/blob/master/torchcurv/optim/vi.py): updates the distribution of the parameters by using the curvature as the covariance matrix for each `param_group`.
+- `torchcurv.optim.SecondOrderOptimizer` [[source](https://github.com/rioyokotalab/pytorch-curv/blob/master/torchcurv/optim/secondorder.py)]: updates the parameters with the gradients pre-conditioned by the curvature of the loss function (`torch.nn.functional.cross_entropy`) for each `param_group`.
+- `torchcurv.optim.VIOptimizer` [[source](https://github.com/rioyokotalab/pytorch-curv/blob/master/torchcurv/optim/vi.py)]: updates the distribution of the parameters by using the curvature as the covariance matrix for each `param_group`.
  
 ## Curvature Types
 You can specify a type of matrix to be used as curvature from the following.
-- [torchcurv.curv.hessian.Hessian](https://github.com/rioyokotalab/pytorch-curv/blob/master/torchcurv/curv/hessian/hessian.py): Hessian
-- [torchcurv.curv.gn.GN](https://github.com/rioyokotalab/pytorch-curv/blob/master/torchcurv/curv/gn/gn.py): Gauss-Newton matrix
-- [torchcurv.curv.fisher.Fisher](https://github.com/rioyokotalab/pytorch-curv/blob/master/torchcurv/curv/fisher/fisher.py): Fisher information matrix (Empirical Fisher)
+- Hessian [[source](https://github.com/rioyokotalab/pytorch-curv/blob/master/torchcurv/curv/hessian/hessian.py)]
+- Gauss-Newton matrix [[source](https://github.com/rioyokotalab/pytorch-curv/blob/master/torchcurv/curv/gn/gn.py)] 
+- Fisher information matrix (Empirical Fisher) [[source](https://github.com/rioyokotalab/pytorch-curv/blob/master/torchcurv/curv/fisher/fisher.py)] 
 
 Refer Section 6 of [Optimization Methods for Large-Scale Machine Learning](https://arxiv.org/abs/1606.04838) by L´eon Bottou et al. (2018) for a clear explanation of the second-order optimzation using these matrices as curvature.
 
