@@ -1,4 +1,4 @@
-# PyTorch Curvature
+# torchcurv
 A PyTorch extension for second-order optimization & variational inference in training neural networks.
  
 ## Optimizers
