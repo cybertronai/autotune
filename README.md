@@ -2,8 +2,8 @@
 A PyTorch extension for second-order optimization & variational inference in training neural networks.
  
 ## Optimizers
-- [torch-curv.optim.SecondOrderOptimizer](): updates the model parameters with the gradients pre-conditioned by the curvature of the loss function (`torch.nn.functional.cross_entropy`) *for each layer*.
-- [torch-curv.optim.VIOptimizer](): updates the distribution of the model parameters by using the curvature as the covariance matrix  *for each layer*.
+- [torch-curv.optim.SecondOrderOptimizer](): updates the model parameters with the gradients pre-conditioned by the curvature of the loss function (`torch.nn.functional.cross_entropy`) for each `param_group`.
+- [torch-curv.optim.VIOptimizer](): updates the distribution of the model parameters by using the curvature as the covariance matrix for each `param_group`.
  
 ## Curvature Types
 You can specify a type of matrix to be used as curvature from the following.
