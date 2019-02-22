@@ -23,6 +23,18 @@ You can specify the approximation method(s) of curvature for each layer from the
 
 (5 can be combined with 1, 2, 3 or 4)
 
+## Quick Start
+To build the extension run
+```
+python setup.py install
+```
+in the root directory of the cloned repository.
+
+To use the extension
+```
+import torchcurv
+```
+
 ## Applications
 - Image classification
   - MNIST
