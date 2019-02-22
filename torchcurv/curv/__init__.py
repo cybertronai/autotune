@@ -2,5 +2,11 @@ from torchcurv.curv.curvature import Curvature  # NOQA
 from torchcurv.curv.curvature import DiagCurvature  # NOQA
 from torchcurv.curv.curvature import KronCurvature  # NOQA
 from torchcurv.curv.hessian import Hessian  # NOQA
+from torchcurv.curv.hessian import DiagHessian  # NOQA
+from torchcurv.curv.hessian import KronHessian  # NOQA
 from torchcurv.curv.gn import GN  # NOQA
+from torchcurv.curv.gn import DiagGN  # NOQA
+from torchcurv.curv.gn import KronGN  # NOQA
 from torchcurv.curv.fisher import Fisher  # NOQA
+from torchcurv.curv.fisher import DiagFisher  # NOQA
+from torchcurv.curv.fisher import KronFisher  # NOQA
