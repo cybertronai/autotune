@@ -1,18 +1,20 @@
 # PyTorch Curvature
-A PyTorch extension for second-order optimization in training neural networks.
-- provides `torch-curv.SecondOrderOptimizer` for updating the parameters with the gradients pre-conditioned by the curvature of the loss function (`torch.nn.functional.cross_entropy`) *for each layer*
-- provides tools for estimating the curvature *for each layer*
+A PyTorch extension for second-order optimization & variational inference in training neural networks.
  
-## Curvature
+## Optimizers
+- [torch-curv.optim.SecondOrderOptimizer](): updates the model parameters with the gradients pre-conditioned by the curvature of the loss function (`torch.nn.functional.cross_entropy`) *for each layer*.
+- [torch-curv.optim.VIOptimizer](): updates the distribution of the model parameters by using the curvature as the covariance matrix  *for each layer*.
+ 
+## Curvature Types
 You can specify a type of matrix to be used as curvature from the following.
 - Hessian
 - Gauss-Newton matrix
-- Fisher information matrix
+- Fisher information matrix (Empirical Fisher)
 
 Refer Section 6 of [Optimization Methods for Large-Scale Machine Learning](https://arxiv.org/abs/1606.04838) by L´eon Bottou et al. (2018) for a clear explanation of the second-order optimzation using these matrices as curvature.
 
-## Estimators
-You can specify the estimator(s) of curvature for each layer from the follwing.
+## Approximation Methods
+You can specify the approximation method(s) of curvature for each layer from the follwing.
 1. No approximation
 2. Diagonal approximation
 3. [K-FAC (Kronecker-Factored Approximate Curvature)](https://arxiv.org/abs/1503.05671)
