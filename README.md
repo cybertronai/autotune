@@ -10,7 +10,7 @@ A PyTorch extension for second-order optimization & variational inference in tra
 - `torchcurv.optim.VIOptimizer` [[source](https://github.com/rioyokotalab/pytorch-curv/blob/master/torchcurv/optim/vi.py)]
 - updates the distribution of the parameters by using the curvature as the covariance matrix for each `param_group`.
  
-## Curvature Types
+## Curvatures
 You can specify a type of matrix to be used as curvature from the following.
 - Hessian [[source](https://github.com/rioyokotalab/pytorch-curv/blob/master/torchcurv/curv/hessian/hessian.py)]
 - Gauss-Newton matrix [[source](https://github.com/rioyokotalab/pytorch-curv/blob/master/torchcurv/curv/gn/gn.py)] 
