@@ -10,10 +10,11 @@
     "arch_name": "LeNet5",
     "optim_name": "Adam",
     "optim_args": {
-        "lr": 1e-3,
+        "hoge": 1e-3,
         "betas": [0.9, 0.999],
         "weight_decay": 0.01
     },
+    "lr": 1e-3,
     "scheduler_name": "ExponentialLR",
     "scheduler_args": {
         "gamma": 0.9

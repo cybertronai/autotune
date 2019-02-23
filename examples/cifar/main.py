@@ -257,6 +257,7 @@ def main():
         optim_class = getattr(torch.optim, args.optim_name)
 
     optim_kwargs = extract_kwargs(optim_class.__init__, args.optim_args)
+    optim_kwargs['lr'] = args.lr
 
     optimizer = optim_class(model.parameters(), **optim_kwargs)
 
@@ -282,11 +283,21 @@ def main():
     # All config
     print('===========================')
     for key, val in vars(args).items():
-        print('{}: {}'.format(key, val))
         if key == 'dataset':
+            print('{}: {}'.format(key, val))
             print('train data size: {}'.format(len(train_loader.dataset)))
             print('test data size: {}'.format(len(test_loader.dataset)))
+        elif key == 'arch_args':
+            print('   {}'.format(arch_kwargs))
+        elif key == 'optim_args':
+            print('   {}'.format(optim_kwargs))
+        elif key == 'scheduler_args':
+            print('   {}'.format(scheduler_kwargs))
+        else:
+            print('{}: {}'.format(key, val))
     print('===========================')
+
+    exit()
 
     # Copy this file to args.out
     if not os.path.isdir(args.out):
