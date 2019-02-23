@@ -297,8 +297,6 @@ def main():
             print('{}: {}'.format(key, val))
     print('===========================')
 
-    exit()
-
     # Copy this file to args.out
     if not os.path.isdir(args.out):
         os.makedirs(args.out)
