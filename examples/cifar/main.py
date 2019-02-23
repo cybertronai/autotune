@@ -11,8 +11,8 @@ from torch.nn.utils import parameters_to_vector
 from torchvision import datasets, transforms
 from torchcurv.optim import SecondOrderOptimizer, VIOptimizer
 
-DATASET_CIFAR10 = 'cifar10'
-DATASET_CIFAR100 = 'cifar100'
+DATASET_CIFAR10 = 'CIFAR-10'
+DATASET_CIFAR100 = 'CIFAR-100'
 
 OPTIMIZER_SECONDORDER = 'SecondOrderOptimizer'
 OPTIMIZER_VI = 'VIOptimizer'
@@ -23,7 +23,7 @@ def train(model, device, train_loader, optimizer, epoch, args):
 
     total_correct = 0
     loss = None
-    batch_size = args.batch_size
+    total_data_size = 0
     epoch_size = len(train_loader.dataset)
     num_iters_in_epoch = len(train_loader)
     base_num_iter = (epoch - 1) * num_iters_in_epoch
@@ -32,6 +32,11 @@ def train(model, device, train_loader, optimizer, epoch, args):
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
 
+        for param_group in optimizer.param_groups:
+            p = parameters_to_vector(param_group['params'])
+            setattr(optimizer, 'p_pre', p.clone())
+
+        # update params
         optimizer.zero_grad()
         output = model(data)
         loss = F.cross_entropy(output, target)
@@ -45,9 +50,9 @@ def train(model, device, train_loader, optimizer, epoch, args):
         total_correct += correct
 
         iteration = base_num_iter + batch_idx + 1
+        total_data_size += len(data)
 
         if batch_idx % args.log_interval == 0:
-            total_data_size = (batch_idx + 1) * batch_size
             accuracy = 100. * total_correct / total_data_size
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}, Accuracy: {:.0f}/{} ({:.2f}%)'.format(
                   epoch, total_data_size, epoch_size, 100. * (batch_idx + 1) / num_iters_in_epoch,
@@ -122,9 +127,9 @@ def main():
     parser.add_argument('--random_horizontal_flip', action='store_true',
                         help='[data augmentation] random horizontal flip')
     # Training Settings
-    parser.add_argument('--arch_file', type=str, required=True,
+    parser.add_argument('--arch_file', type=str, default='models/lenet.py',
                         help='name of file which defines the architecture')
-    parser.add_argument('--arch_name', type=str, required=True,
+    parser.add_argument('--arch_name', type=str, default='LeNet5',
                         help='name of the architecture')
     parser.add_argument('--optim_name', type=str, default=OPTIMIZER_SECONDORDER,
                         help='name of the optimizer')
@@ -207,10 +212,9 @@ def main():
         keys = list(inspect.signature(func).parameters.keys())
         dict_args = vars(args)
         kwargs = {}
-        for key, val in dict_args:
+        for key, val in dict_args.items():
             if key in keys:
                 kwargs[key] = val
-                del dict_args[key]
         return kwargs
 
     # Setup model
@@ -230,7 +234,7 @@ def main():
     arch_kwargs = extract_kwargs(arch_class.__init__)
     arch_kwargs['num_classes'] = num_classes
 
-    model = arch_class(num_classes=num_classes, **arch_kwargs)
+    model = arch_class(**arch_kwargs)
     model = model.to(device)
 
     # Setup optimizer
@@ -265,12 +269,20 @@ def main():
         start_epoch = 1
 
     # Copy this file to args.out
+    if not os.path.isdir(args.out):
+        os.makedirs(args.out)
     shutil.copy(os.path.realpath(__file__), args.out)
 
     # All config
     print('===========================')
     for key, val in vars(args).items():
+        if key in arch_kwargs.keys() \
+                or key in optim_kwargs.keys() \
+                or key in scheduler_kwargs.keys():
+            continue
+
         print('{}: {}'.format(key, val))
+
         if key == 'dataset':
             print('train data size: {}'.format(len(train_loader.dataset)))
             print('test data size: {}'.format(len(test_loader.dataset)))
