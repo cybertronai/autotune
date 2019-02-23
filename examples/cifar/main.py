@@ -14,9 +14,6 @@ from torchcurv.optim import SecondOrderOptimizer, VIOptimizer
 DATASET_CIFAR10 = 'CIFAR-10'
 DATASET_CIFAR100 = 'CIFAR-100'
 
-OPTIMIZER_SECONDORDER = 'SecondOrderOptimizer'
-OPTIMIZER_VI = 'VIOptimizer'
-
 
 def train(model, device, train_loader, optimizer, epoch, args):
     model.train()
@@ -134,7 +131,7 @@ def main():
                         help='name of the architecture')
     parser.add_argument('--arch_args', type=json.loads, default=None,
                         help='[JSON] arguments for the architecture')
-    parser.add_argument('--optim_name', type=str, default=OPTIMIZER_SECONDORDER,
+    parser.add_argument('--optim_name', type=str, default=SecondOrderOptimizer.__name__,
                         help='name of the optimizer')
     parser.add_argument('--optim_args', type=json.loads, default=None,
                         help='[JSON] arguments for the optimizer')
@@ -249,9 +246,9 @@ def main():
     model = model.to(device)
 
     # Setup optimizer
-    if args.optim_name == OPTIMIZER_SECONDORDER:
+    if args.optim_name == SecondOrderOptimizer.__name__:
         optim_class = SecondOrderOptimizer
-    elif args.optim_name == OPTIMIZER_VI:
+    elif args.optim_name == VIOptimizer.__name__:
         optim_class = VIOptimizer
     else:
         optim_class = getattr(torch.optim, args.optim_name)
