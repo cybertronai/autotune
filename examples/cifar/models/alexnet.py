@@ -5,7 +5,7 @@ Without BN, the start learning rate should be 0.01
 import torch.nn as nn
 
 
-#__all__ = ['alexnet']
+__all__ = ['alexnet']
 
 
 class AlexNet(nn.Module):
@@ -35,11 +35,10 @@ class AlexNet(nn.Module):
         x = self.classifier(x)
         return x
 
-'''
+
 def alexnet(**kwargs):
     r"""AlexNet model architecture from the
     `"One weird trick..." <https://arxiv.org/abs/1404.5997>`_ paper.
     """
     model = AlexNet(**kwargs)
     return model
-'''
