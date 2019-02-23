@@ -110,7 +110,8 @@ def test(model, test_loader, device):
 def main():
     parser = argparse.ArgumentParser()
     # Data
-    parser.add_argument('--dataset', type=str, choices=[DATASET_CIFAR10, DATASET_CIFAR100],
+    parser.add_argument('--dataset', type=str,
+                        choices=[DATASET_CIFAR10, DATASET_CIFAR100], default=DATASET_CIFAR10,
                         help='name of dataset')
     parser.add_argument('--root', type=str, default='./data',
                         help='root of dataset')
@@ -131,12 +132,18 @@ def main():
                         help='name of file which defines the architecture')
     parser.add_argument('--arch_name', type=str, default='LeNet5',
                         help='name of the architecture')
+    parser.add_argument('--arch_args', type=json.loads, default=None,
+                        help='[JSON] arguments for the architecture')
     parser.add_argument('--optim_name', type=str, default=OPTIMIZER_SECONDORDER,
                         help='name of the optimizer')
+    parser.add_argument('--optim_args', type=json.loads, default=None,
+                        help='[JSON] arguments for the optimizer')
     parser.add_argument('--lr', type=float, default=0.01,
                         help='initial learning rate')
     parser.add_argument('--scheduler_name', type=str, default=None,
                         help='name of the learning rate scheduler')
+    parser.add_argument('--scheduler_args', type=json.loads, default=None,
+                        help='[JSON] arguments for the scheduler')
     # Options
     parser.add_argument('--no_cuda', action='store_true', default=False,
                         help='disables CUDA training')
@@ -156,13 +163,26 @@ def main():
                         help='dir to save output files')
     parser.add_argument('--config', default=None,
                         help='config file path')
+
     args = parser.parse_args()
+    dict_args = vars(args)
 
     # Load config file
     if args.config is not None:
-        dict_args = vars(args)
         with open(args.config) as f:
-            dict_args.update(json.load(f))
+            config = json.load(f)
+        dict_args.update(config)
+
+    def extract_kwargs(func, target):
+        if target is None:
+            return {}
+
+        keys = list(inspect.signature(func).parameters.keys())
+        kwargs = {}
+        for key, val in target.items():
+            if key in keys:
+                kwargs[key] = val
+        return kwargs
 
     # Set device
     use_cuda = not args.no_cuda and torch.cuda.is_available()
@@ -208,15 +228,6 @@ def main():
     test_loader = torch.utils.data.DataLoader(
         test_dataset, batch_size=args.test_batch_size, shuffle=False, num_workers=2)
 
-    def extract_kwargs(func):
-        keys = list(inspect.signature(func).parameters.keys())
-        dict_args = vars(args)
-        kwargs = {}
-        for key, val in dict_args.items():
-            if key in keys:
-                kwargs[key] = val
-        return kwargs
-
     # Setup model
     _, ext = os.path.splitext(args.arch_file)
     dirname = os.path.dirname(args.arch_file)
@@ -231,7 +242,7 @@ def main():
     module = import_module(module_path)
     arch_class = getattr(module, args.arch_name)
 
-    arch_kwargs = extract_kwargs(arch_class.__init__)
+    arch_kwargs = extract_kwargs(arch_class.__init__, args.arch_args)
     arch_kwargs['num_classes'] = num_classes
 
     model = arch_class(**arch_kwargs)
@@ -245,7 +256,7 @@ def main():
     else:
         optim_class = getattr(torch.optim, args.optim_name)
 
-    optim_kwargs = extract_kwargs(optim_class.__init__)
+    optim_kwargs = extract_kwargs(optim_class.__init__, args.optim_args)
 
     optimizer = optim_class(model.parameters(), **optim_kwargs)
 
@@ -255,7 +266,7 @@ def main():
         scheduler = None
     else:
         scheduler_class = getattr(torch.optim.lr_scheduler, args.scheduler_name)
-        scheduler_kwargs = extract_kwargs(scheduler_class.__init__)
+        scheduler_kwargs = extract_kwargs(scheduler_class.__init__, args.scheduler_args)
         scheduler = scheduler_class(optimizer, **scheduler_kwargs)
 
     # Load checkpoint
@@ -268,31 +279,21 @@ def main():
     else:
         start_epoch = 1
 
+    # All config
+    print('===========================')
+    for key, val in vars(args).items():
+        print('{}: {}'.format(key, val))
+        if key == 'dataset':
+            print('train data size: {}'.format(len(train_loader.dataset)))
+            print('test data size: {}'.format(len(test_loader.dataset)))
+    print('===========================')
+
+    exit()
+
     # Copy this file to args.out
     if not os.path.isdir(args.out):
         os.makedirs(args.out)
     shutil.copy(os.path.realpath(__file__), args.out)
-
-    # All config
-    print('===========================')
-    for key, val in vars(args).items():
-        if key in arch_kwargs.keys() \
-                or key in optim_kwargs.keys() \
-                or key in scheduler_kwargs.keys():
-            continue
-
-        print('{}: {}'.format(key, val))
-
-        if key == 'dataset':
-            print('train data size: {}'.format(len(train_loader.dataset)))
-            print('test data size: {}'.format(len(test_loader.dataset)))
-        elif key == 'arch_name':
-            print(arch_kwargs)
-        elif key == 'optim_name':
-            print(optim_kwargs)
-        elif key == 'scheduler_name' and val is not None:
-            print(scheduler_kwargs)
-    print('===========================')
 
     # Run training
     for epoch in range(start_epoch, args.epochs + 1):
