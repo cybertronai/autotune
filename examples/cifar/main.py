@@ -288,8 +288,6 @@ def main():
             print('test data size: {}'.format(len(test_loader.dataset)))
     print('===========================')
 
-    exit()
-
     # Copy this file to args.out
     if not os.path.isdir(args.out):
         os.makedirs(args.out)
