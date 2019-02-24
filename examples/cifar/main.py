@@ -4,6 +4,7 @@ from importlib import import_module
 import inspect
 import shutil
 import json
+import time
 
 import torch
 import torch.nn.functional as F
@@ -15,7 +16,42 @@ DATASET_CIFAR10 = 'CIFAR-10'
 DATASET_CIFAR100 = 'CIFAR-100'
 
 
-def train(model, device, train_loader, optimizer, epoch, args):
+# Select the best-resolution timer function
+try:
+    _get_time = time.perf_counter
+except AttributeError:
+    if os.name == 'nt':
+        _get_time = time.clock
+    else:
+        _get_time = time.time
+
+
+class Logger(object):
+
+    def __init__(self, out, logname):
+        self.out = out
+        self.logname = logname
+        self._log = []
+        self._start_at = None
+
+    def start(self):
+        self._start_at = _get_time()
+
+    @property
+    def elapsed_time(self):
+        if self._start_at is None:
+            raise RuntimeError('training has not been started yet')
+        return _get_time() - self._start_at
+
+    def write(self, log):
+        log['elapsed_time'] = self.elapsed_time
+        self._log.append(log)
+        path = os.path.join(self.out, self.logname)
+        with open(path, 'w') as f:
+            json.dump(self._log, f, indent=4)
+
+
+def train(model, device, train_loader, optimizer, epoch, args, logger):
     model.train()
 
     total_correct = 0
@@ -51,17 +87,14 @@ def train(model, device, train_loader, optimizer, epoch, args):
 
         if batch_idx % args.log_interval == 0:
             accuracy = 100. * total_correct / total_data_size
-            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}, Accuracy: {:.0f}/{} ({:.2f}%)'.format(
+            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}, '
+                  'Accuracy: {:.0f}/{} ({:.2f}%), '
+                  'Elapsed Time: {:.1f}s'.format(
                   epoch, total_data_size, epoch_size, 100. * (batch_idx + 1) / num_iters_in_epoch,
-                  loss, total_correct, total_data_size, accuracy))
+                  loss, total_correct, total_data_size, accuracy, logger.elapsed_time))
 
             # write to log
-            log = 'epoch,{},iteration,{},accuracy,{},loss,{}'.format(
-               epoch, iteration, accuracy, loss
-            )
-            path = os.path.join(args.out, args.log_file_name)
-            with open(path, 'a') as f:
-                f.write(log + '\n')
+            log = {'epoch': epoch, 'iteration': iteration, 'accuracy': accuracy, 'loss': loss, 'lr': lr}
 
             for i, param_group in enumerate(optimizer.param_groups):
                 p = parameters_to_vector(param_group['params'])
@@ -69,13 +102,10 @@ def train(model, device, train_loader, optimizer, epoch, args):
                 p_norm = p.norm().item()
                 upd_norm = p.sub(p_pre).norm().item()
 
-                # write to log.data
-                log = 'epoch,{},iteration,{},group,{},lr,{},p_norm,{},upd_norm,{}'.format(
-                    epoch, iteration, i, lr, p_norm, upd_norm
-                )
-                path = os.path.join(args.out, args.param_log_file_name)
-                with open(path, 'a') as f:
-                    f.write(log + '\n')
+                group_log = {'p_norm': p_norm, 'upd_norm': upd_norm}
+                log[i] = group_log
+
+            logger.write(log)
 
     accuracy = 100. * total_correct / epoch_size
 
@@ -150,8 +180,6 @@ def main():
                         help='how many batches to wait before logging training status')
     parser.add_argument('--log_file_name', type=str, default='log',
                         help='log file name')
-    parser.add_argument('--param_log_file_name', type=str, default='log.data',
-                        help='log file name for parameters')
     parser.add_argument('--checkpoint_interval', type=int, default=10,
                         help='how many epochs to wait before logging training status')
     parser.add_argument('--resume', type=str, default=None,
@@ -299,6 +327,10 @@ def main():
         os.makedirs(args.out)
     shutil.copy(os.path.realpath(__file__), args.out)
 
+    # Setup logger
+    logger = Logger(args.out, args.log_file_name)
+    logger.start()
+
     # Run training
     for epoch in range(start_epoch, args.epochs + 1):
 
@@ -307,21 +339,18 @@ def main():
             scheduler.step(epoch - 1)
 
         # train
-        accuracy, loss = train(model, device, train_loader, optimizer, epoch, args)
+        accuracy, loss = train(model, device, train_loader, optimizer, epoch, args, logger)
 
         # test
         test_accuracy, test_loss = test(model, test_loader, device)
 
         # write to log
         iteration = epoch * len(train_loader)
-        log = 'epoch,{},iteration,{},' \
-              'accuracy,{},loss,{},' \
-              'test_accuracy,{},test_loss,{},' \
-              'lr,{}'.format(
-               epoch, iteration, accuracy, loss, test_accuracy, test_loss, optimizer.param_groups[0]['lr'])
-        path = os.path.join(args.out, args.log_file_name)
-        with open(path, 'a') as f:
-            f.write(log + '\n')
+        log = {'epoch': epoch, 'iteration': iteration,
+               'accuracy': accuracy, 'loss': loss,
+               'test_accuracy': test_accuracy, 'test_loss': test_loss,
+               'lr': optimizer.param_groups[0]['lr']}
+        logger.write(log)
 
         # save checkpoint
         if epoch % args.checkpoint_interval == 0 or epoch == args.epochs:
