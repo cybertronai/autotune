@@ -31,7 +31,6 @@ class Logger(object):
         return _get_time() - self._start_at
 
     def write(self, log):
-        log['elapsed_time'] = self.elapsed_time
         self._log.append(log)
         path = os.path.join(self.out, self.logname)
         with open(path, 'w') as f:

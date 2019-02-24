@@ -52,14 +52,16 @@ def train(model, device, train_loader, optimizer, epoch, args, logger):
 
         if batch_idx % args.log_interval == 0:
             accuracy = 100. * total_correct / total_data_size
+            elapsed_time = logger.elapsed_time
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}, '
                   'Accuracy: {:.0f}/{} ({:.2f}%), '
                   'Elapsed Time: {:.1f}s'.format(
                   epoch, total_data_size, epoch_size, 100. * (batch_idx + 1) / num_iters_in_epoch,
-                  loss, total_correct, total_data_size, accuracy, logger.elapsed_time))
+                  loss, total_correct, total_data_size, accuracy, elapsed_time))
 
             # write to log
-            log = {'epoch': epoch, 'iteration': iteration, 'accuracy': accuracy, 'loss': loss, 'lr': lr}
+            log = {'epoch': epoch, 'iteration': iteration, 'elapsed_time': elapsed_time,
+                   'accuracy': accuracy, 'loss': loss, 'lr': lr}
 
             for i, param_group in enumerate(optimizer.param_groups):
                 p = parameters_to_vector(param_group['params'])
