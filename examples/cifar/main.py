@@ -4,51 +4,16 @@ from importlib import import_module
 import inspect
 import shutil
 import json
-import time
 
 import torch
 import torch.nn.functional as F
 from torch.nn.utils import parameters_to_vector
 from torchvision import datasets, transforms
 from torchcurv.optim import SecondOrderOptimizer, VIOptimizer
+from torchcurv.utils import Logger
 
 DATASET_CIFAR10 = 'CIFAR-10'
 DATASET_CIFAR100 = 'CIFAR-100'
-
-
-# Select the best-resolution timer function
-try:
-    _get_time = time.perf_counter
-except AttributeError:
-    if os.name == 'nt':
-        _get_time = time.clock
-    else:
-        _get_time = time.time
-
-
-class Logger(object):
-
-    def __init__(self, out, logname):
-        self.out = out
-        self.logname = logname
-        self._log = []
-        self._start_at = None
-
-    def start(self):
-        self._start_at = _get_time()
-
-    @property
-    def elapsed_time(self):
-        if self._start_at is None:
-            raise RuntimeError('training has not been started yet')
-        return _get_time() - self._start_at
-
-    def write(self, log):
-        log['elapsed_time'] = self.elapsed_time
-        self._log.append(log)
-        path = os.path.join(self.out, self.logname)
-        with open(path, 'w') as f:
-            json.dump(self._log, f, indent=4)
 
 
 def train(model, device, train_loader, optimizer, epoch, args, logger):
