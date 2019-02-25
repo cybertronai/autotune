@@ -37,7 +37,7 @@ def extract_kwargs(func, target):
 
 class SecondOrderOptimizer(Optimizer):
 
-    def __init__(self, model, curv_type, lr=0.01, momentum=0.9, l2_reg=0, weight_decay=0, **optim_kwargs):
+    def __init__(self, model, curv_type, lr=0.01, momentum=0.9, l2_reg=0, weight_decay=0, **curv_kwargs):
         # TODO implement error checker: hoge(optim_kwargs)
         """
         if not 0.0 <= lr:
@@ -58,7 +58,7 @@ class SecondOrderOptimizer(Optimizer):
         self.model = model
         defaults = {'lr': lr, 'momentum': momentum,
                     'l2_reg': l2_reg, 'weight_decay': weight_decay}
-        defaults.update(optim_kwargs)
+        defaults.update(curv_kwargs)
         self.defaults = defaults
         self.state = defaultdict(dict)
         self.train_modules = []
@@ -69,7 +69,6 @@ class SecondOrderOptimizer(Optimizer):
             params = list(module.parameters())
             curv_class = get_curv_class(curv_type, module)
             if curv_class is not None:
-                curv_kwargs = extract_kwargs(curv_class.__init__, optim_kwargs)
                 curvature = curv_class(module, **curv_kwargs)
             else:
                 curvature = None
