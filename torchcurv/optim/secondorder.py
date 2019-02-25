@@ -4,15 +4,29 @@ from collections import defaultdict, Iterable
 import torch.nn as nn
 from torch.optim import Optimizer
 from torchcurv.curv import *
+import torchcurv.curv as curv
 
 
-def get_curv_class(curv_type, approx_type, diag_type, module):
-    pass  # TODO
+def get_curv_class(curv_type, module):
+    # TODO implement
+    if isinstance(module,nn.Linear):
+        module_type = 'Linear'
+    elif isinstance(module,nn.Conv2d):
+        module_type = 'Conv2d'
+    elif isinstance(module,nn.BatchNorm2d):
+        #module_type = 'BatchNorm2d'
+        return None
+    else:
+        return None
+
+    curv_class = get__attr__(curv,curv_type+module_type)
+
+    return curv_class
 
 
 class SecondOrderOptimizer(Optimizer):
 
-    def __init__(self, model, curv_type, approx_type, diag_type, **optim_kwargs):
+    def __init__(self, model, curv_type, **optim_kwargs):
         """
         TODO implement error checker: hoge(optim_kwargs)
         if not 0.0 <= lr:
@@ -38,8 +52,7 @@ class SecondOrderOptimizer(Optimizer):
 
         for module in self.train_modules:
             params = list(module.parameters())
-            curv_class = get_curv_class(
-                curv_type, approx_type, diag_type, module)
+            curv_class = get_curv_class(curv_type, module)
             group = {
                 'params': params,
                 'curv': curv_class(module) if curv_class is not None else None
