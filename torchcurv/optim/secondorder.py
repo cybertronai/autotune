@@ -37,6 +37,7 @@ def extract_kwargs(func, target):
 
 class SecondOrderOptimizer(Optimizer):
 
+<<<<<<< HEAD
     def __init__(self, model, curv_type, lr=0.01, momentum=0.9, l2_reg=0, weight_decay=0, **optim_kwargs):
         # TODO implement error checker: hoge(optim_kwargs)
         """
@@ -60,6 +61,10 @@ class SecondOrderOptimizer(Optimizer):
         self.state = defaultdict(dict)
         self.train_modules = []
         self.set_train_modules(model)  # TODO implement better method
+=======
+    def __init__(self, params, lr=1e-3):
+        pass
+>>>>>>> origin
 
         for module in self.train_modules:
             params = list(module.parameters())
