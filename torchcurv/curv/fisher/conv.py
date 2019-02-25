@@ -2,7 +2,7 @@ from torchcurv.curv import Curvature, DiagCurvature, KronCurvature
 import torch
 import torch.nn.functional as F
 
-from torchcurv.utils import inv
+import torchcurv.utils.inv as inv
 
 
 class FisherConv2d(Curvature):

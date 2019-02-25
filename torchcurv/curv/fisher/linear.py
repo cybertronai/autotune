@@ -2,7 +2,7 @@ from torchcurv.curv import Curvature, DiagCurvature, KronCurvature
 
 import torch
 
-from .inv import inv
+import torchcurv.utils.inv as inv
 
 
 class FisherLinear(Curvature):
