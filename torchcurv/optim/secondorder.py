@@ -1,9 +1,9 @@
 import torch
-from collections import defaultdict, Iterable
+from collections import defaultdict
 import torch.nn as nn
 from torch.optim import Optimizer
-from torchcurv.curv import *
 import torchcurv.curv as curv
+import inspect
 
 
 def get_curv_class(curv_type, module):
@@ -23,9 +23,21 @@ def get_curv_class(curv_type, module):
     return curv_class
 
 
+def extract_kwargs(func, target):
+    if target is None:
+        return {}
+
+    keys = list(inspect.signature(func).parameters.keys())
+    kwargs = {}
+    for key, val in target.items():
+        if key in keys:
+            kwargs[key] = val
+    return kwargs
+
+
 class SecondOrderOptimizer(Optimizer):
 
-    def __init__(self, model, curv_type, **optim_kwargs):
+    def __init__(self, model, curv_type, lr=0.01, momentum=0.9, l2_reg=0, weight_decay=0, **optim_kwargs):
         # TODO implement error checker: hoge(optim_kwargs)
         """
         if not 0.0 <= lr:
@@ -52,9 +64,14 @@ class SecondOrderOptimizer(Optimizer):
         for module in self.train_modules:
             params = list(module.parameters())
             curv_class = get_curv_class(curv_type, module)
+            if curv_class is not None:
+                curv_kwargs = extract_kwargs(curv_class.__init__, optim_kwargs)
+                curvature = curv_class(module, curv_kwargs)
+            else:
+                curvature = None
             group = {
                 'params': params,
-                'curv': curv_class(module) if curv_class is not None else None
+                'curv': curvature
             }
             self.add_param_group(group)
             for p in params:

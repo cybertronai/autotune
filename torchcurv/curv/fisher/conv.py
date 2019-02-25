@@ -19,17 +19,12 @@ class DiagFisherConv2d(DiagCurvature):
 
 class KronFisherConv2d(KronCurvature):
 
-    def __init__(self, module, **curv_kwargs):
-        super(KronFisherConv2d, self).__init__(module, curv_kwargs)
-        self.kernel_size = module.kernel_size
-        self.stride = module.stride
-        self.padding = module.padding
-        self.dilation = module.dilation
-
     def compute_A(self):
         input_data = self.module.input_data
-        input_data2d = F.unfold(input_data, kernel_size=self.kernel_size,
-                                stride=self.stride, padding=self.padding, dilation=self.dilation)
+        kernel_size, stride, padding, dilation = \
+            self._module.kernel_size, self._module.stride, self._module.padding, self._module.dilation
+        input_data2d = F.unfold(input_data, kernel_size=kernel_size,
+                                stride=stride, padding=padding, dilation=dilation)
         batch_size, a, _ = input_data2d.shape
         m = input_data2d.transpose(0, 1).reshape(a, -1)
         a, b = m.shape
@@ -58,6 +53,7 @@ class KronFisherConv2d(KronCurvature):
 
         A_inv, G_inv = inv(A), inv(G)
 
+        # todo check params == list?
         oc, ic, h, w = params[0].shape
         if self.bias:
             param_grad2d = torch.cat(

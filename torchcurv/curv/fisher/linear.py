@@ -19,9 +19,6 @@ class DiagFisherLinear(DiagCurvature):
 
 class KronFisherLinear(KronCurvature):
 
-    def __init__(self):
-        pass
-
     def compute_G(self):
         grad_output_data = self._module.grad_output_data
         batch_size = grad_output_data.shape[0]

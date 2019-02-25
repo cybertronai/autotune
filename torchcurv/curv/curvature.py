@@ -23,14 +23,18 @@ def update_grad_output(self, grad_input, grad_output):
 
 class KronCurvature(Curvature):
 
-    def __init__(self, module, **curv_kwargs):
+    def __init__(self,
+                 module,
+                 cov_ema_decay,
+                 damping,
+                 pi_type):
         self._module = module
         self.bias = False if module.bias is None else True
-        self.cov_ema_decay = curv_kwargs['cov_ema_decay']
-        self.damping = curv_kwargs['damping']
+        self.cov_ema_decay = cov_ema_decay
+        self.damping = damping
         self.covs = None
         self.covs_ema = None
-        self.pi_type = curv_kwargs['pi_type']
+        self.pi_type = pi_type
         module.register_forward_hook(update_input)
         module.register_backward_hook(update_grad_output)
 
