@@ -53,8 +53,8 @@ class KronFisherLinear(KronCurvature):
             param_grad = torch.cat(
                 (params[0].grad, params[1].grad.view(-1, 1)), 1)
             precgrad = G_inv.mm(param_grad).mm(A_inv)
-            return precgrad[:, 0:-1], precgrad[:, -1]
+            return [precgrad[:, 0:-1], precgrad[:, -1]]
         else:
             param_grad = params[0].grad
             precgrad = G_inv.mm(param_grad).mm(A_inv)
-            return (precgrad,)
+            return [precgrad]
