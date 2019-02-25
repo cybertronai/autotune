@@ -2,7 +2,7 @@ from torchcurv.curv import Curvature, DiagCurvature, KronCurvature
 import torch
 import torch.nn.functional as F
 
-import torchcurv.utils.inv as inv
+from torchcurv.utils import inv
 
 
 class FisherConv2d(Curvature):
@@ -20,7 +20,7 @@ class DiagFisherConv2d(DiagCurvature):
 class KronFisherConv2d(KronCurvature):
 
     def compute_A(self):
-        input_data = self.module.input_data
+        input_data = self._module.input_data
         kernel_size, stride, padding, dilation = \
             self._module.kernel_size, self._module.stride, self._module.padding, self._module.dilation
         input_data2d = F.unfold(input_data, kernel_size=kernel_size,
@@ -34,7 +34,7 @@ class KronFisherConv2d(KronCurvature):
         return m.mm(m.transpose(0, 1)).mul(1/batch_size)
 
     def compute_G(self):
-        grad_output_data = self.module.grad_output_data
+        grad_output_data = self._module.grad_output_data
         batch_size, c, h, w = grad_output_data.shape
         m = grad_output_data.transpose(0, 1).reshape(c, -1)
 
@@ -46,7 +46,7 @@ class KronFisherConv2d(KronCurvature):
         self.covs = A, G
         # update covs_ema
         if self.cov_ema_decay != 0:
-            self.update_covs_ema((A, G))
+            self.update_covs_ema()
             A, G = self.covs_ema
 
         A, G = self.compute_damped_covs((A, G))

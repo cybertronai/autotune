@@ -14,11 +14,11 @@ class DiagCurvature(Curvature):
 
 
 def update_input(self, input, output):
-    self.input = input[0].data
+    self.input_data = input[0].data
 
 
 def update_grad_output(self, grad_input, grad_output):
-    self.grad_output = grad_output[0].data
+    self.grad_output_data = grad_output[0].data
 
 
 class KronCurvature(Curvature):

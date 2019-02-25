@@ -37,7 +37,6 @@ def extract_kwargs(func, target):
 
 class SecondOrderOptimizer(Optimizer):
 
-<<<<<<< HEAD
     def __init__(self, model, curv_type, lr=0.01, momentum=0.9, l2_reg=0, weight_decay=0, **optim_kwargs):
         # TODO implement error checker: hoge(optim_kwargs)
         """
@@ -57,21 +56,21 @@ class SecondOrderOptimizer(Optimizer):
                 "Invalid cov_ema_decay value: {}".format(cov_ema_decay))
         """
         self.model = model
-        self.defaults = optim_kwargs
+        defaults = {'lr': lr, 'momentum': momentum,
+                    'l2_reg': l2_reg, 'weight_decay': weight_decay}
+        defaults.update(optim_kwargs)
+        self.defaults = defaults
         self.state = defaultdict(dict)
         self.train_modules = []
         self.set_train_modules(model)  # TODO implement better method
-=======
-    def __init__(self, params, lr=1e-3):
-        pass
->>>>>>> origin
+        self.param_groups = []
 
         for module in self.train_modules:
             params = list(module.parameters())
             curv_class = get_curv_class(curv_type, module)
             if curv_class is not None:
                 curv_kwargs = extract_kwargs(curv_class.__init__, optim_kwargs)
-                curvature = curv_class(module, curv_kwargs)
+                curvature = curv_class(module, **curv_kwargs)
             else:
                 curvature = None
             group = {
@@ -124,7 +123,7 @@ class SecondOrderOptimizer(Optimizer):
 
                 precgrad = curv.compute_precgrad(params)
                 for p, grad in zip(params, precgrad):
-                    if group['weight_decay_base'] != 0:
+                    if group['weight_decay'] != 0:
                         if grad.is_sparse:
                             raise RuntimeError(
                                 "weight_decay option is not compatible with sparse gradients")
