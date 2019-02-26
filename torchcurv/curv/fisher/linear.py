@@ -35,13 +35,13 @@ class KronFisherLinear(KronCurvature):
     def compute_precgrad(self, params):
         # update covs
         A, G = self.compute_A(), self.compute_G()
-        self.covs = A, G
+        self.A, self.G = A, G
         # update covs_ema
         if self.cov_ema_decay != 0:
             self.update_covs_ema()
-            A, G = self.covs_ema
+            A, G = self.A_ema, self.G_ema
 
-        A, G = self.compute_damped_covs((A, G))
+        A, G = self.compute_damped_covs(A, G)
 
         A_inv, G_inv = inv(A), inv(G)
 
