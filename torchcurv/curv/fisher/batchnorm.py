@@ -1,7 +1,7 @@
 from torchcurv.curv import Curvature, DiagCurvature, KronCurvature
 
 
-class FisherBatchNorm(Curvature):
+class FisherBatchNorm2d(Curvature):
 
     def __init__(self):
         pass
