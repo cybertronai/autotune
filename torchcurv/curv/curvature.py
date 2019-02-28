@@ -78,3 +78,26 @@ class KronCurvature(Curvature):
 
     def compute_precgrad(self, params):
         raise NotImplementedError
+
+
+class KronCurvatureConnection(KronCurvature):
+
+    def __init__(self,
+                 module,
+                 cov_ema_decay,
+                 damping,
+                 pi_type):
+        super(KronCurvatureConnection, self).__init__(module,
+                                                      cov_ema_decay,
+                                                      damping,
+                                                      pi_type)
+        self.bias = False if module.bias is None else True
+
+    def compute_A(self, input_data):
+        raise NotImplementedError
+
+    def compute_G(self, grad_output_data):
+        raise NotImplementedError
+
+    def compute_precgrad(self, params):
+        raise NotImplementedError

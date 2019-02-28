@@ -1,4 +1,4 @@
-from torchcurv.curv import Curvature, DiagCurvature, KronCurvature
+from torchcurv.curv import Curvature, DiagCurvature, KronCurvatureConnection
 
 import torch
 
@@ -17,7 +17,7 @@ class DiagFisherLinear(DiagCurvature):
         pass
 
 
-class KronFisherLinear(KronCurvature):
+class KronFisherLinear(KronCurvatureConnection):
 
     def compute_A(self, input_data):
         batch_size = input_data.shape[0]

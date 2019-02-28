@@ -1,4 +1,4 @@
-from torchcurv.curv import Curvature, DiagCurvature, KronCurvature
+from torchcurv.curv import Curvature, DiagCurvature, KronCurvatureConnection
 import torch
 import torch.nn.functional as F
 
@@ -17,7 +17,7 @@ class DiagFisherConv2d(DiagCurvature):
         pass
 
 
-class KronFisherConv2d(KronCurvature):
+class KronFisherConv2d(KronCurvatureConnection):
 
     def compute_A(self, input_data):
         kernel_size, stride, padding, dilation = \
