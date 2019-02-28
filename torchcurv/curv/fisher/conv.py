@@ -42,7 +42,7 @@ class KronFisherConv2d(KronCurvature):
         # update covs_ema
         if self.cov_ema_decay != 0:
             self.update_covs_ema()
-            A, G = self.self.A_ema, self.G_ema
+            A, G = self.A_ema, self.G_ema
 
         A, G = self.compute_damped_covs(A, G)
 
