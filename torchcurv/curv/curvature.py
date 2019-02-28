@@ -67,10 +67,12 @@ class KronCurvature(Curvature):
             pi = 1
         r = self.damping**0.5
         pi = float(pi)
-        A_damping = torch.diag(torch.ones(A.shape[0], device=A.device))
-        G_damping = torch.diag(torch.ones(G.shape[0], device=G.device))
-        A.add_(r*pi, A_damping)
-        G.add_(r/pi, G_damping)
+        A_indices = torch.LongTensor([[i, i] for i in range(A.shape[0])])
+        G_indices = torch.LongTensor([[i, i] for i in range(G.shape[0])])
+        A.index_put_(tuple(A_indices.t()), A.diagonal().add(torch.ones(
+            A_indices.shape[0], device=A.device).mul(r*pi)))
+        G.index_put_(tuple(G_indices.t()), G.diagonal().add(torch.ones(
+            G_indices.shape[0], device=G.device).mul(r/pi)))
 
         return A, G
 
