@@ -7,13 +7,13 @@ class FisherBatchNorm2d(Curvature):
         pass
 
 
-class DiagFisherBatchNorm(DiagCurvature):
+class DiagFisherBatchNorm2d(DiagCurvature):
 
     def __init__(self):
         pass
 
 
-class KronFisherBatchNorm(KronCurvature):
+class KronFisherBatchNorm2d(KronCurvature):
 
     def __init__(self):
         pass

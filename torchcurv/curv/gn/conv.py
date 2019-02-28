@@ -1,4 +1,4 @@
-from torchcurv.curv import Curvature, DiagCurvature, KronCurvature
+from torchcurv.curv import Curvature, DiagCurvature, KronCurvatureConnection
 
 
 class GNConv2d(Curvature):
@@ -13,7 +13,7 @@ class DiagGNConv2d(DiagCurvature):
         pass
 
 
-class KronGNConv2d(KronCurvature):
+class KronGNConv2d(KronCurvatureConnection):
 
     def __init__(self):
         pass

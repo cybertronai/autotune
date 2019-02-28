@@ -1,4 +1,4 @@
-from torchcurv.curv import Curvature, DiagCurvature, KronCurvature
+from torchcurv.curv import Curvature, DiagCurvature, KronCurvatureConnection
 import torch
 import torch.nn.functional as F
 
@@ -17,10 +17,9 @@ class DiagFisherConv2d(DiagCurvature):
         pass
 
 
-class KronFisherConv2d(KronCurvature):
+class KronFisherConv2d(KronCurvatureConnection):
 
-    def compute_A(self):
-        input_data = self._module.input_data
+    def compute_A(self, input_data):
         kernel_size, stride, padding, dilation = \
             self._module.kernel_size, self._module.stride, self._module.padding, self._module.dilation
         input_data2d = F.unfold(input_data, kernel_size=kernel_size,
@@ -31,25 +30,21 @@ class KronFisherConv2d(KronCurvature):
         if self.bias:
             m = torch.cat((m, torch.ones((1, b), device=input_data.device)), 0)
 
-        return m.mm(m.transpose(0, 1)).mul(1/batch_size)
+        self.A = m.mm(m.transpose(0, 1)).mul(1/batch_size)
 
-    def compute_G(self):
-        grad_output_data = self._module.grad_output_data
+    def compute_G(self, grad_output_data):
         batch_size, c, h, w = grad_output_data.shape
         m = grad_output_data.transpose(0, 1).reshape(c, -1)
 
-        return m.mm(m.transpose(0, 1)).mul(1/(batch_size*h*w))
+        self.G = m.mm(m.transpose(0, 1)).mul(1/(batch_size*h*w))
 
     def compute_precgrad(self, params):
-        # update covs
-        A, G = self.compute_A(), self.compute_G()
-        self.covs = A, G
         # update covs_ema
         if self.cov_ema_decay != 0:
             self.update_covs_ema()
-            A, G = self.covs_ema
+            A, G = self.A_ema, self.G_ema
 
-        A, G = self.compute_damped_covs((A, G))
+        A, G = self.compute_damped_covs(A, G)
 
         A_inv, G_inv = inv(A), inv(G)
 
