@@ -15,6 +15,12 @@ class DiagCurvature(Curvature):
 
 class KronCurvature(Curvature):
 
+    def update_input(self, module, input):
+        self.compute_A(input[0].data)
+
+    def update_grad_output(self, module, grad_input, grad_output):
+        self.compute_G(grad_output[0].data)
+
     def __init__(self,
                  module,
                  cov_ema_decay,
@@ -30,14 +36,8 @@ class KronCurvature(Curvature):
         self.G_ema = None
         self.pi_type = pi_type
 
-        def update_input(module, input, output):
-            self.compute_A(input[0].data)
-
-        def update_grad_output(module, grad_input, grad_output):
-            self.compute_G(grad_output[0].data)
-
-        module.register_forward_hook(update_input)
-        module.register_backward_hook(update_grad_output)
+        module.register_forward_pre_hook(self.update_input)
+        module.register_backward_hook(self.update_grad_output)
 
     def compute_A(self, input_data):
         raise NotImplementedError
