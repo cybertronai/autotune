@@ -37,7 +37,7 @@ def extract_kwargs(func, target):
 
 class SecondOrderOptimizer(Optimizer):
 
-    def __init__(self, model, curv_type, lr=0.01, momentum=0.9, l2_reg=0, weight_decay=0, **curv_kwargs):
+    def __init__(self, model, curv_type, lr=0.01, momentum=0.9, momentum_type='precgrad', adjust_momentum=False, l2_reg=0, weight_decay=0, **curv_kwargs):
         # TODO implement error checker: hoge(optim_kwargs)
         """
         if not 0.0 <= lr:
@@ -56,8 +56,8 @@ class SecondOrderOptimizer(Optimizer):
                 "Invalid cov_ema_decay value: {}".format(cov_ema_decay))
         """
         self.model = model
-        defaults = {'lr': lr, 'momentum': momentum,
-                    'l2_reg': l2_reg, 'weight_decay': weight_decay}
+        defaults = {'lr': lr, 'lr_pre': lr, 'momentum': momentum, 'momentum_type': momentum_type,
+                    'adjust_momentum': adjust_momentum, 'l2_reg': l2_reg, 'weight_decay': weight_decay}
         defaults.update(curv_kwargs)
         self.defaults = defaults
         self.state = defaultdict(dict)
@@ -93,6 +93,20 @@ class SecondOrderOptimizer(Optimizer):
             for child in list(module.children()):
                 self.set_train_modules(child)
 
+    def apply_momentum(self, p, grad, momentum):
+        if momentum != 0:
+            state = self.state[p]
+            buf = state['momentum_buffer']
+            buf.mul_(momentum).add_(grad)
+            grad.copy_(buf)
+
+    def compute_momentum(self, group):
+        if group['adjust_momentum']:
+            lr, lr_pre, m = group['lr'], group['lr_pre'], group['momentum']
+            return m/lr_pre*lr
+        else:
+            return group['momentum']
+
     def step(self, closure=None):
         """Performs a single optimization step.
 
@@ -109,6 +123,7 @@ class SecondOrderOptimizer(Optimizer):
             curv = group['curv']
             if curv is not None:
                 for p in params:
+
                     if p.grad is None:
                         continue
 
@@ -120,18 +135,24 @@ class SecondOrderOptimizer(Optimizer):
                                 "l2 regularization option is not compatible with sparse gradients")
                         grad.add_(group['l2_reg'], p.data)
 
+                    if group['momentum_type'] == 'grad':
+                        momentum = self.compute_momentum(group)
+                        self.apply_momentum(p, grad, momentum)
+
                 precgrad = curv.compute_precgrad(params)
+
                 for p, grad in zip(params, precgrad):
+
                     if group['weight_decay'] != 0:
                         if grad.is_sparse:
                             raise RuntimeError(
                                 "weight_decay option is not compatible with sparse gradients")
                         grad.add_(group['weight_decay'], p.data)
-                    v = grad
-                    momentum = group['momentum']
-                    if momentum != 0:
-                        state = self.state[p]
-                        buf = state['momentum_buffer']
-                        v.add_(momentum, buf)
-                    p.data.add_(-group['lr'], v)
+
+                    if group['momentum_type'] == 'precgrad':
+                        momentum = self.compute_momentum(group)
+                        self.apply_momentum(p, grad, momentum)
+
+                    p.data.add_(-group['lr'], grad)
+
         return loss
