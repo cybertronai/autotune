@@ -127,11 +127,13 @@ class SecondOrderOptimizer(Optimizer):
                             raise RuntimeError(
                                 "weight_decay option is not compatible with sparse gradients")
                         grad.add_(group['weight_decay'], p.data)
-                    v = grad
                     momentum = group['momentum']
                     if momentum != 0:
                         state = self.state[p]
                         buf = state['momentum_buffer']
-                        v.add_(momentum, buf)
+                        buf.mul_(momentum).add_(grad)
+                        v = buf
+                    else:
+                        v = grad
                     p.data.add_(-group['lr'], v)
         return loss
