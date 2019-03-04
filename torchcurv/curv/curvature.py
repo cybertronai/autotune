@@ -16,10 +16,10 @@ class DiagCurvature(Curvature):
 class KronCurvature(Curvature):
 
     def update_input(self, module, input):
-        self.compute_A(input[0].data)
+        self.update_A(input[0].data)
 
     def update_grad_output(self, module, grad_input, grad_output):
-        self.compute_G(grad_output[0].data)
+        self.update_G(grad_output[0].data)
 
     def __init__(self,
                  module,
@@ -39,10 +39,10 @@ class KronCurvature(Curvature):
         module.register_forward_pre_hook(self.update_input)
         module.register_backward_hook(self.update_grad_output)
 
-    def compute_A(self, input_data):
+    def update_A(self, input_data):
         raise NotImplementedError
 
-    def compute_G(self, grad_output_data):
+    def update_G(self, grad_output_data):
         raise NotImplementedError
 
     def update_covs_ema(self):
@@ -93,10 +93,10 @@ class KronCurvatureConnection(KronCurvature):
                                                       pi_type)
         self.bias = False if module.bias is None else True
 
-    def compute_A(self, input_data):
+    def update_A(self, input_data):
         raise NotImplementedError
 
-    def compute_G(self, grad_output_data):
+    def update_G(self, grad_output_data):
         raise NotImplementedError
 
     def compute_precgrad(self, params):

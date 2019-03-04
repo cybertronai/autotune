@@ -19,7 +19,7 @@ class DiagFisherConv2d(DiagCurvature):
 
 class KronFisherConv2d(KronCurvatureConnection):
 
-    def compute_A(self, input_data):
+    def update_A(self, input_data):
         kernel_size, stride, padding, dilation = \
             self._module.kernel_size, self._module.stride, self._module.padding, self._module.dilation
         input_data2d = F.unfold(input_data, kernel_size=kernel_size,
@@ -32,7 +32,7 @@ class KronFisherConv2d(KronCurvatureConnection):
 
         self.A = m.mm(m.transpose(0, 1)).mul(1/batch_size)
 
-    def compute_G(self, grad_output_data):
+    def update_G(self, grad_output_data):
         batch_size, c, h, w = grad_output_data.shape
         m = grad_output_data.transpose(0, 1).reshape(c, -1)
 
