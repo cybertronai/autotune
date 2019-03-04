@@ -139,6 +139,8 @@ class SecondOrderOptimizer(Optimizer):
                         momentum = self.compute_momentum(group)
                         self.apply_momentum(p, grad, momentum)
 
+                curv.update_ema()
+                curv.update_inv()
                 precgrad = curv.compute_precgrad(params)
 
                 for p, grad in zip(params, precgrad):
