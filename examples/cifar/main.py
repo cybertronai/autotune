@@ -134,6 +134,8 @@ def main():
                         help='name of the optimizer')
     parser.add_argument('--optim_args', type=json.loads, default=None,
                         help='[JSON] arguments for the optimizer')
+    parser.add_argument('--curv_args', type=json.loads, default=None,
+                        help='[JSON] arguments for the curvature')
     parser.add_argument('--lr', type=float, default=0.01,
                         help='initial learning rate')
     parser.add_argument('--scheduler_name', type=str, default=None,
@@ -254,7 +256,7 @@ def main():
     optim_kwargs['lr'] = args.lr
 
     if optim_class in [SecondOrderOptimizer, VIOptimizer]:
-        optimizer = optim_class(model, **optim_kwargs)
+        optimizer = optim_class(model, **optim_kwargs, **args.curv_args)
     else:
         optimizer = optim_class(model.parameters(), **optim_kwargs)
 
