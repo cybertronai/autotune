@@ -30,9 +30,10 @@ def train(model, device, train_loader, optimizer, epoch, args, logger):
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
 
-        for param_group in optimizer.param_groups:
+        for i, param_group in enumerate(optimizer.param_groups):
             p = parameters_to_vector(param_group['params'])
-            setattr(optimizer, 'p_pre', p.clone())
+            attr = 'p_pre_{}'.format(i)
+            setattr(optimizer, attr, p.clone())
 
         # update params
         optimizer.zero_grad()
@@ -65,7 +66,8 @@ def train(model, device, train_loader, optimizer, epoch, args, logger):
 
             for i, param_group in enumerate(optimizer.param_groups):
                 p = parameters_to_vector(param_group['params'])
-                p_pre = getattr(optimizer, 'p_pre')
+                attr = 'p_pre_{}'.format(i)
+                p_pre = getattr(optimizer, attr)
                 p_norm = p.norm().item()
                 upd_norm = p.sub(p_pre).norm().item()
 
@@ -143,11 +145,11 @@ def main():
                         help='disables CUDA training')
     parser.add_argument('--seed', type=int, default=1,
                         help='random seed')
-    parser.add_argument('--log_interval', type=int, default=10,
+    parser.add_argument('--log_interval', type=int, default=50,
                         help='how many batches to wait before logging training status')
     parser.add_argument('--log_file_name', type=str, default='log',
                         help='log file name')
-    parser.add_argument('--checkpoint_interval', type=int, default=10,
+    parser.add_argument('--checkpoint_interval', type=int, default=50,
                         help='how many epochs to wait before logging training status')
     parser.add_argument('--resume', type=str, default=None,
                         help='checkpoint path for resume training')
@@ -251,7 +253,10 @@ def main():
     optim_kwargs = extract_kwargs(optim_class.__init__, args.optim_args)
     optim_kwargs['lr'] = args.lr
 
-    optimizer = optim_class(model.parameters(), **optim_kwargs)
+    if optim_class in [SecondOrderOptimizer, VIOptimizer]:
+        optimizer = optim_class(model, **optim_kwargs)
+    else:
+        optimizer = optim_class(model.parameters(), **optim_kwargs)
 
     # Setup lr scheduler
     scheduler_kwargs = {}
