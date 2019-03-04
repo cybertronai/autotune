@@ -1,6 +1,6 @@
 {
   "dataset": "CIFAR-10",
-  "epochs": 10,
+  "epochs": 15,
   "batch_size": 64,
   "test_batch_size": 128,
   "random_crop": false,
@@ -16,8 +16,12 @@
   },
   "curv_args": {
     "damping": 1e-7,
-    "cov_ema_decay": 0.333,
+    "ema_decay": 0.333,
     "pi_type": "tracenorm"
+  },
+  "scheduler_name": "ExponentialDecay",
+  "scheduler_args": {
+    "gamma": 0.9
   },
   "lr": 9e-6,
   "no_cuda": false
