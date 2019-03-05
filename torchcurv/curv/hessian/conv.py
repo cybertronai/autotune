@@ -1,4 +1,4 @@
-from torchcurv.curv import Curvature, DiagCurvature, KronCurvature
+from torchcurv import Curvature, DiagCurvature, KronCurvature
 
 
 class HessianConv2d(Curvature):

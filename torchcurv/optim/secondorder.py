@@ -1,9 +1,10 @@
-import torch
 from collections import defaultdict
+import inspect
+
+import torch
 import torch.nn as nn
 from torch.optim import Optimizer
-import torchcurv.curv as curv
-import inspect
+import torchcurv
 
 
 def get_curv_class(curv_type, module):
@@ -18,7 +19,7 @@ def get_curv_class(curv_type, module):
     else:
         return None
 
-    curv_class = getattr(curv, curv_type+module_type)
+    curv_class = getattr(torchcurv, curv_type+module_type)
 
     return curv_class
 
