@@ -1,4 +1,4 @@
-from torchcurv.curv import Curvature, DiagCurvature, KronCurvatureConnection
+from torchcurv.curv import Curvature, DiagCurvature, KronCurvature
 
 import torch
 
@@ -11,11 +11,11 @@ class FisherLinear(Curvature):
 
 class DiagFisherLinear(DiagCurvature):
 
-    def __init__(self):
+    def update(self, input_data, grad_output_data):
         pass
 
 
-class KronFisherLinear(KronCurvatureConnection):
+class KronFisherLinear(KronCurvature):
 
     def update_A(self, input_data):
         batch_size = input_data.shape[0]

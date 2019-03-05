@@ -1,4 +1,4 @@
-from torchcurv.curv import Curvature, DiagCurvature, KronCurvatureConnection
+from torchcurv.curv import Curvature, DiagCurvature, KronCurvature
 import torch
 import torch.nn.functional as F
 
@@ -15,7 +15,7 @@ class DiagFisherConv2d(DiagCurvature):
         pass
 
 
-class KronFisherConv2d(KronCurvatureConnection):
+class KronFisherConv2d(KronCurvature):
 
     def update_A(self, input_data):
         kernel_size, stride, padding, dilation = \
@@ -27,7 +27,6 @@ class KronFisherConv2d(KronCurvatureConnection):
         a, b = m.shape
         if self.bias:
             m = torch.cat((m, torch.ones((1, b), device=input_data.device)), 0)
-
         self._A = m.mm(m.transpose(0, 1)).mul(1/batch_size)
 
     def update_G(self, grad_output_data):

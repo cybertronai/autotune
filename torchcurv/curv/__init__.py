@@ -1,4 +1,4 @@
-from torchcurv.curv.curvature import Curvature, DiagCurvature, KronCurvature, KronCurvatureConnection  # NOQA
+from torchcurv.curv.curvature import Curvature, DiagCurvature, KronCurvature  # NOQA
 from torchcurv.curv.hessian.conv import HessianConv2d, DiagHessianConv2d, KronHessianConv2d  # NOQA
 from torchcurv.curv.gn.conv import GNConv2d, DiagGNConv2d, KronGNConv2d  # NOQA
 from torchcurv.curv.fisher.linear import FisherLinear, DiagFisherLinear, KronFisherLinear  # NOQA

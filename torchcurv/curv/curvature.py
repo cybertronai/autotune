@@ -21,6 +21,11 @@ class Curvature(object):
     def data(self):
         return self._data
 
+    @property
+    def bias(self):
+        bias = getattr(self._module, 'bias', None)
+        return False if bias is None else True
+
     def backward_postprocess(self, module, grad_input, grad_output):
         self.update(grad_input[0], grad_output[0])
 
@@ -116,22 +121,6 @@ class KronCurvature(Curvature):
         r = self.damping**0.5
         self.inv = [torchcurv.utils.inv(add_value_to_diagonal(X, value))
                     for X, value in zip([A, G], [r*pi, r/pi])]
-
-    def compute_precgrad(self, params):
-        raise NotImplementedError
-
-
-class KronCurvatureConnection(KronCurvature):
-
-    def __init__(self, module, *args, **kwargs):
-        self.bias = False if module.bias is None else True
-        super(KronCurvatureConnection, self).__init__(module, *args, **kwargs)
-
-    def update_A(self, input_data):
-        raise NotImplementedError
-
-    def update_G(self, grad_output_data):
-        raise NotImplementedError
 
     def compute_precgrad(self, params):
         raise NotImplementedError
