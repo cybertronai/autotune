@@ -62,14 +62,14 @@ class Curvature(object):
         ema = self.ema
         damping = self.damping
 
-        def compute_inv(X):
+        def _inv(X):
             X_damp = add_value_to_diagonal(X, damping)
             return torchcurv.utils.inv(X_damp)
 
         if isinstance(ema, torch.Tensor):
-            self.inv = compute_inv(ema)
+            self.inv = _inv(ema)
         elif isinstance(ema, list):
-            self.inv = [compute_inv(e) for e in ema]
+            self.inv = [_inv(e) for e in ema]
 
     def precgrad(self, params):
         raise NotImplementedError
