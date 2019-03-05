@@ -35,7 +35,7 @@ class KronFisherConv2d(KronCurvature):
 
         self._G = m.mm(m.transpose(0, 1)).mul(1/(batch_size*h*w))
 
-    def compute_precgrad(self, params):
+    def precgrad(self, params):
         A_inv, G_inv = self.inv
 
         # todo check params == list?

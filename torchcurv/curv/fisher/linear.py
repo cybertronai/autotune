@@ -30,7 +30,7 @@ class KronFisherLinear(KronCurvature):
         self._G = grad_output_data.transpose(0, 1).mm(
             grad_output_data).mul(1/batch_size)
 
-    def compute_precgrad(self, params):
+    def precgrad(self, params):
         A_inv, G_inv = self.inv
 
         # todo check params == list?

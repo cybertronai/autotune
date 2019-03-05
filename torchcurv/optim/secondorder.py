@@ -142,7 +142,7 @@ class SecondOrderOptimizer(Optimizer):
 
                 curv.update_ema()
                 curv.update_inv()
-                precgrad = curv.compute_precgrad(params)
+                precgrad = curv.precgrad(params)
 
                 for p, grad in zip(params, precgrad):
 

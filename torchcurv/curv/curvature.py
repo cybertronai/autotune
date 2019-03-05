@@ -71,7 +71,7 @@ class Curvature(object):
         elif isinstance(ema, list):
             self.inv = [compute_inv(e) for e in ema]
 
-    def compute_precgrad(self, params):
+    def precgrad(self, params):
         raise NotImplementedError
 
 
@@ -86,7 +86,7 @@ class DiagCurvature(Curvature):
         ema_damp = ema.add(ema.new_ones(ema.shape[0])).mul(damping)
         self.inv = 1 / ema_damp
 
-    def compute_precgrad(self, params):
+    def precgrad(self, params):
         raise NotImplementedError
 
 
@@ -136,7 +136,7 @@ class KronCurvature(Curvature):
         self.inv = [torchcurv.utils.inv(add_value_to_diagonal(X, value))
                     for X, value in zip([A, G], [r*pi, r/pi])]
 
-    def compute_precgrad(self, params):
+    def precgrad(self, params):
         raise NotImplementedError
 
 
