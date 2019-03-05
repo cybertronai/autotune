@@ -1,9 +1,10 @@
-import torch
 from collections import defaultdict
+import inspect
+
+import torch
 import torch.nn as nn
 from torch.optim import Optimizer
-import torchcurv.curv as curv
-import inspect
+import torchcurv
 
 
 def get_curv_class(curv_type, module):
@@ -18,7 +19,7 @@ def get_curv_class(curv_type, module):
     else:
         return None
 
-    curv_class = getattr(curv, curv_type+module_type)
+    curv_class = getattr(torchcurv, curv_type+module_type)
 
     return curv_class
 
@@ -100,7 +101,7 @@ class SecondOrderOptimizer(Optimizer):
             buf.mul_(momentum).add_(grad)
             grad.copy_(buf)
 
-    def compute_momentum(self, group):
+    def momentum(self, group):
         if group['adjust_momentum']:
             lr, lr_pre, m = group['lr'], group['lr_pre'], group['momentum']
             return m/lr_pre*lr
@@ -136,10 +137,12 @@ class SecondOrderOptimizer(Optimizer):
                         grad.add_(group['l2_reg'], p.data)
 
                     if group['momentum_type'] == 'grad':
-                        momentum = self.compute_momentum(group)
+                        momentum = self.momentum(group)
                         self.apply_momentum(p, grad, momentum)
 
-                precgrad = curv.compute_precgrad(params)
+                curv.update_ema()
+                curv.update_inv()
+                precgrad = curv.precgrad(params)
 
                 for p, grad in zip(params, precgrad):
 
@@ -150,7 +153,7 @@ class SecondOrderOptimizer(Optimizer):
                         grad.add_(group['weight_decay'], p.data)
 
                     if group['momentum_type'] == 'precgrad':
-                        momentum = self.compute_momentum(group)
+                        momentum = self.momentum(group)
                         self.apply_momentum(p, grad, momentum)
 
                     p.data.add_(-group['lr'], grad)

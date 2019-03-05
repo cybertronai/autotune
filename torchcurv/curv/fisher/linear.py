@@ -1,8 +1,6 @@
-from torchcurv.curv import Curvature, DiagCurvature, KronCurvatureConnection
+from torchcurv import Curvature, DiagCurvature, KronCurvature
 
 import torch
-
-from torchcurv.utils import inv
 
 
 class FisherLinear(Curvature):
@@ -13,33 +11,27 @@ class FisherLinear(Curvature):
 
 class DiagFisherLinear(DiagCurvature):
 
-    def __init__(self):
+    def update(self, input_data, grad_output_data):
         pass
 
 
-class KronFisherLinear(KronCurvatureConnection):
+class KronFisherLinear(KronCurvature):
 
     def update_A(self, input_data):
         batch_size = input_data.shape[0]
         if self.bias:
             input_data = torch.cat((input_data, torch.ones(
                 (batch_size, 1), device=input_data.device)), 1)
-        self.A = input_data.transpose(0, 1).mm(input_data).mul(1/batch_size)
+        self._A = input_data.transpose(0, 1).mm(input_data).mul(1/batch_size)
 
     def update_G(self, grad_output_data):
         batch_size = grad_output_data.shape[0]
-        self.G = grad_output_data.transpose(0, 1).mm(
+
+        self._G = grad_output_data.transpose(0, 1).mm(
             grad_output_data).mul(1/batch_size)
 
-    def compute_precgrad(self, params):
-        # update covs_ema
-        if self.cov_ema_decay != 0:
-            self.update_covs_ema()
-            A, G = self.A_ema, self.G_ema
-
-        A, G = self.compute_damped_covs(A, G)
-
-        A_inv, G_inv = inv(A), inv(G)
+    def precgrad(self, params):
+        A_inv, G_inv = self.inv
 
         # todo check params == list?
         if self.bias:
