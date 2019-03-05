@@ -26,8 +26,10 @@ class KronFisherLinear(KronCurvature):
 
     def update_G(self, grad_output_data):
         batch_size = grad_output_data.shape[0]
+        scale = batch_size  # for adjusting grad scale along with 'reduction' in loss function
+
         self._G = grad_output_data.transpose(0, 1).mm(
-            grad_output_data).mul(1/batch_size)
+            grad_output_data).mul(1/batch_size).mul(scale**2)
 
     def compute_precgrad(self, params):
         A_inv, G_inv = self.inv
