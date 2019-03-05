@@ -101,7 +101,7 @@ class SecondOrderOptimizer(Optimizer):
             buf.mul_(momentum).add_(grad)
             grad.copy_(buf)
 
-    def compute_momentum(self, group):
+    def momentum(self, group):
         if group['adjust_momentum']:
             lr, lr_pre, m = group['lr'], group['lr_pre'], group['momentum']
             return m/lr_pre*lr
@@ -137,7 +137,7 @@ class SecondOrderOptimizer(Optimizer):
                         grad.add_(group['l2_reg'], p.data)
 
                     if group['momentum_type'] == 'grad':
-                        momentum = self.compute_momentum(group)
+                        momentum = self.momentum(group)
                         self.apply_momentum(p, grad, momentum)
 
                 curv.update_ema()
@@ -153,7 +153,7 @@ class SecondOrderOptimizer(Optimizer):
                         grad.add_(group['weight_decay'], p.data)
 
                     if group['momentum_type'] == 'precgrad':
-                        momentum = self.compute_momentum(group)
+                        momentum = self.momentum(group)
                         self.apply_momentum(p, grad, momentum)
 
                     p.data.add_(-group['lr'], grad)
