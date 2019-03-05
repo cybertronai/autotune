@@ -27,10 +27,20 @@ class Curvature(object):
         return False if bias is None else True
 
     def backward_postprocess(self, module, grad_input, grad_output):
-        self.update(grad_input[0], grad_output[0])
+        self.update(grad_input[0].data, grad_output[0].data)
+        self.adjust_scale(grad_output[0].data)
 
     def update(self, input_data, grad_output_data):
         raise NotImplementedError
+
+    def adjust_scale(self, grad_output_data):
+        # for adjusting grad scale along with 'reduction' in loss function
+        batch_size = grad_output_data.shape[0]
+        scale = batch_size
+        self._adjust_scale(scale)
+
+    def _adjust_scale(self, scale):
+        self._data.mul_(scale**2)
 
     def update_ema(self):
         data = self.data
@@ -99,6 +109,7 @@ class KronCurvature(Curvature):
 
     def backward_postprocess(self, module, grad_input, grad_output):
         self.update_G(grad_output[0].data)
+        self.adjust_scale(grad_output[0].data)
 
     def update(self, input_data, grad_output_data):
         # KronCurvature class doesn't update data directly
@@ -109,6 +120,9 @@ class KronCurvature(Curvature):
 
     def update_G(self, grad_output_data):
         raise NotImplementedError
+
+    def _adjust_scale(self, scale):
+        self._G.mul_(scale**2)
 
     def update_inv(self):
         A, G = self.ema

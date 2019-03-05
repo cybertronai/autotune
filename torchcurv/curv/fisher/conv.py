@@ -32,9 +32,8 @@ class KronFisherConv2d(KronCurvature):
     def update_G(self, grad_output_data):
         batch_size, c, h, w = grad_output_data.shape
         m = grad_output_data.transpose(0, 1).reshape(c, -1)
-        scale = batch_size  # for adjusting grad scale along with 'reduction' in loss function
 
-        self._G = m.mm(m.transpose(0, 1)).mul(1/(batch_size*h*w)).mul(scale**2)
+        self._G = m.mm(m.transpose(0, 1)).mul(1/(batch_size*h*w))
 
     def compute_precgrad(self, params):
         A_inv, G_inv = self.inv
