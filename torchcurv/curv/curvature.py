@@ -73,7 +73,7 @@ class Curvature(object):
 
     def precgrad(self, params):
         raise NotImplementedError
-
+ 
 
 class DiagCurvature(Curvature):
 

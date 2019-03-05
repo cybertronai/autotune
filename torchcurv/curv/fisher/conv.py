@@ -29,7 +29,7 @@ class KronFisherConv2d(KronCurvature):
             m = torch.cat((m, torch.ones((1, b), device=input_data.device)), 0)
         self._A = m.mm(m.transpose(0, 1)).mul(1/batch_size)
 
-    def update_G(self, grad_output_data):
+def update_G(self, grad_output_data):
         batch_size, c, h, w = grad_output_data.shape
         m = grad_output_data.transpose(0, 1).reshape(c, -1)
 
