@@ -32,30 +32,20 @@ class Curvature(object):
         self.update_in_forward(input[0].data)
 
     def backward_postprocess(self, module, grad_input, grad_output):
-        self.update_in_backward(grad_output[0].data)
-        self.adjust_scale(grad_output[0].data)
+
+        def _adjust_scale(grad_output_data):
+            # for adjusting grad scale along with 'reduction' in loss function
+            batch_size = grad_output_data.shape[0]
+            return grad_output_data.mul(batch_size)
+
+        grad_output_data = _adjust_scale(grad_output[0].data)
+        self.update_in_backward(grad_output_data)
 
     def update_in_forward(self, input_data):
         self._input_data = input_data.clone()
 
     def update_in_backward(self, grad_output_data):
         raise NotImplementedError
-
-    def adjust_scale(self, grad_output_data):
-        # for adjusting grad scale along with 'reduction' in loss function
-        batch_size = grad_output_data.shape[0]
-        scale = batch_size
-        self._adjust_scale(scale)
-
-    def _adjust_scale(self, scale):
-        data = self._data
-        if isinstance(data, torch.Tensor):
-            data.mul_(scale**2)
-        elif isinstance(data, list):
-            for d in data:
-                d.mul_(scale**2)
-        else:
-            raise TypeError
 
     def update_ema(self):
         data = self.data
@@ -130,9 +120,6 @@ class KronCurvature(Curvature):
 
     def update_in_backward(self, grad_output_data):
         raise NotImplementedError
-
-    def _adjust_scale(self, scale):
-        self._G.mul_(scale**2)
 
     def update_inv(self):
         A, G = self.ema
