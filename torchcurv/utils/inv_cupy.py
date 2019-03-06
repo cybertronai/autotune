@@ -6,7 +6,7 @@ from cupy.cuda import cublas
 from cupy.cuda import device
 from cupy.linalg import util
 
-from torch.utils.dlpack import to_dlpack,from_dlpack
+from torch.utils.dlpack import to_dlpack, from_dlpack
 
 import warnings
 
@@ -20,8 +20,9 @@ use_cholesky = True
 
 def inv(m):
     m_cp = cupy.fromDlpack(to_dlpack(m))
-    m_inv_cp = inv_core(m_cp,use_cholesky)
+    m_inv_cp = inv_core(m_cp, use_cholesky)
     return from_dlpack(m_inv_cp.toDlpack())
+
 
 def inv_core(a, cholesky=False):
     """Computes the inverse of a matrix.

@@ -16,6 +16,9 @@ class Curvature(object):
         self.ema = None
         self.inv = None
 
+        # for vi
+        self.std = None
+
         module.register_forward_pre_hook(self.forward_preprocess)
         module.register_backward_hook(self.backward_postprocess)
 
@@ -80,7 +83,7 @@ class Curvature(object):
 
     def precgrad(self, params):
         raise NotImplementedError
- 
+
 
 class DiagCurvature(Curvature):
 
@@ -136,9 +139,15 @@ class KronCurvature(Curvature):
     def precgrad(self, params):
         raise NotImplementedError
 
+    # for vi
+    def update_std(self):
+        A_inv, G_inv = self.inv
+
+        self.std = [torchcurv.utils.cholesky(X)
+                    for X in [A_inv, G_inv]]
+
 
 def add_value_to_diagonal(X, value):
     indices = torch.LongTensor([[i, i] for i in range(X.shape[0])])
     values = X.new_ones(X.shape[0]).mul(value)
     return X.index_put(tuple(indices.t()), values, accumulate=True)
-

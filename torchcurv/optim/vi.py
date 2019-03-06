@@ -1,10 +1,7 @@
-from .fisher_block import LinearFB, Conv2dFB
 import torch
 from collections import defaultdict, Iterable
-import torch.nn.functional as F
-import torch.nn as nn
-from torch.optim import Optimizer
 from torchcurv.optim import SecondOrderOptimizer
+import torch.nn.functional as F
 
 
 class VIOptimizer(SecondOrderOptimizer):
@@ -16,7 +13,7 @@ class VIOptimizer(SecondOrderOptimizer):
         self.defaults['std_scale'] = std_scale
         self.fisher_init = False
 
-    def step(self):
+    def step(self, closure):
         """Performs a single optimization step.
 
         Arguments:
@@ -26,12 +23,13 @@ class VIOptimizer(SecondOrderOptimizer):
         '''
         def closure():
             # forward/backward
-            return loss, outputs
+            return loss, output
         '''
 
         # initialize fisher matrix (for only init))
         if self.fisher_init is False:
-            closure()  # forward
+            loss, _ = closure()  # forward/backward
+            loss.backward()
             for group in self.param_groups:
                 curv = group['curv']
                 if curv is not None:
@@ -46,7 +44,10 @@ class VIOptimizer(SecondOrderOptimizer):
 
         # copy params to mean & fill mean_grad with 0
         for group in self.param_groups:
-            for p, m, m_grad in zip(params, mean, m_grad):
+            params = group['params']
+            mean = group['mean']
+            mean_grad = group['mean_grad']
+            for p, m, m_grad in zip(params, mean, mean_grad):
                 m.copy_(p.data)
                 m_grad.fill_(0)
 
@@ -54,24 +55,25 @@ class VIOptimizer(SecondOrderOptimizer):
         n = self.defaults['num_samples']
         std_scale = self.defaults['std_scale']
         loss_avg = None
-        outputs_avg = None
+        output_avg = None
         for i in range(n):
 
             # sampling
             for group in self.param_groups:
                 params, mean, curv = group['params'], group['mean'], group['curv']
-                curv.sample_param(params, mean, std_scale)
+                curv.sample_params(params, mean, std_scale)
 
             # forward and backward (curv.data is accumulated)
-            # TODO curv accumulate(for vi)
-            loss, outputs = closure()
+            # todo curv accumulate(for vi)
+            loss, output = closure()
+            loss.backward()
 
             if loss_avg is None:
                 loss_avg = loss.data.mul(1/n)
-                outputs_avg = outputs.data.mul(1/n)
+                output_avg = F.softmax(output, dim=1).data.mul(1/n)
             else:
                 loss_avg.add_(1/n, loss.data)
-                outputs_avg.add_(1/n, outputs.data)
+                output_avg.add_(1/n, F.softmax(output, dim=1).data)
 
             # update buf
             for group in self.param_groups:
@@ -101,7 +103,7 @@ class VIOptimizer(SecondOrderOptimizer):
             mean_grad = group['mean_grad']
             curv = group['curv']
             if curv is not None:
-                for p, m, m_grad in zip(params, mean, m_grad):
+                for p, m, m_grad in zip(params, mean, mean_grad):
 
                     if p.grad is None:
                         continue
@@ -133,4 +135,4 @@ class VIOptimizer(SecondOrderOptimizer):
 
                     p.data.add_(-group['lr'], grad)
 
-        return outputs_avg, loss_avg
+        return loss_avg, output_avg

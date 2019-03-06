@@ -28,11 +28,15 @@ class DiagFisherConv2d(DiagCurvature):
         # n x c_out x (h_out)(w_out)
         grad_output_data2d = grad_output_data.reshape(n, c_out, -1)
 
-        in_in = input_data2d.mul(input_data2d)  # n x (c_in)(k_h)(k_w) x (h_out)(w_out)
-        grad_grad = grad_output_data2d.mul(grad_output_data2d)  # n x c_out x (h_out)(w_out)
+        # n x (c_in)(k_h)(k_w) x (h_out)(w_out)
+        in_in = input_data2d.mul(input_data2d)
+        grad_grad = grad_output_data2d.mul(
+            grad_output_data2d)  # n x c_out x (h_out)(w_out)
 
-        data_w = torch.einsum('kil,kjl->ij', grad_grad, in_in).div(n*h*w)  # c_out x (c_in)(k_h)(k_w)
-        data_w = data_w.reshape((c_out, -1, *conv2d.kernel_size))  # c_out x c_in x k_h x k_w
+        # c_out x (c_in)(k_h)(k_w)
+        data_w = torch.einsum('kil,kjl->ij', grad_grad, in_in).div(n*h*w)
+        # c_out x c_in x k_h x k_w
+        data_w = data_w.reshape((c_out, -1, *conv2d.kernel_size))
         self._data = [data_w]
 
         if self.bias:
@@ -77,3 +81,20 @@ class KronFisherConv2d(KronCurvature):
             precgrad2d = G_inv.mm(grad2d).mm(A_inv)
 
             return [precgrad2d.reshape(oc, ic, h, w)]
+
+    # for vi
+    def sample_params(self, params, mean, std_scale):
+        A_ic, G_ic = self.std
+        oc, ic, h, w = mean[0].shape
+        if self.bias:
+            m = torch.cat(
+                (mean[0].reshape(oc, -1), mean[1].view(-1, 1)), 1)
+            param = m.add(std_scale, G_ic.mm(
+                torch.randn_like(m)).mm(A_ic))
+            params[0].data = param[:, 0:-1].reshape(oc, ic, h, w)
+            params[1].data = param[:, -1]
+        else:
+            m = mean[0].reshape(oc, -1)
+            param = m.add(std_scale, G_ic.mm(
+                torch.randn_like(m)).mm(A_ic))
+            params[0].data = param.reshape(oc, ic, h, w)
