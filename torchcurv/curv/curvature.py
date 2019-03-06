@@ -12,9 +12,11 @@ class Curvature(object):
         self.damping = damping
 
         self._data = None
+        self._input_data = None
         self.ema = None
         self.inv = None
 
+        module.register_forward_pre_hook(self.forward_preprocess)
         module.register_backward_hook(self.backward_postprocess)
 
     @property
@@ -26,11 +28,17 @@ class Curvature(object):
         bias = getattr(self._module, 'bias', None)
         return False if bias is None else True
 
+    def forward_preprocess(self, module, input):
+        self.update_in_forward(input[0].data)
+
     def backward_postprocess(self, module, grad_input, grad_output):
-        self.update(grad_input[0].data, grad_output[0].data)
+        self.update_in_backward(grad_output[0].data)
         self.adjust_scale(grad_output[0].data)
 
-    def update(self, input_data, grad_output_data):
+    def update_in_forward(self, input_data):
+        self._input_data = input_data.clone()
+
+    def update_in_backward(self, grad_output_data):
         raise NotImplementedError
 
     def adjust_scale(self, grad_output_data):
@@ -40,7 +48,14 @@ class Curvature(object):
         self._adjust_scale(scale)
 
     def _adjust_scale(self, scale):
-        self._data.mul_(scale**2)
+        data = self._data
+        if isinstance(data, torch.Tensor):
+            data.mul_(scale**2)
+        elif isinstance(data, list):
+            for d in data:
+                d.mul_(scale**2)
+        else:
+            raise TypeError
 
     def update_ema(self):
         data = self.data
@@ -60,16 +75,18 @@ class Curvature(object):
 
     def update_inv(self):
         ema = self.ema
-        damping = self.damping
-
-        def _inv(X):
-            X_damp = add_value_to_diagonal(X, damping)
-            return torchcurv.utils.inv(X_damp)
 
         if isinstance(ema, torch.Tensor):
-            self.inv = _inv(ema)
+            self.inv = self._inv(ema)
         elif isinstance(ema, list):
-            self.inv = [_inv(e) for e in ema]
+            self.inv = [self._inv(e) for e in ema]
+        else:
+            raise TypeError
+
+    def _inv(self, X):
+        X_damp = add_value_to_diagonal(X, self.damping)
+
+        return torchcurv.utils.inv(X_damp)
 
     def precgrad(self, params):
         raise NotImplementedError
@@ -77,17 +94,22 @@ class Curvature(object):
 
 class DiagCurvature(Curvature):
 
-    def update(self, input_data, grad_output_data):
+    def update_in_backward(self, grad_output_data):
         raise NotImplementedError
 
-    def update_inv(self):
-        ema = self.ema
-        damping = self.damping
-        ema_damp = ema.add(ema.new_ones(ema.shape[0])).mul(damping)
-        self.inv = 1 / ema_damp
+    def _inv(self, X):
+        X_damp = X.add(X.new_ones(X.shape).mul(self.damping))
+
+        return 1 / X_damp
 
     def precgrad(self, params):
-        raise NotImplementedError
+        precgrad = []
+
+        for param_i, inv_i in zip(params, self.inv):
+            grad = param_i.grad
+            precgrad.append(inv_i.mul(grad))
+
+        return precgrad
 
 
 class KronCurvature(Curvature):
@@ -97,28 +119,16 @@ class KronCurvature(Curvature):
         self._A = None
         self._G = None
 
-        module.register_forward_pre_hook(self.forward_preprocess)
         super(KronCurvature, self).__init__(module, **kwargs)
 
     @property
     def data(self):
         return [self._A, self._G]
 
-    def forward_preprocess(self, module, input):
-        self.update_A(input[0].data)
-
-    def backward_postprocess(self, module, grad_input, grad_output):
-        self.update_G(grad_output[0].data)
-        self.adjust_scale(grad_output[0].data)
-
-    def update(self, input_data, grad_output_data):
-        # KronCurvature class doesn't update data directly
-        pass
-
-    def update_A(self, input_data):
+    def update_in_forward(self, input_data):
         raise NotImplementedError
 
-    def update_G(self, grad_output_data):
+    def update_in_backward(self, grad_output_data):
         raise NotImplementedError
 
     def _adjust_scale(self, scale):
