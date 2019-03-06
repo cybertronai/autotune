@@ -22,25 +22,21 @@ class DiagFisherConv2d(DiagCurvature):
         input_data2d = F.unfold(input_data,
                                 kernel_size=conv2d.kernel_size, stride=conv2d.stride,
                                 padding=conv2d.padding, dilation=conv2d.dilation)
-        n, ckk, hw = input_data2d.shape
-
-        # (c_in)(k_h)(k_w) x n(h_out)(w_out)
-        input_data2d = input_data2d.transpose(0, 1).reshape(ckk, -1)
 
         # n x c_out x h_out x w_out
         n, c_out, h, w = grad_output_data.shape
-        # c_out x n(h_out)(w_out)
-        grad_output_data2d = grad_output_data.transpose(0, 1).reshape(c_out, -1)
+        # n x c_out x (h_out)(w_out)
+        grad_output_data2d = grad_output_data.reshape(n, c_out, -1)
 
-        in_in = input_data2d.mul(input_data2d)  # (c_in)(k_h)(k_w) x n(h_out)(w_out)
-        grad_grad = grad_output_data2d.mul(grad_output_data2d)  # c_out x n(h_out)(w_out)
+        in_in = input_data2d.mul(input_data2d)  # n x (c_in)(k_h)(k_w) x (h_out)(w_out)
+        grad_grad = grad_output_data2d.mul(grad_output_data2d)  # n x c_out x (h_out)(w_out)
 
-        data_w = torch.einsum('ik,jk->ij', grad_grad, in_in).div(n*h*w)  # c_out x (c_in)(k_h)(k_w)
+        data_w = torch.einsum('kil,kjl->ij', grad_grad, in_in).div(n*h*w)  # c_out x (c_in)(k_h)(k_w)
         data_w = data_w.reshape((c_out, -1, *conv2d.kernel_size))  # c_out x c_in x k_h x k_w
         self._data = [data_w]
 
         if self.bias:
-            data_b = grad_grad.mean(dim=1)  # c_out x 1
+            data_b = grad_grad.mean(dim=2).mean(dim=0)  # c_out
             self._data.append(data_b)
 
 
