@@ -19,24 +19,24 @@ class DiagFisherConv2d(DiagCurvature):
         conv2d = self._module
 
         # n x (c_in)(k_h)(k_w) x (h_out)(w_out)
-        input_data2d = F.unfold(input_data,
-                                kernel_size=conv2d.kernel_size, stride=conv2d.stride,
-                                padding=conv2d.padding, dilation=conv2d.dilation)
+        input2d = F.unfold(input_data,
+                           kernel_size=conv2d.kernel_size, stride=conv2d.stride,
+                           padding=conv2d.padding, dilation=conv2d.dilation)
 
         # n x c_out x h_out x w_out
         n, c_out, h, w = grad_output_data.shape
         # n x c_out x (h_out)(w_out)
-        grad_output_data2d = grad_output_data.reshape(n, c_out, -1)
+        grad_output2d = grad_output_data.reshape(n, c_out, -1)
 
         grad_in = torch.einsum('bik,bjk->bij',
-                               grad_output_data2d, input_data2d)  # n x c_out x (c_in)(k_h)(k_w)
+                               grad_output2d, input2d)  # n x c_out x (c_in)(k_h)(k_w)
 
         data_w = grad_in.mul(grad_in).mean(dim=0)  # c_out x (c_in)(k_h)(k_w)
         data_w = data_w.reshape((c_out, -1, *conv2d.kernel_size))  # c_out x c_in x k_h x k_w
         self._data = [data_w]
 
         if self.bias:
-            grad_grad = grad_output_data2d.mul(grad_output_data2d)  # n x c_out x (h_out)(w_out)
+            grad_grad = grad_output2d.mul(grad_output2d)  # n x c_out x (h_out)(w_out)
             data_b = grad_grad.sum(dim=2).mean(dim=0)  # c_out
             self._data.append(data_b)
 

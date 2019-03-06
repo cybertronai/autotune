@@ -33,12 +33,10 @@ class Curvature(object):
 
     def backward_postprocess(self, module, grad_input, grad_output):
 
-        def _adjust_scale(grad_output_data):
-            # for adjusting grad scale along with 'reduction' in loss function
-            batch_size = grad_output_data.shape[0]
-            return grad_output_data.mul(batch_size)
+        # for adjusting grad scale along with 'reduction' in loss function
+        batch_size = grad_output[0].data.shape[0]
+        grad_output_data = grad_output[0].data.mul(batch_size)
 
-        grad_output_data = _adjust_scale(grad_output[0].data)
         self.update_in_backward(grad_output_data)
 
     def update_in_forward(self, input_data):
