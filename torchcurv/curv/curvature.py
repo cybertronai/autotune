@@ -50,7 +50,8 @@ class Curvature(object):
     def update_in_backward(self, grad_output_data):
         raise NotImplementedError
 
-    def update_ema(self):
+    # modified for vi
+    def update_ema(self, n=1):
         data = self.data
         ema = self.ema
         alpha = self.ema_decay
@@ -59,12 +60,13 @@ class Curvature(object):
         else:
             assert type(data) == type(ema)
             if isinstance(ema, torch.Tensor):
-                self.ema = data.mul(alpha).add(1 - alpha, ema)
+                self.ema = data.mul(alpha/n).add(1 - alpha, ema)
             elif isinstance(ema, list):
-                self.ema = [d.mul(alpha).add(1 - alpha, e)
+                self.ema = [d.mul(alpha/n).add(1 - alpha, e)
                             for d, e in zip(data, ema)]
             else:
                 raise TypeError
+        self.zero_data()
 
     def update_inv(self):
         ema = self.ema
@@ -83,6 +85,18 @@ class Curvature(object):
 
     def precgrad(self, params):
         raise NotImplementedError
+
+    # for vi
+    def zero_data(self):
+        data = self.data
+        if isinstance(data, torch.Tensor):
+            data.fill_(0)
+        elif isinstance(data, list):
+            for d in data:
+                d.fill_(0)
+
+        else:
+            raise TypeError
 
 
 class DiagCurvature(Curvature):

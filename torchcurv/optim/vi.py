@@ -33,7 +33,7 @@ class VIOptimizer(SecondOrderOptimizer):
             for group in self.param_groups:
                 curv = group['curv']
                 if curv is not None:
-                    curv.update_ema()
+                    curv.update_ema(1)
                     curv.update_inv()
                     curv.update_std()
                     group['mean'] = [p.clone().detach()
@@ -117,7 +117,7 @@ class VIOptimizer(SecondOrderOptimizer):
                         momentum = self.momentum(group)
                         self.apply_momentum(p, grad, momentum)
 
-                curv.update_ema()
+                curv.update_ema(n)
                 curv.update_inv()
                 precgrad = curv.precgrad(params)
 
