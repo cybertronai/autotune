@@ -66,7 +66,7 @@ class Curvature(object):
                             for d, e in zip(data, ema)]
             else:
                 raise TypeError
-        self.zero_data()
+            self.zero_data()
 
     def update_inv(self):
         ema = self.ema
