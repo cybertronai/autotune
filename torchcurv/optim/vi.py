@@ -29,7 +29,6 @@ class VIOptimizer(SecondOrderOptimizer):
         # initialize fisher matrix (for only init))
         if self.fisher_init is False:
             loss, _ = closure()  # forward/backward
-            loss.backward()
             for group in self.param_groups:
                 curv = group['curv']
                 if curv is not None:
@@ -66,7 +65,6 @@ class VIOptimizer(SecondOrderOptimizer):
             # forward and backward (curv.data is accumulated)
             # todo curv accumulate(for vi)
             loss, output = closure()
-            loss.backward()
 
             if loss_avg is None:
                 loss_avg = loss.data.mul(1/n)
