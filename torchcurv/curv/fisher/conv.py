@@ -28,19 +28,16 @@ class DiagFisherConv2d(DiagCurvature):
         # n x c_out x (h_out)(w_out)
         grad_output_data2d = grad_output_data.reshape(n, c_out, -1)
 
-        # n x (c_in)(k_h)(k_w) x (h_out)(w_out)
-        in_in = input_data2d.mul(input_data2d)
-        grad_grad = grad_output_data2d.mul(
-            grad_output_data2d)  # n x c_out x (h_out)(w_out)
+        grad_in = torch.einsum('bik,bjk->bij',
+                               grad_output_data2d, input_data2d)  # n x c_out x (c_in)(k_h)(k_w)
 
-        # c_out x (c_in)(k_h)(k_w)
-        data_w = torch.einsum('kil,kjl->ij', grad_grad, in_in).div(n*h*w)
-        # c_out x c_in x k_h x k_w
-        data_w = data_w.reshape((c_out, -1, *conv2d.kernel_size))
+        data_w = grad_in.mul(grad_in).mean(dim=0)  # c_out x (c_in)(k_h)(k_w)
+        data_w = data_w.reshape((c_out, -1, *conv2d.kernel_size))  # c_out x c_in x k_h x k_w
         self._data = [data_w]
 
         if self.bias:
-            data_b = grad_grad.mean(dim=2).mean(dim=0)  # c_out
+            grad_grad = grad_output_data2d.mul(grad_output_data2d)  # n x c_out x (h_out)(w_out)
+            data_b = grad_grad.sum(dim=2).mean(dim=0)  # c_out
             self._data.append(data_b)
 
 
