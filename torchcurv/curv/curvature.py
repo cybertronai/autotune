@@ -16,6 +16,9 @@ class Curvature(object):
         self.ema = None
         self.inv = None
 
+        # for vi
+        self.std = None
+
         module.register_forward_pre_hook(self.forward_preprocess)
         module.register_backward_hook(self.backward_postprocess)
 
@@ -45,7 +48,8 @@ class Curvature(object):
     def update_in_backward(self, grad_output_data):
         raise NotImplementedError
 
-    def update_ema(self):
+    # modified for vi
+    def update_ema(self, n=1):
         data = self.data
         ema = self.ema
         alpha = self.ema_decay
@@ -54,12 +58,13 @@ class Curvature(object):
         else:
             assert type(data) == type(ema)
             if isinstance(ema, torch.Tensor):
-                self.ema = data.mul(alpha).add(1 - alpha, ema)
+                self.ema = data.mul(alpha/n).add(1 - alpha, ema)
             elif isinstance(ema, list):
-                self.ema = [d.mul(alpha).add(1 - alpha, e)
+                self.ema = [d.mul(alpha/n).add(1 - alpha, e)
                             for d, e in zip(data, ema)]
             else:
                 raise TypeError
+            self.zero_data()
 
     def update_inv(self):
         ema = self.ema
@@ -78,7 +83,19 @@ class Curvature(object):
 
     def precgrad(self, params):
         raise NotImplementedError
- 
+
+    # for vi
+    def zero_data(self):
+        data = self.data
+        if isinstance(data, torch.Tensor):
+            data.fill_(0)
+        elif isinstance(data, list):
+            for d in data:
+                d.fill_(0)
+
+        else:
+            raise TypeError
+
 
 class DiagCurvature(Curvature):
 
@@ -134,9 +151,15 @@ class KronCurvature(Curvature):
     def precgrad(self, params):
         raise NotImplementedError
 
+    # for vi
+    def update_std(self):
+        A_inv, G_inv = self.inv
+
+        self.std = [torchcurv.utils.cholesky(X)
+                    for X in [A_inv, G_inv]]
+
 
 def add_value_to_diagonal(X, value):
     indices = torch.LongTensor([[i, i] for i in range(X.shape[0])])
     values = X.new_ones(X.shape[0]).mul(value)
     return X.index_put(tuple(indices.t()), values, accumulate=True)
-
