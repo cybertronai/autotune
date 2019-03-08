@@ -12,6 +12,7 @@
   "optim_args": {
     "curv_type":"KronFisher",
     "momentum": 0.9,
+    "momentum_type": "precgrad",
     "adjust_momentum": true,
     "weight_decay": 0.05
   },
