@@ -13,7 +13,16 @@ class VIOptimizer(SecondOrderOptimizer):
         self.defaults['std_scale'] = std_scale
         self.fisher_init = False
 
-    def step(self, closure):
+    def closure(self):
+        data, target = self.data, self.target
+        self.zero_grad()
+        output = self.model(data)
+        loss = F.cross_entropy(output, target)
+        loss.backward()
+        
+        return loss, output
+
+    def step(self, data=None, target=None, closure=None):
         """Performs a single optimization step.
 
         Arguments:
@@ -25,6 +34,12 @@ class VIOptimizer(SecondOrderOptimizer):
             # forward/backward
             return loss, output
         '''
+        self.data = data
+        self.target = target
+        if closure is None:
+            if data is None or target is None:
+                raise RuntimeError('VIOptimizer needs closure or data and target')
+            closure = self.closure
 
         # initialize fisher matrix (for only init))
         if self.fisher_init is False:
@@ -63,7 +78,6 @@ class VIOptimizer(SecondOrderOptimizer):
                 curv.sample_params(params, mean, std_scale)
 
             # forward and backward (curv.data is accumulated)
-            # todo curv accumulate(for vi)
             loss, output = closure()
 
             if loss_avg is None:
