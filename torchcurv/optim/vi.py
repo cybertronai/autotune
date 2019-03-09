@@ -13,6 +13,25 @@ class VIOptimizer(SecondOrderOptimizer):
         self.defaults['std_scale'] = std_scale
         self.fisher_init = False
 
+    def update_preprocess(self, group):
+        params = group['params']
+        mean = group['mean']
+        mean_grad = group['mean_grad']
+        for p, m, m_grad in zip(params, mean, mean_grad):
+
+            if p.grad is None:
+                continue
+
+            p.data.copy_(m)
+            p.grad.data.copy_(m_grad)
+
+            grad = p.grad.data
+
+            if group['momentum_type'] == 'grad':
+                momentum = self.momentum(group)
+                self.apply_momentum(p, grad, momentum)
+
+
     def closure(self):
         data, target = self.data, self.target
         self.zero_grad()
@@ -111,41 +130,14 @@ class VIOptimizer(SecondOrderOptimizer):
         # update distribution and clear buf
         for group in self.param_groups:
             params = group['params']
-            mean = group['mean']
-            mean_grad = group['mean_grad']
             curv = group['curv']
             if curv is not None:
-                for p, m, m_grad in zip(params, mean, mean_grad):
-
-                    if p.grad is None:
-                        continue
-
-                    p.data.copy_(m)
-                    p.grad.data.copy_(m_grad)
-
-                    grad = p.grad.data
-
-                    if group['momentum_type'] == 'grad':
-                        momentum = self.momentum(group)
-                        self.apply_momentum(p, grad, momentum)
+                self.update_preprocess(group)
 
                 curv.update_ema(n)
                 curv.update_inv()
                 curv.update_std()
                 precgrad = curv.precgrad(params)
 
-                for p, grad in zip(params, precgrad):
-
-                    if group['weight_decay'] != 0:
-                        if grad.is_sparse:
-                            raise RuntimeError(
-                                "weight_decay option is not compatible with sparse gradients")
-                        grad.add_(group['weight_decay'], p.data)
-
-                    if group['momentum_type'] == 'precgrad':
-                        momentum = self.momentum(group)
-                        self.apply_momentum(p, grad, momentum)
-
-                    p.data.add_(-group['lr'], grad)
-
+                self.update_postprocess(group, precgrad)
         return loss_avg, output_avg
