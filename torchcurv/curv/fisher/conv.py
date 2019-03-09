@@ -97,8 +97,8 @@ class KronFisherConv2d(KronCurvature):
                 (mean[0].reshape(oc, -1), mean[1].view(-1, 1)), 1)
             param = m.add(std_scale, G_ic.mm(
                 torch.randn_like(m)).mm(A_ic))
-            params[0].data = param[:, 0:-1].reshape(oc, ic, h, w)
-            params[1].data = param[:, -1]
+            params[0].data.copy_(param[:, 0:-1].reshape(oc, ic, h, w))
+            params[1].data.copy_(param[:, -1])
         else:
             m = mean[0].reshape(oc, -1)
             param = m.add(std_scale, G_ic.mm(
