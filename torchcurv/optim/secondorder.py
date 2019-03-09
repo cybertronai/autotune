@@ -24,18 +24,6 @@ def get_curv_class(curv_type, module):
     return curv_class
 
 
-def extract_kwargs(func, target):
-    if target is None:
-        return {}
-
-    keys = list(inspect.signature(func).parameters.keys())
-    kwargs = {}
-    for key, val in target.items():
-        if key in keys:
-            kwargs[key] = val
-    return kwargs
-
-
 class SecondOrderOptimizer(Optimizer):
 
     def __init__(self, model, curv_type, lr=0.01, momentum=0.9, momentum_type='precgrad', adjust_momentum=False, l2_reg=0, weight_decay=0, **curv_kwargs):
