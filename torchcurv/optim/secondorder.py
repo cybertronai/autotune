@@ -24,18 +24,6 @@ def get_curv_class(curv_type, module):
     return curv_class
 
 
-def extract_kwargs(func, target):
-    if target is None:
-        return {}
-
-    keys = list(inspect.signature(func).parameters.keys())
-    kwargs = {}
-    for key, val in target.items():
-        if key in keys:
-            kwargs[key] = val
-    return kwargs
-
-
 class SecondOrderOptimizer(Optimizer):
 
     def __init__(self, model, curv_type, lr=0.01, momentum=0.9, momentum_type='precgrad', adjust_momentum=False, l2_reg=0, weight_decay=0, **curv_kwargs):
@@ -108,6 +96,42 @@ class SecondOrderOptimizer(Optimizer):
         else:
             return group['momentum']
 
+    def update_preprocess(self, group):
+        params = group['params']
+        for p in params:
+
+            if p.grad is None:
+                continue
+
+            grad = p.grad.data
+
+            if group['l2_reg'] != 0:
+                if grad.is_sparse:
+                    raise RuntimeError(
+                        "l2 regularization option is not compatible with sparse gradients")
+                grad.add_(group['l2_reg'], p.data)
+
+            if group['momentum_type'] == 'grad':
+                momentum = self.momentum(group)
+                self.apply_momentum(p, grad, momentum)
+
+    def update_postprocess(self, group, precgrad):
+        params = group['params']
+        for p, grad in zip(params, precgrad):
+
+            if group['weight_decay'] != 0:
+                if grad.is_sparse:
+                    raise RuntimeError(
+                        "weight_decay option is not compatible with sparse gradients")
+                grad.add_(group['weight_decay'], p.data)
+
+            if group['momentum_type'] == 'precgrad':
+                momentum = self.momentum(group)
+                self.apply_momentum(p, grad, momentum)
+
+            p.data.add_(-group['lr'], grad)
+
+
     def step(self, closure=None):
         """Performs a single optimization step.
 
@@ -123,39 +147,12 @@ class SecondOrderOptimizer(Optimizer):
             params = group['params']
             curv = group['curv']
             if curv is not None:
-                for p in params:
-
-                    if p.grad is None:
-                        continue
-
-                    grad = p.grad.data
-
-                    if group['l2_reg'] != 0:
-                        if grad.is_sparse:
-                            raise RuntimeError(
-                                "l2 regularization option is not compatible with sparse gradients")
-                        grad.add_(group['l2_reg'], p.data)
-
-                    if group['momentum_type'] == 'grad':
-                        momentum = self.momentum(group)
-                        self.apply_momentum(p, grad, momentum)
+                self.update_preprocess(group)
 
                 curv.update_ema()
                 curv.update_inv()
                 precgrad = curv.precgrad(params)
 
-                for p, grad in zip(params, precgrad):
-
-                    if group['weight_decay'] != 0:
-                        if grad.is_sparse:
-                            raise RuntimeError(
-                                "weight_decay option is not compatible with sparse gradients")
-                        grad.add_(group['weight_decay'], p.data)
-
-                    if group['momentum_type'] == 'precgrad':
-                        momentum = self.momentum(group)
-                        self.apply_momentum(p, grad, momentum)
-
-                    p.data.add_(-group['lr'], grad)
+                self.update_postprocess(group, precgrad)
 
         return loss
