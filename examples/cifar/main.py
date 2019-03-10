@@ -36,11 +36,15 @@ def train(model, device, train_loader, optimizer, epoch, args, logger):
             setattr(optimizer, attr, p.clone())
 
         # update params
-        optimizer.zero_grad()
-        output = model(data)
-        loss = F.cross_entropy(output, target)
-        loss.backward()
-        optimizer.step()
+        def closure():
+            optimizer.zero_grad()
+            output = model(data)
+            loss = F.cross_entropy(output, target)
+            loss.backward()
+
+            return loss, output
+
+        loss, output = optimizer.step(closure=closure)
 
         pred = output.argmax(dim=1, keepdim=True)
         correct = pred.eq(target.view_as(pred)).sum().item()
@@ -65,6 +69,10 @@ def train(model, device, train_loader, optimizer, epoch, args, logger):
                    'accuracy': accuracy, 'loss': loss, 'lr': lr}
 
             for i, param_group in enumerate(optimizer.param_groups):
+                for param in param_group['params']:
+                    print(param.shape)
+                    param.view(-1)
+
                 p = parameters_to_vector(param_group['params'])
                 attr = 'p_pre_{}'.format(i)
                 p_pre = getattr(optimizer, attr)

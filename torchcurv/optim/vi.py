@@ -31,7 +31,6 @@ class VIOptimizer(SecondOrderOptimizer):
                 momentum = self.momentum(group)
                 self.apply_momentum(p, grad, momentum)
 
-
     def closure(self):
         data, target = self.data, self.target
         self.zero_grad()

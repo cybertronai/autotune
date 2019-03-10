@@ -1,0 +1,31 @@
+{
+  "dataset": "CIFAR-10",
+  "epochs": 15,
+  "batch_size": 64,
+  "test_batch_size": 128,
+  "random_crop": false,
+  "random_horizontal_flip": false,
+  "normalizing_data": false,
+  "arch_file": "models/lenet.py",
+  "arch_name": "LeNet5",
+  "optim_name": "VIOptimizer",
+  "optim_args": {
+    "curv_type":"KronFisher",
+    "momentum": 0.9,
+    "adjust_momentum": false,
+    "weight_decay": 0.1,
+    "std_scale": 2e-3,
+    "num_samples": 10
+  },
+  "curv_args": {
+    "damping": 1e-4,
+    "ema_decay": 0.333,
+    "pi_type": "tracenorm"
+  },
+  "lr": 0.004,
+  "scheduler_name": "ExponentialLR",
+  "scheduler_args": {
+    "gamma": 0.9
+  },
+  "no_cuda": false
+}
