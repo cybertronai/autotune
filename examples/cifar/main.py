@@ -69,10 +69,6 @@ def train(model, device, train_loader, optimizer, epoch, args, logger):
                    'accuracy': accuracy, 'loss': loss, 'lr': lr}
 
             for i, param_group in enumerate(optimizer.param_groups):
-                for param in param_group['params']:
-                    print(param.shape)
-                    param.view(-1)
-
                 p = parameters_to_vector(param_group['params'])
                 attr = 'p_pre_{}'.format(i)
                 p_pre = getattr(optimizer, attr)
