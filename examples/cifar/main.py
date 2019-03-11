@@ -265,7 +265,6 @@ def main():
         optimizer = optim_class(model.parameters(), **optim_kwargs)
 
     # Setup lr scheduler
-    scheduler_kwargs = {}
     if args.scheduler_name is None:
         scheduler = None
     else:
