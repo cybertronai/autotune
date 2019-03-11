@@ -290,12 +290,6 @@ def main():
             print('{}: {}'.format(key, val))
             print('train data size: {}'.format(len(train_loader.dataset)))
             print('test data size: {}'.format(len(test_loader.dataset)))
-        elif key == 'arch_args':
-            print('   {}'.format(arch_kwargs))
-        elif key == 'optim_args':
-            print('   {}'.format(optim_kwargs))
-        elif key == 'scheduler_args':
-            print('   {}'.format(scheduler_kwargs))
         else:
             print('{}: {}'.format(key, val))
     print('===========================')
