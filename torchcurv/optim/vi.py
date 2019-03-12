@@ -59,13 +59,13 @@ class VIOptimizer(SecondOrderOptimizer):
                 raise RuntimeError('VIOptimizer needs closure or data and target')
             closure = self.closure
 
-        # initialize fisher matrix (for only init))
+#        # initialize fisher matrix (for only init))
         if self.fisher_init is False:
             loss, _ = closure()  # forward/backward
             for group in self.param_groups:
                 curv = group['curv']
                 if curv is not None:
-                    curv.update_ema(1)
+                    curv.update_ema()
                     curv.update_inv()
                     curv.update_std()
                     group['mean'] = [p.clone().detach()
@@ -88,6 +88,7 @@ class VIOptimizer(SecondOrderOptimizer):
         std_scale = self.defaults['std_scale']
         loss_avg = None
         output_avg = None
+
         for i in range(n):
 
             # sampling
@@ -95,7 +96,7 @@ class VIOptimizer(SecondOrderOptimizer):
                 params, mean, curv = group['params'], group['mean'], group['curv']
                 curv.sample_params(params, mean, std_scale)
 
-            # forward and backward (curv.data is accumulated)
+            # forward and backward
             loss, output = closure()
 
             if loss_avg is None:
@@ -111,6 +112,7 @@ class VIOptimizer(SecondOrderOptimizer):
                 mean_grad = group['mean_grad']
                 curv = group['curv']
                 if curv is not None:
+                    curv.accumulate(scale=1/n)
                     for p, m_grad in zip(params, mean_grad):
 
                         if p.grad is None:
@@ -133,7 +135,8 @@ class VIOptimizer(SecondOrderOptimizer):
             if curv is not None:
                 self.update_preprocess(group)
 
-                curv.update_ema(n)
+                curv.clear_accumulation()
+                curv.update_ema()
                 curv.update_inv()
                 curv.update_std()
                 precgrad = curv.precgrad(params)

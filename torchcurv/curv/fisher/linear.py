@@ -31,7 +31,6 @@ class DiagFisherLinear(DiagCurvature):
 
 class KronFisherLinear(KronCurvature):
 
-    # modified for vi
     def update_in_forward(self, input_data):
         n = input_data.shape[0]  # n x f_in
         if self.bias:
@@ -41,10 +40,7 @@ class KronFisherLinear(KronCurvature):
 
         # f_in x f_in or (f_in+1) x (f_in+1)
         A = torch.einsum('ki,kj->ij', input_data, input_data).div(n)
-        if self._A is None:
-            self._A = A
-        else:
-            self._A.add_(A)
+        self._A = A
 
     def update_in_backward(self, grad_output_data):
         n = grad_output_data.shape[0]  # n x f_out
@@ -52,10 +48,7 @@ class KronFisherLinear(KronCurvature):
         # f_out x f_out
         G = torch.einsum(
             'ki,kj->ij', grad_output_data, grad_output_data).div(n)
-        if self._G is None:
-            self._G = G
-        else:
-            self._G.add_(G)
+        self._G = G
 
     def precgrad(self, params):
         A_inv, G_inv = self.inv
@@ -87,5 +80,5 @@ class KronFisherLinear(KronCurvature):
         else:
             m = mean[0]
             param = mean.add(std_scale, G_ic.mm(
-                torch.randn_like(mean)).mm(A_ic))
+                torch.randn_like(m)).mm(A_ic))
             params[0].data = param

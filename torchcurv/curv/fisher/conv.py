@@ -43,7 +43,6 @@ class DiagFisherConv2d(DiagCurvature):
 
 class KronFisherConv2d(KronCurvature):
 
-    # modified for vi
     def update_in_forward(self, input_data):
         kernel_size, stride, padding, dilation = \
             self._module.kernel_size, self._module.stride, self._module.padding, self._module.dilation
@@ -56,20 +55,14 @@ class KronFisherConv2d(KronCurvature):
             m = torch.cat((m, m.new_ones((1, b))), 0)
 
         A = torch.einsum('ik,jk->ij', m, m).div(n)
-        if self._A is None:
-            self._A = A
-        else:
-            self._A.add_(A)
+        self._A = A
 
     def update_in_backward(self, grad_output_data):
         n, c, h, w = grad_output_data.shape  # n x c x h x w
         m = grad_output_data.transpose(0, 1).reshape(c, -1)  # c x nhw
 
         G = torch.einsum('ik,jk->ij', m, m).div(n*h*w)
-        if self._G is None:
-            self._G = G
-        else:
-            self._G.add_(G)
+        self._G = G
 
     def precgrad(self, params):
         A_inv, G_inv = self.inv

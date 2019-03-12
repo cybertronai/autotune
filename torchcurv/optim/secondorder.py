@@ -131,7 +131,6 @@ class SecondOrderOptimizer(Optimizer):
 
             p.data.add_(-group['lr'], grad)
 
-
     def step(self, closure=None):
         """Performs a single optimization step.
 

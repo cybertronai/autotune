@@ -1,6 +1,8 @@
 import torch
 import torchcurv
 
+import copy
+
 PI_TYPE_TRACENORM = 'tracenorm'
 
 
@@ -12,6 +14,7 @@ class Curvature(object):
         self.damping = damping
 
         self._data = None
+        self._acc_data = None
         self._input_data = None
         self.ema = None
         self.inv = None
@@ -26,6 +29,10 @@ class Curvature(object):
     def data(self):
         return self._data
 
+    @data.setter
+    def data(self, value):
+        self._data = value
+
     @property
     def bias(self):
         bias = getattr(self._module, 'bias', None)
@@ -35,7 +42,6 @@ class Curvature(object):
         self.update_in_forward(input[0].data)
 
     def backward_postprocess(self, module, grad_input, grad_output):
-
         # for adjusting grad scale along with 'reduction' in loss function
         batch_size = grad_output[0].data.shape[0]
         grad_output_data = grad_output[0].data.mul(batch_size)
@@ -43,38 +49,41 @@ class Curvature(object):
         self.update_in_backward(grad_output_data)
 
     def update_in_forward(self, input_data):
-        self._input_data = input_data.clone()
+        self._input_data = input_data.clone().detach()
 
     def update_in_backward(self, grad_output_data):
         raise NotImplementedError
 
-    # modified for vi
-    def update_ema(self, n=1):
+    def accumulate(self, scale=1):
+        data = self.data
+        acc_data = self._acc_data
+
+        if acc_data is None:
+            self._acc_data = [d.mul(scale) for d in data]
+        else:
+            self._acc_data = [ad.add_(scale, d)
+                              for ad, d in zip(acc_data, data)]
+
+    def save_accumulation(self):
+        self.data = self._acc_data
+        self.clear_accumulation()
+
+    def clear_accumulation(self):
+        self._acc_data = None
+
+    def update_ema(self):
         data = self.data
         ema = self.ema
         alpha = self.ema_decay
         if ema is None or alpha == 1:
-            self.ema = data
+            self.ema = copy.deepcopy(data)
         else:
-            assert type(data) == type(ema)
-            if isinstance(ema, torch.Tensor):
-                self.ema = data.mul(alpha/n).add(1 - alpha, ema)
-            elif isinstance(ema, list):
-                self.ema = [d.mul(alpha/n).add(1 - alpha, e)
-                            for d, e in zip(data, ema)]
-            else:
-                raise TypeError
-            self.zero_data()
+            self.ema = [d.mul(alpha).add(1 - alpha, e)
+                        for d, e in zip(data, ema)]
 
     def update_inv(self):
         ema = self.ema
-
-        if isinstance(ema, torch.Tensor):
-            self.inv = self._inv(ema)
-        elif isinstance(ema, list):
-            self.inv = [self._inv(e) for e in ema]
-        else:
-            raise TypeError
+        self.inv = [self._inv(e) for e in ema]
 
     def _inv(self, X):
         X_damp = add_value_to_diagonal(X, self.damping)
@@ -83,18 +92,6 @@ class Curvature(object):
 
     def precgrad(self, params):
         raise NotImplementedError
-
-    # for vi
-    def zero_data(self):
-        data = self.data
-        if isinstance(data, torch.Tensor):
-            data.fill_(0)
-        elif isinstance(data, list):
-            for d in data:
-                d.fill_(0)
-
-        else:
-            raise TypeError
 
 
 class DiagCurvature(Curvature):
@@ -129,6 +126,10 @@ class KronCurvature(Curvature):
     @property
     def data(self):
         return [self._A, self._G]
+
+    @data.setter
+    def data(self, value):
+        self._A, self._G = value
 
     def update_in_forward(self, input_data):
         raise NotImplementedError
