@@ -10,10 +10,7 @@ class VIOptimizer(SecondOrderOptimizer):
         self.defaults['num_samples'] = num_samples
         self.defaults['std_scale'] = std_scale
 
-        for group in self.param_groups:
-            for p in group['params']:
-                state = self.state[p]
-                state['step'] = 0
+        self.state['step'] = 0
 
     def step(self, closure=None):
         """Performs a single optimization step.
@@ -27,7 +24,7 @@ class VIOptimizer(SecondOrderOptimizer):
             return loss, output
         """
 
-        n = self.defaults['num_samples']
+        n = self.defaults['num_samples'] if self.state['step'] > 0 else 1
         std_scale = self.defaults['std_scale']
         acc_loss = TensorAccumulator()
         acc_ouput = TensorAccumulator()
@@ -57,6 +54,8 @@ class VIOptimizer(SecondOrderOptimizer):
                     grads = [p.grad for p in params]
                     group['acc_grads'].update(grads, scale=1/n)
 
+        self.state['step'] += 1
+
         # update distribution
         for group in self.param_groups:
             params = group['params']
@@ -64,8 +63,6 @@ class VIOptimizer(SecondOrderOptimizer):
             acc_grads = group['acc_grads'].get()
             for p, acc_grad in zip(params, acc_grads):
                 p.grad.data.copy_(acc_grad)
-                state = self.state[p]
-                state['step'] += 1
 
             # update covariance
             curv = group['curv']

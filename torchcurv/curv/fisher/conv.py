@@ -84,6 +84,9 @@ class KronFisherConv2d(KronCurvature):
 
     # for vi
     def sample_params(self, params, mean, std_scale):
+        if self.std is None:
+            return
+
         A_ic, G_ic = self.std
         oc, ic, h, w = mean[0].shape
         if self.bias:
@@ -98,3 +101,4 @@ class KronFisherConv2d(KronCurvature):
             param = m.add(std_scale, G_ic.mm(
                 torch.randn_like(m)).mm(A_ic))
             params[0].data = param.reshape(oc, ic, h, w)
+
