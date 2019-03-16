@@ -24,15 +24,18 @@ class TensorAccumulator(object):
             if accumulation is None:
                 self._accumulation = [d.mul(scale) for d in data]
             else:
-                self._accumulation = [ad.add(scale, d)
-                                      for ad, d in zip(accumulation, data)]
+                self._accumulation = [acc.add(scale, d)
+                                      for acc, d in zip(accumulation, data)]
         else:
             if accumulation is None:
-                self._accumulation = data
+                self._accumulation = data.mul(scale)
             else:
                 self._accumulation = accumulation.add(scale, data)
 
     def get(self, clear=True):
+        if self._accumulation is None:
+            return None
+
         if isinstance(self._accumulation, list):
             data = [d.clone().detach() for d in self._accumulation]
         else:
