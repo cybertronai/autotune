@@ -54,23 +54,6 @@ class Curvature(object):
     def update_in_backward(self, grad_output_data):
         raise NotImplementedError
 
-    def accumulate(self, scale=1):
-        data = self.data
-        acc_data = self._acc_data
-
-        if acc_data is None:
-            self._acc_data = [d.mul(scale) for d in data]
-        else:
-            self._acc_data = [ad.add_(scale, d)
-                              for ad, d in zip(acc_data, data)]
-
-    def save_accumulation(self):
-        self.data = self._acc_data
-        self.clear_accumulation()
-
-    def clear_accumulation(self):
-        self._acc_data = None
-
     def update_ema(self):
         data = self.data
         ema = self.ema
@@ -90,7 +73,7 @@ class Curvature(object):
 
         return torchcurv.utils.inv(X_damp)
 
-    def precgrad(self, params):
+    def precondition_grad(self, params):
         raise NotImplementedError
 
 
@@ -104,14 +87,10 @@ class DiagCurvature(Curvature):
 
         return 1 / X_damp
 
-    def precgrad(self, params):
-        precgrad = []
-
+    def precondition_grad(self, params):
         for param_i, inv_i in zip(params, self.inv):
             grad = param_i.grad
-            precgrad.append(inv_i.mul(grad))
-
-        return precgrad
+            setattr(param_i, 'precgrad', inv_i.mul(grad))
 
 
 class KronCurvature(Curvature):
@@ -149,7 +128,7 @@ class KronCurvature(Curvature):
         self.inv = [torchcurv.utils.inv(add_value_to_diagonal(X, value))
                     for X, value in zip([A, G], [r*pi, r/pi])]
 
-    def precgrad(self, params):
+    def precondition_grad(self, params):
         raise NotImplementedError
 
     # for vi

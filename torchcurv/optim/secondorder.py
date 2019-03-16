@@ -1,10 +1,10 @@
 from collections import defaultdict
-import inspect
 
 import torch
 import torch.nn as nn
 from torch.optim import Optimizer
 import torchcurv
+from torchcurv.utils import TensorAccumulator
 
 
 def get_curv_class(curv_type, module):
@@ -61,11 +61,16 @@ class SecondOrderOptimizer(Optimizer):
                 curvature = curv_class(module, **curv_kwargs)
             else:
                 curvature = None
+
             group = {
                 'params': params,
-                'curv': curvature
+                'curv': curvature,
+                'acc_curv': TensorAccumulator(),
+                'acc_grads': TensorAccumulator()
             }
+
             self.add_param_group(group)
+
             for p in params:
                 state = self.state[p]
                 state['momentum_buffer'] = torch.zeros_like(p.data)
@@ -115,12 +120,18 @@ class SecondOrderOptimizer(Optimizer):
                 momentum = self.momentum(group)
                 self.apply_momentum(p, grad, momentum)
 
-    def update_postprocess(self, group, precgrad):
-        params = group['params']
-        for p, grad in zip(params, precgrad):
+    def update(self, group, target='params'):
+        params = group[target]
+
+        for p in params:
+
+            grad = p.precgrad if hasattr(p, 'precgrad') else p.grad
+
+            if grad is None:
+                continue
 
             if group['weight_decay'] != 0:
-                if grad.is_sparse:
+                if hasattr(grad, 'is_sparse') and grad.is_sparse:
                     raise RuntimeError(
                         "weight_decay option is not compatible with sparse gradients")
                 grad.add_(group['weight_decay'], p.data)
@@ -144,14 +155,15 @@ class SecondOrderOptimizer(Optimizer):
 
         for group in self.param_groups:
             params = group['params']
+
+            self.update_preprocess(group)
+
             curv = group['curv']
             if curv is not None:
-                self.update_preprocess(group)
-
                 curv.update_ema()
                 curv.update_inv()
-                precgrad = curv.precgrad(params)
+                curv.precondition_grad(params)
 
-                self.update_postprocess(group, precgrad)
+            self.update(group)
 
         return loss

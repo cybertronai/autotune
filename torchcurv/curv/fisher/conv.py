@@ -64,22 +64,23 @@ class KronFisherConv2d(KronCurvature):
         G = torch.einsum('ik,jk->ij', m, m).div(n*h*w)
         self._G = G
 
-    def precgrad(self, params):
+    def precondition_grad(self, params):
         A_inv, G_inv = self.inv
 
         # todo check params == list?
-        oc, ic, h, w = params[0].shape
+        oc, _, _, _ = params[0].shape
         if self.bias:
             grad2d = torch.cat(
                 (params[0].grad.reshape(oc, -1), params[1].grad.view(-1, 1)), 1)
             precgrad2d = G_inv.mm(grad2d).mm(A_inv)
 
-            return [precgrad2d[:, 0:-1].reshape(oc, ic, h, w), precgrad2d[:, -1]]
+            setattr(params[0], 'precgrad', precgrad2d[:, 0:-1].reshape_as(params[0]))
+            setattr(params[1], 'precgrad', precgrad2d[:, -1])
         else:
             grad2d = params[0].grad.reshape(oc, -1)
             precgrad2d = G_inv.mm(grad2d).mm(A_inv)
 
-            return [precgrad2d.reshape(oc, ic, h, w)]
+            setattr(params[0], 'precgrad', precgrad2d.reshape_as(params[0]))
 
     # for vi
     def sample_params(self, params, mean, std_scale):

@@ -7,7 +7,7 @@ class FisherLinear(Curvature):
     def update_in_backward(self, grad_output_data):
         pass
 
-    def precgrad(self, params):
+    def precondition_grad(self, params):
         pass
 
 
@@ -50,7 +50,7 @@ class KronFisherLinear(KronCurvature):
             'ki,kj->ij', grad_output_data, grad_output_data).div(n)
         self._G = G
 
-    def precgrad(self, params):
+    def precondition_grad(self, params):
         A_inv, G_inv = self.inv
 
         # todo check params == list?
@@ -59,12 +59,13 @@ class KronFisherLinear(KronCurvature):
                 (params[0].grad, params[1].grad.view(-1, 1)), 1)
             precgrad = G_inv.mm(grad).mm(A_inv)
 
-            return [precgrad[:, :-1], precgrad[:, -1]]
+            setattr(params[0], 'precgrad', precgrad[:, :-1])
+            setattr(params[1], 'precgrad', precgrad[:, -1])
         else:
             grad = params[0].grad
             precgrad = G_inv.mm(grad).mm(A_inv)
 
-            return [precgrad]
+            setattr(params[0], 'precgrad', precgrad)
 
     # for vi
     def sample_params(self, params, mean, std_scale):
