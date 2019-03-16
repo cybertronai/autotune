@@ -30,7 +30,7 @@ class VIOptimizer(SecondOrderOptimizer):
         n = self.defaults['num_samples'] if self.state['step'] > 0 else 1
         std_scale = self.defaults['std_scale']
         acc_loss = TensorAccumulator()
-        acc_ouput = TensorAccumulator()
+        acc_output = TensorAccumulator()
 
         for i in range(n):
 
@@ -43,7 +43,7 @@ class VIOptimizer(SecondOrderOptimizer):
             loss, output = closure()
 
             acc_loss.update(loss, scale=1/n)
-            acc_ouput.update(output, scale=1/n)
+            acc_output.update(output, scale=1/n)
 
             # update buf
             for group in self.param_groups:
@@ -51,11 +51,12 @@ class VIOptimizer(SecondOrderOptimizer):
 
                 self.backward_postprocess(group)
 
+                grads = [p.grad.data for p in params]
+                group['acc_grads'].update(grads, scale=1/n)
+
                 curv = group['curv']
                 if curv is not None:
                     group['acc_curv'].update(curv.data, scale=1/n)
-                    grads = [p.grad.data for p in params]
-                    group['acc_grads'].update(grads, scale=1/n)
 
         self.state['step'] += 1
 
@@ -65,7 +66,7 @@ class VIOptimizer(SecondOrderOptimizer):
 
             acc_grads = group['acc_grads'].get()
             for p, acc_grad in zip(params, acc_grads):
-                p.grad.data.copy_(acc_grad)
+                p.grad.copy_(acc_grad)
 
             # update covariance
             curv = group['curv']
@@ -79,7 +80,7 @@ class VIOptimizer(SecondOrderOptimizer):
             # update mean
             self.update(group, target='mean')
 
-        loss, output = acc_loss.get(), acc_ouput.get()
+        loss, output = acc_loss.get(), acc_output.get()
 
         return loss, output
 
