@@ -13,8 +13,7 @@ class VIOptimizer(SecondOrderOptimizer):
         self.state['step'] = 0
 
         for group in self.param_groups:
-            mean = [p.clone().detach() for p in group['params']]
-            group['mean'] = mean
+            group['mean'] = [p.clone().detach() for p in group['params']]
 
     def step(self, closure=None):
         """Performs a single optimization step.
@@ -55,7 +54,7 @@ class VIOptimizer(SecondOrderOptimizer):
                 curv = group['curv']
                 if curv is not None:
                     group['acc_curv'].update(curv.data, scale=1/n)
-                    grads = [p.grad for p in params]
+                    grads = [p.grad.data for p in params]
                     group['acc_grads'].update(grads, scale=1/n)
 
         self.state['step'] += 1
