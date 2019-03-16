@@ -10,6 +10,11 @@ class VIOptimizer(SecondOrderOptimizer):
         self.defaults['num_samples'] = num_samples
         self.defaults['std_scale'] = std_scale
 
+        for group in self.param_groups:
+            for p in group['params']:
+                state = self.state[p]
+                state['step'] = 0
+
     def step(self, closure=None):
         """Performs a single optimization step.
 
@@ -43,6 +48,9 @@ class VIOptimizer(SecondOrderOptimizer):
             # update buf
             for group in self.param_groups:
                 params = group['params']
+
+                self.backward_postprocess(group)
+
                 curv = group['curv']
                 if curv is not None:
                     group['acc_curv'].update(curv.data, scale=1/n)
@@ -56,8 +64,8 @@ class VIOptimizer(SecondOrderOptimizer):
             acc_grads = group['acc_grads'].get()
             for p, acc_grad in zip(params, acc_grads):
                 p.grad.data.copy_(acc_grad)
-
-            self.update_preprocess(group)
+                state = self.state[p]
+                state['step'] += 1
 
             # update covariance
             curv = group['curv']

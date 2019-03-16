@@ -101,7 +101,7 @@ class SecondOrderOptimizer(Optimizer):
         else:
             return group['momentum']
 
-    def update_preprocess(self, group):
+    def backward_postprocess(self, group):
         params = group['params']
         for p in params:
 
@@ -156,7 +156,7 @@ class SecondOrderOptimizer(Optimizer):
         for group in self.param_groups:
             params = group['params']
 
-            self.update_preprocess(group)
+            self.backward_postprocess(group)
 
             curv = group['curv']
             if curv is not None:
