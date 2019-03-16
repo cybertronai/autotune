@@ -1,4 +1,3 @@
-import copy
 from torch import Tensor
 
 
@@ -10,7 +9,7 @@ class TensorAccumulator(object):
     def update(self, data, scale=1.):
         accumulation = self._accumulation
 
-        if type(data) == list:
+        if isinstance(data, list):
             assert type(data[0]) == Tensor, 'the type of data has to be list of torch.Tensor or torch.Tensor'
         else:
             assert type(data) == Tensor, 'the type of data has to be list of torch.Tensor or torch.Tensor'
@@ -21,7 +20,7 @@ class TensorAccumulator(object):
                 'the type of the accumulation ({})'.format(
                 type(data), type(accumulation))
 
-        if type(data) == list:
+        if isinstance(data, list):
             if accumulation is None:
                 self._accumulation = [d.mul(scale) for d in data]
             else:
@@ -34,7 +33,11 @@ class TensorAccumulator(object):
                 self._accumulation = accumulation.add(scale, data)
 
     def get(self, clear=True):
-        data = copy.deepcopy(self._accumulation)
+        if isinstance(self._accumulation, list):
+            data = [d.clone().detach() for d in self._accumulation]
+        else:
+            data = self._accumulation.clone().detach()
+
         if clear:
             self.clear()
 

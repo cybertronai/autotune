@@ -12,6 +12,10 @@ class VIOptimizer(SecondOrderOptimizer):
 
         self.state['step'] = 0
 
+        for group in self.param_groups:
+            mean = [p.clone().detach() for p in group['params']]
+            group['mean'] = mean
+
     def step(self, closure=None):
         """Performs a single optimization step.
 
