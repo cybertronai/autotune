@@ -37,9 +37,9 @@ class TensorAccumulator(object):
             return None
 
         if isinstance(self._accumulation, list):
-            data = [d.clone().detach() for d in self._accumulation]
+            data = [d.clone() for d in self._accumulation]
         else:
-            data = self._accumulation.clone().detach()
+            data = self._accumulation.clone()
 
         if clear:
             self.clear()
