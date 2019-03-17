@@ -36,8 +36,10 @@ class VIOptimizer(SecondOrderOptimizer):
 
             # sampling
             for group in self.param_groups:
-                params, mean, curv = group['params'], group['mean'], group['curv']
-                curv.sample_params(params, mean, std_scale)
+                curv = group['curv']
+                if curv is not None:
+                    params, mean = group['params'], group['mean']
+                    curv.sample_params(params, mean, std_scale)
 
             # forward and backward
             loss, output = closure()
