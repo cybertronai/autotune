@@ -1,10 +1,10 @@
 from collections import defaultdict
-import inspect
 
 import torch
 import torch.nn as nn
 from torch.optim import Optimizer
 import torchcurv
+from torchcurv.utils import TensorAccumulator
 
 
 def get_curv_class(curv_type, module):
@@ -61,11 +61,16 @@ class SecondOrderOptimizer(Optimizer):
                 curvature = curv_class(module, **curv_kwargs)
             else:
                 curvature = None
+
             group = {
                 'params': params,
-                'curv': curvature
+                'curv': curvature,
+                'acc_curv': TensorAccumulator(),
+                'acc_grads': TensorAccumulator()
             }
+
             self.add_param_group(group)
+
             for p in params:
                 state = self.state[p]
                 state['momentum_buffer'] = torch.zeros_like(p.data)
@@ -96,6 +101,47 @@ class SecondOrderOptimizer(Optimizer):
         else:
             return group['momentum']
 
+    def backward_postprocess(self, group):
+        params = group['params']
+        for p in params:
+
+            if p.grad is None:
+                continue
+
+            grad = p.grad.data
+
+            if group['l2_reg'] != 0:
+                if grad.is_sparse:
+                    raise RuntimeError(
+                        "l2 regularization option is not compatible with sparse gradients")
+                grad.add_(group['l2_reg'], p.data)
+
+            if group['momentum_type'] == 'grad':
+                momentum = self.momentum(group)
+                self.apply_momentum(p, grad, momentum)
+
+    def update(self, group, target='params'):
+        params = group[target]
+
+        for p in params:
+
+            grad = p.precgrad if hasattr(p, 'precgrad') else p.grad
+
+            if grad is None:
+                continue
+
+            if group['weight_decay'] != 0:
+                if hasattr(grad, 'is_sparse') and grad.is_sparse:
+                    raise RuntimeError(
+                        "weight_decay option is not compatible with sparse gradients")
+                grad.add_(group['weight_decay'], p.data)
+
+            if group['momentum_type'] == 'precgrad':
+                momentum = self.momentum(group)
+                self.apply_momentum(p, grad, momentum)
+
+            p.data.add_(-group['lr'], grad)
+
     def step(self, closure=None):
         """Performs a single optimization step.
 
@@ -109,41 +155,15 @@ class SecondOrderOptimizer(Optimizer):
 
         for group in self.param_groups:
             params = group['params']
+
+            self.backward_postprocess(group)
+
             curv = group['curv']
             if curv is not None:
-                for p in params:
-
-                    if p.grad is None:
-                        continue
-
-                    grad = p.grad.data
-
-                    if group['l2_reg'] != 0:
-                        if grad.is_sparse:
-                            raise RuntimeError(
-                                "l2 regularization option is not compatible with sparse gradients")
-                        grad.add_(group['l2_reg'], p.data)
-
-                    if group['momentum_type'] == 'grad':
-                        momentum = self.momentum(group)
-                        self.apply_momentum(p, grad, momentum)
-
                 curv.update_ema()
                 curv.update_inv()
-                precgrad = curv.precgrad(params)
+                curv.precondition_grad(params)
 
-                for p, grad in zip(params, precgrad):
-
-                    if group['weight_decay'] != 0:
-                        if grad.is_sparse:
-                            raise RuntimeError(
-                                "weight_decay option is not compatible with sparse gradients")
-                        grad.add_(group['weight_decay'], p.data)
-
-                    if group['momentum_type'] == 'precgrad':
-                        momentum = self.momentum(group)
-                        self.apply_momentum(p, grad, momentum)
-
-                    p.data.add_(-group['lr'], grad)
+            self.update(group)
 
         return loss

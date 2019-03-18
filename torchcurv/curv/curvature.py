@@ -1,6 +1,8 @@
 import torch
 import torchcurv
 
+import copy
+
 PI_TYPE_TRACENORM = 'tracenorm'
 
 
@@ -12,9 +14,13 @@ class Curvature(object):
         self.damping = damping
 
         self._data = None
+        self._acc_data = None
         self._input_data = None
         self.ema = None
         self.inv = None
+
+        # for vi
+        self.std = None
 
         module.register_forward_pre_hook(self.forward_preprocess)
         module.register_backward_hook(self.backward_postprocess)
@@ -22,6 +28,10 @@ class Curvature(object):
     @property
     def data(self):
         return self._data
+
+    @data.setter
+    def data(self, value):
+        self._data = value
 
     @property
     def bias(self):
@@ -32,17 +42,14 @@ class Curvature(object):
         self.update_in_forward(input[0].data)
 
     def backward_postprocess(self, module, grad_input, grad_output):
+        # for adjusting grad scale along with 'reduction' in loss function
+        batch_size = grad_output[0].data.shape[0]
+        grad_output_data = grad_output[0].data.mul(batch_size)
 
-        def _adjust_scale(grad_output_data):
-            # for adjusting grad scale along with 'reduction' in loss function
-            batch_size = grad_output_data.shape[0]
-            return grad_output_data.mul(batch_size)
-
-        grad_output_data = _adjust_scale(grad_output[0].data)
         self.update_in_backward(grad_output_data)
 
     def update_in_forward(self, input_data):
-        self._input_data = input_data.clone()
+        self._input_data = input_data.clone().detach()
 
     def update_in_backward(self, grad_output_data):
         raise NotImplementedError
@@ -52,35 +59,23 @@ class Curvature(object):
         ema = self.ema
         alpha = self.ema_decay
         if ema is None or alpha == 1:
-            self.ema = data
+            self.ema = copy.deepcopy(data)
         else:
-            assert type(data) == type(ema)
-            if isinstance(ema, torch.Tensor):
-                self.ema = data.mul(alpha).add(1 - alpha, ema)
-            elif isinstance(ema, list):
-                self.ema = [d.mul(alpha).add(1 - alpha, e)
-                            for d, e in zip(data, ema)]
-            else:
-                raise TypeError
+            self.ema = [d.mul(alpha).add(1 - alpha, e)
+                        for d, e in zip(data, ema)]
 
     def update_inv(self):
         ema = self.ema
-
-        if isinstance(ema, torch.Tensor):
-            self.inv = self._inv(ema)
-        elif isinstance(ema, list):
-            self.inv = [self._inv(e) for e in ema]
-        else:
-            raise TypeError
+        self.inv = [self._inv(e) for e in ema]
 
     def _inv(self, X):
         X_damp = add_value_to_diagonal(X, self.damping)
 
         return torchcurv.utils.inv(X_damp)
 
-    def precgrad(self, params):
+    def precondition_grad(self, params):
         raise NotImplementedError
- 
+
 
 class DiagCurvature(Curvature):
 
@@ -92,14 +87,10 @@ class DiagCurvature(Curvature):
 
         return 1 / X_damp
 
-    def precgrad(self, params):
-        precgrad = []
-
+    def precondition_grad(self, params):
         for param_i, inv_i in zip(params, self.inv):
             grad = param_i.grad
-            precgrad.append(inv_i.mul(grad))
-
-        return precgrad
+            setattr(param_i, 'precgrad', inv_i.mul(grad))
 
 
 class KronCurvature(Curvature):
@@ -114,6 +105,10 @@ class KronCurvature(Curvature):
     @property
     def data(self):
         return [self._A, self._G]
+
+    @data.setter
+    def data(self, value):
+        self._A, self._G = value
 
     def update_in_forward(self, input_data):
         raise NotImplementedError
@@ -133,12 +128,18 @@ class KronCurvature(Curvature):
         self.inv = [torchcurv.utils.inv(add_value_to_diagonal(X, value))
                     for X, value in zip([A, G], [r*pi, r/pi])]
 
-    def precgrad(self, params):
+    def precondition_grad(self, params):
         raise NotImplementedError
+
+    # for vi
+    def update_std(self):
+        A_inv, G_inv = self.inv
+
+        self.std = [torchcurv.utils.cholesky(X)
+                    for X in [A_inv, G_inv]]
 
 
 def add_value_to_diagonal(X, value):
     indices = torch.LongTensor([[i, i] for i in range(X.shape[0])])
     values = X.new_ones(X.shape[0]).mul(value)
     return X.index_put(tuple(indices.t()), values, accumulate=True)
-

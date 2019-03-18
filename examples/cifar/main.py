@@ -36,11 +36,15 @@ def train(model, device, train_loader, optimizer, epoch, args, logger):
             setattr(optimizer, attr, p.clone())
 
         # update params
-        optimizer.zero_grad()
-        output = model(data)
-        loss = F.cross_entropy(output, target)
-        loss.backward()
-        optimizer.step()
+        def closure():
+            optimizer.zero_grad()
+            output = model(data)
+            loss = F.cross_entropy(output, target)
+            loss.backward()
+
+            return loss, output
+
+        loss, output = optimizer.step(closure=closure)
 
         pred = output.argmax(dim=1, keepdim=True)
         correct = pred.eq(target.view_as(pred)).sum().item()
@@ -261,7 +265,6 @@ def main():
         optimizer = optim_class(model.parameters(), **optim_kwargs)
 
     # Setup lr scheduler
-    scheduler_kwargs = {}
     if args.scheduler_name is None:
         scheduler = None
     else:
@@ -286,12 +289,6 @@ def main():
             print('{}: {}'.format(key, val))
             print('train data size: {}'.format(len(train_loader.dataset)))
             print('test data size: {}'.format(len(test_loader.dataset)))
-        elif key == 'arch_args':
-            print('   {}'.format(arch_kwargs))
-        elif key == 'optim_args':
-            print('   {}'.format(optim_kwargs))
-        elif key == 'scheduler_args':
-            print('   {}'.format(scheduler_kwargs))
         else:
             print('{}: {}'.format(key, val))
     print('===========================')
