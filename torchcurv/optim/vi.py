@@ -40,10 +40,13 @@ class VIOptimizer(SecondOrderOptimizer):
 
             # sampling
             for group in self.param_groups:
+                params, mean = group['params'], group['mean']
                 curv = group['curv']
                 if curv is not None:
-                    params, mean = group['params'], group['mean']
                     curv.sample_params(params, mean, std_scale)
+                else:
+                    for p, m in zip(params, mean):
+                        p.data.copy_(m.data)
 
             # forward and backward
             loss, output = closure()
@@ -68,17 +71,15 @@ class VIOptimizer(SecondOrderOptimizer):
 
         # update distribution
         for group in self.param_groups:
+            mean = group['mean']
 
+            # save accumulated grad
             acc_grads = group['acc_grads'].get()
+            for m, acc_grad in zip(mean, acc_grads):
+                m.grad = acc_grad.clone()
 
             curv = group['curv']
             if curv is not None:
-                mean = group['mean']
-
-                # save accumulated grad
-                for m, acc_grad in zip(mean, acc_grads):
-                    m.grad = acc_grad.clone()
-
                 # update covariance
                 curv.data = group['acc_curv'].get()
                 curv.update_ema()
@@ -86,17 +87,8 @@ class VIOptimizer(SecondOrderOptimizer):
                 curv.update_std()
                 curv.precondition_grad(mean)
 
-                # update mean
-                self.update(group, target='mean')
-            else:
-                params = group['params']
-
-                # save accumulated grad
-                for p, acc_grad in zip(params, acc_grads):
-                    p.grad = acc_grad.clone()
-
-                # update params
-                self.update(group)
+            # update mean
+            self.update(group, target='mean')
 
         loss, output = acc_loss.get(), acc_output.get()
 
