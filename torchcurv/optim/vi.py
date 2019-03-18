@@ -43,7 +43,6 @@ class VIOptimizer(SecondOrderOptimizer):
                 curv = group['curv']
                 if curv is not None:
                     params, mean = group['params'], group['mean']
-                    # sampling
                     curv.sample_params(params, mean, std_scale)
 
             # forward and backward
