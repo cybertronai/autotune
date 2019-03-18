@@ -67,7 +67,6 @@ class KronFisherLinear(KronCurvature):
 
             setattr(params[0], 'precgrad', precgrad)
 
-    # for vi
     def sample_params(self, params, mean, std_scale):
         if self.std is None:
             return

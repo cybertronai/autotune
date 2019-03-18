@@ -18,8 +18,6 @@ class Curvature(object):
         self._input_data = None
         self.ema = None
         self.inv = None
-
-        # for vi
         self.std = None
 
         module.register_forward_pre_hook(self.forward_preprocess)
@@ -76,6 +74,12 @@ class Curvature(object):
     def precondition_grad(self, params):
         raise NotImplementedError
 
+    def update_std(self):
+        raise NotImplementedError
+
+    def sample_params(self, params, mean, std_scale):
+        raise NotImplementedError
+
 
 class DiagCurvature(Curvature):
 
@@ -91,6 +95,17 @@ class DiagCurvature(Curvature):
         for param_i, inv_i in zip(params, self.inv):
             grad = param_i.grad
             setattr(param_i, 'precgrad', inv_i.mul(grad))
+
+    def update_std(self):
+        self.std = [inv.sqrt() for inv in self.inv]
+
+    def sample_params(self, params, mean, std_scale):
+        if self.std is None:
+            return
+
+        for p, m, std in zip(params, mean, self.std):
+            noise = torch.randn_like(m)
+            p.data.copy_(torch.addcmul(m, std_scale, noise, std))
 
 
 class KronCurvature(Curvature):
@@ -131,12 +146,14 @@ class KronCurvature(Curvature):
     def precondition_grad(self, params):
         raise NotImplementedError
 
-    # for vi
     def update_std(self):
         A_inv, G_inv = self.inv
 
         self.std = [torchcurv.utils.cholesky(X)
                     for X in [A_inv, G_inv]]
+
+    def sample_params(self, params, mean, std_scale):
+        raise NotImplementedError
 
 
 def add_value_to_diagonal(X, value):

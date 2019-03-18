@@ -82,7 +82,6 @@ class KronFisherConv2d(KronCurvature):
 
             setattr(params[0], 'precgrad', precgrad2d.reshape_as(params[0]))
 
-    # for vi
     def sample_params(self, params, mean, std_scale):
         if self.std is None:
             return

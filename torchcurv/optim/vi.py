@@ -5,9 +5,12 @@ from torchcurv.utils import TensorAccumulator
 
 class VIOptimizer(SecondOrderOptimizer):
 
-    def __init__(self, model, curv_type, lr=0.01, momentum=0.9, momentum_type='precgrad', adjust_momentum=False, l2_reg=0, weight_decay=0, num_samples=10, std_scale=4e-6, **curv_kwargs):
+    def __init__(self, model, curv_type, lr=0.01,
+                 momentum=0.9, momentum_type='precgrad', adjust_momentum=False,
+                 l2_reg=0, weight_decay=0, num_samples=10, std_scale=4e-6, **curv_kwargs):
         super(VIOptimizer, self).__init__(model, curv_type, lr=lr, momentum=momentum,
-                                          momentum_type=momentum_type, adjust_momentum=adjust_momentum, l2_reg=l2_reg, weight_decay=weight_decay, **curv_kwargs)
+                                          momentum_type=momentum_type, adjust_momentum=adjust_momentum,
+                                          l2_reg=l2_reg, weight_decay=weight_decay, **curv_kwargs)
         self.defaults['num_samples'] = num_samples
         self.defaults['std_scale'] = std_scale
 
