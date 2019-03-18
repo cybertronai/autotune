@@ -70,17 +70,19 @@ class VIOptimizer(SecondOrderOptimizer):
             for p, acc_grad in zip(params, acc_grads):
                 p.grad.copy_(acc_grad)
 
-            # update covariance
             curv = group['curv']
             if curv is not None:
+                # update covariance
                 curv.data = group['acc_curv'].get()
                 curv.update_ema()
                 curv.update_inv()
                 curv.update_std()
                 curv.precondition_grad(params)
 
-            # update mean
-            self.update(group, target='mean')
+                # update mean
+                self.update(group, target='mean')
+            else:
+                self.update(group)
 
         loss, output = acc_loss.get(), acc_output.get()
 
