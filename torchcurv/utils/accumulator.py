@@ -6,7 +6,7 @@ class TensorAccumulator(object):
     def __init__(self):
         self._accumulation = None
 
-    def update(self, data, scale=1.):
+    def check_type(self, data):
         accumulation = self._accumulation
 
         if isinstance(data, list):
@@ -18,7 +18,12 @@ class TensorAccumulator(object):
             assert type(data) == type(accumulation), \
                 'the type of data ({}) is different from ' \
                 'the type of the accumulation ({})'.format(
-                type(data), type(accumulation))
+                    type(data), type(accumulation))
+
+    def update(self, data, scale=1.):
+        self.check_type(data)
+
+        accumulation = self._accumulation
 
         if isinstance(data, list):
             if accumulation is None:
@@ -33,13 +38,14 @@ class TensorAccumulator(object):
                 self._accumulation = accumulation.add(scale, data)
 
     def get(self, clear=True):
-        if self._accumulation is None:
-            return None
+        accumulation = self._accumulation
+        if accumulation is None:
+            return
 
-        if isinstance(self._accumulation, list):
+        if isinstance(accumulation, list):
             data = [d.clone() for d in self._accumulation]
         else:
-            data = self._accumulation.clone()
+            data = accumulation.clone()
 
         if clear:
             self.clear()
