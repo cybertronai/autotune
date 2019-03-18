@@ -1,3 +1,4 @@
+import torch
 from torchcurv.optim import SecondOrderOptimizer
 from torchcurv.utils import TensorAccumulator
 
@@ -14,6 +15,9 @@ class VIOptimizer(SecondOrderOptimizer):
 
         for group in self.param_groups:
             group['mean'] = [p.clone().detach() for p in group['params']]
+            for m in group['mean']:
+                state = self.state[m]
+                state['momentum_buffer'] = torch.zeros_like(m.data)
 
     def step(self, closure=None):
         """Performs a single optimization step.
@@ -39,6 +43,7 @@ class VIOptimizer(SecondOrderOptimizer):
                 curv = group['curv']
                 if curv is not None:
                     params, mean = group['params'], group['mean']
+                    # sampling
                     curv.sample_params(params, mean, std_scale)
 
             # forward and backward
@@ -64,24 +69,34 @@ class VIOptimizer(SecondOrderOptimizer):
 
         # update distribution
         for group in self.param_groups:
-            params = group['params']
 
             acc_grads = group['acc_grads'].get()
-            for p, acc_grad in zip(params, acc_grads):
-                p.grad.copy_(acc_grad)
 
             curv = group['curv']
             if curv is not None:
+                mean = group['mean']
+
+                # save accumulated grad
+                for m, acc_grad in zip(mean, acc_grads):
+                    m.grad = acc_grad.clone()
+
                 # update covariance
                 curv.data = group['acc_curv'].get()
                 curv.update_ema()
                 curv.update_inv()
                 curv.update_std()
-                curv.precondition_grad(params)
+                curv.precondition_grad(mean)
 
                 # update mean
                 self.update(group, target='mean')
             else:
+                params = group['params']
+
+                # save accumulated grad
+                for p, acc_grad in zip(params, acc_grads):
+                    p.grad = acc_grad.clone()
+
+                # update params
                 self.update(group)
 
         loss, output = acc_loss.get(), acc_output.get()
