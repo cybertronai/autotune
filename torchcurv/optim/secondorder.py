@@ -103,21 +103,6 @@ class SecondOrderOptimizer(Optimizer):
         else:
             return group['momentum']
 
-    def backward_postprocess(self, group):
-        params = group['params']
-        for p in params:
-
-            if p.grad is None:
-                continue
-
-            grad = p.grad.data
-
-            if group['l2_reg'] != 0:
-                if grad.is_sparse:
-                    raise RuntimeError(
-                        "l2 regularization option is not compatible with sparse gradients")
-                grad.add_(group['l2_reg'], p.data)
-
     def update_preprocess(self, group, target='params', attr='grad'):
         params = group[target]
 
@@ -127,6 +112,13 @@ class SecondOrderOptimizer(Optimizer):
 
             if grad is None:
                 continue
+
+            if attr == 'grad':
+                if group['l2_reg'] != 0:
+                    if grad.is_sparse:
+                        raise RuntimeError(
+                            "l2 regularization option is not compatible with sparse gradients")
+                    grad.add_(group['l2_reg'], p.data)
 
             if attr == 'precgrad':
                 if group['weight_decay'] != 0:
@@ -166,7 +158,6 @@ class SecondOrderOptimizer(Optimizer):
         for group in self.param_groups:
             params = group['params']
 
-            self.backward_postprocess(group)
             self.update_preprocess(group, attr='grad')
 
             curv = group['curv']

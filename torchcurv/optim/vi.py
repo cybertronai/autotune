@@ -66,8 +66,6 @@ class VIOptimizer(SecondOrderOptimizer):
             for group in self.param_groups:
                 params = group['params']
 
-                self.backward_postprocess(group)
-
                 grads = [p.grad.data for p in params]
                 group['acc_grads'].update(grads, scale=1/n)
 
