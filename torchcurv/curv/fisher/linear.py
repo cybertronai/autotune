@@ -68,9 +68,6 @@ class KronFisherLinear(KronCurvature):
             setattr(params[0], 'precgrad', precgrad)
 
     def sample_params(self, params, mean, std_scale):
-        if self.std is None:
-            return
-
         A_ic, G_ic = self.std
 
         if self.bias:

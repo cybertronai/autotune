@@ -13,9 +13,11 @@
     "curv_type":"KronFisher",
     "momentum": 0.9,
     "adjust_momentum": false,
+    "momentum_type": "precgrad",
     "weight_decay": 0.1,
-    "std_scale": 2e-3,
-    "num_samples": 10
+    "num_mc_samples": 10,
+    "kl_weighting": 0.2,
+    "prior_variance": 0.01
   },
   "curv_args": {
     "damping": 1e-4,
