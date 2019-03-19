@@ -20,7 +20,7 @@
     "weight_decay": 0,
     "num_mc_samples": 10,
     "kl_weighting": 1,
-    "prior_variance": 0
+    "prior_variance": 1
   },
   "curv_args": {
     "damping": 2e-5,
