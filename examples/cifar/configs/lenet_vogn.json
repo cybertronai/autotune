@@ -1,13 +1,16 @@
 {
   "dataset": "CIFAR-10",
-  "epochs": 100,
+  "epochs": 30,
   "batch_size": 64,
   "test_batch_size": 128,
   "random_crop": false,
   "random_horizontal_flip": false,
   "normalizing_data": true,
   "arch_file": "models/lenet.py",
-  "arch_name": "LeNet5",
+  "arch_name": "LeNet5BatchNorm",
+  "arch_args": {
+    "affine": false
+  },
   "optim_name": "VIOptimizer",
   "optim_args": {
     "curv_type":"DiagFisher",
@@ -17,7 +20,7 @@
     "weight_decay": 0,
     "num_mc_samples": 10,
     "kl_weighting": 1,
-    "prior_variance": 1
+    "prior_variance": 0
   },
   "curv_args": {
     "damping": 2e-5,
