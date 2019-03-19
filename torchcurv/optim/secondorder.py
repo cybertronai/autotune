@@ -26,7 +26,9 @@ def get_curv_class(curv_type, module):
 
 class SecondOrderOptimizer(Optimizer):
 
-    def __init__(self, model, curv_type, lr=0.01, momentum=0.9, momentum_type='precgrad', adjust_momentum=False, l2_reg=0, weight_decay=0, **curv_kwargs):
+    def __init__(self, model, curv_type, lr=0.01,
+                 momentum=0.9, momentum_type='precgrad', adjust_momentum=False,
+                 l2_reg=0, weight_decay=0, **curv_kwargs):
         # TODO implement error checker: hoge(optim_kwargs)
         """
         if not 0.0 <= lr:
@@ -116,7 +118,25 @@ class SecondOrderOptimizer(Optimizer):
                         "l2 regularization option is not compatible with sparse gradients")
                 grad.add_(group['l2_reg'], p.data)
 
-            if group['momentum_type'] == 'grad':
+    def update_preprocess(self, group, target='params', attr='grad'):
+        params = group[target]
+
+        for p in params:
+
+            grad = getattr(p, attr, p.grad)
+
+            if grad is None:
+                continue
+
+            if attr == 'precgrad':
+                if group['weight_decay'] != 0:
+                    if hasattr(grad, 'is_sparse') and grad.is_sparse:
+                        raise RuntimeError(
+                            "weight_decay option is not compatible with sparse gradients")
+                    grad.add_(group['weight_decay'], p.data)
+
+            if group['momentum_type'] == attr:
+
                 momentum = self.momentum(group)
                 self.apply_momentum(p, grad, momentum)
 
@@ -129,16 +149,6 @@ class SecondOrderOptimizer(Optimizer):
 
             if grad is None:
                 continue
-
-            if group['weight_decay'] != 0:
-                if hasattr(grad, 'is_sparse') and grad.is_sparse:
-                    raise RuntimeError(
-                        "weight_decay option is not compatible with sparse gradients")
-                grad.add_(group['weight_decay'], p.data)
-
-            if group['momentum_type'] == 'precgrad':
-                momentum = self.momentum(group)
-                self.apply_momentum(p, grad, momentum)
 
             p.data.add_(-group['lr'], grad)
 
@@ -157,6 +167,7 @@ class SecondOrderOptimizer(Optimizer):
             params = group['params']
 
             self.backward_postprocess(group)
+            self.update_preprocess(group, attr='grad')
 
             curv = group['curv']
             if curv is not None:
@@ -164,6 +175,7 @@ class SecondOrderOptimizer(Optimizer):
                 curv.update_inv()
                 curv.precondition_grad(params)
 
+            self.update_preprocess(group, attr='precgrad')
             self.update(group)
 
         return loss

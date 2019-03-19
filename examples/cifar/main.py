@@ -259,8 +259,10 @@ def main():
     optim_kwargs = extract_kwargs(optim_class.__init__, args.optim_args)
     optim_kwargs['lr'] = args.lr
 
-    if optim_class in [SecondOrderOptimizer, VIOptimizer]:
+    if optim_class is SecondOrderOptimizer:
         optimizer = optim_class(model, **optim_kwargs, **args.curv_args)
+    elif optim_class is VIOptimizer:
+        optimizer = optim_class(model, dataset_size=len(train_loader.dataset), **optim_kwargs, **args.curv_args)
     else:
         optimizer = optim_class(model.parameters(), **optim_kwargs)
 
