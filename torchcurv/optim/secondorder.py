@@ -61,14 +61,11 @@ class SecondOrderOptimizer(Optimizer):
                 state = self.state[p]
                 state['momentum_buffer'] = torch.zeros_like(p.data)
 
-        exit()
-
     def get_curv_class(self, module):
         module_name = module.__class__.__name__
         curv_shape = self.curv_shapes.get(module_name, '')
         curv_name = curv_shape + self.curv_type + module_name
         curv_class = getattr(torchcurv, curv_name, None)
-        print(curv_class)
 
         return curv_class
 
