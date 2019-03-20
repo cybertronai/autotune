@@ -31,6 +31,7 @@ You can specify the approximation method(s) of curvature for each layer from the
 ## Quick Start
 To build the extension run (on a Python 3, CUDA environment)
 ```bash
+cd pytorch-curv
 python setup.py install
 ```
 in the root directory of the cloned repository.
