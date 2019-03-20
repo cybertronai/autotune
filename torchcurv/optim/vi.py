@@ -98,6 +98,11 @@ class VIOptimizer(SecondOrderOptimizer):
             self.update_preprocess(group, target='mean', attr='precgrad')
             self.update(group, target='mean')
 
+            # set mean to model.params
+            params = group['params']
+            for p, m in zip(params, mean):
+                p.data.copy_(m.data)
+
         loss, output = acc_loss.get(), acc_output.get()
 
         return loss, output
