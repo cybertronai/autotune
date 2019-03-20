@@ -7,14 +7,17 @@ from torchcurv.utils import TensorAccumulator
 
 class VIOptimizer(SecondOrderOptimizer):
 
-    def __init__(self, model, dataset_size, curv_type, curv_shapes,
-                 lr=0.01, momentum=0.9, momentum_type='precgrad', adjust_momentum=False, weight_decay=0,
-                 num_mc_samples=10, kl_weighting=0.2, prior_variance=1., **curv_kwargs):
+    def __init__(self, model, dataset_size, curv_type, curv_shapes, lr=0.01,
+                 momentum=0, momentum_type='precgrad', adjust_momentum=False,
+                 grad_ema_decay=1, grad_ema_type='grad', weight_decay=0,
+                 num_mc_samples=10, kl_weighting=0.2, prior_variance=1.,
+                 **curv_kwargs):
 
         l2_reg = kl_weighting / dataset_size / prior_variance if prior_variance != 0 else 0
 
         super(VIOptimizer, self).__init__(model, curv_type, curv_shapes, lr=lr, momentum=momentum,
                                           momentum_type=momentum_type, adjust_momentum=adjust_momentum,
+                                          grad_ema_decay=grad_ema_decay, grad_ema_type=grad_ema_type,
                                           l2_reg=l2_reg, weight_decay=weight_decay, **curv_kwargs)
 
         self.defaults['num_mc_samples'] = num_mc_samples
@@ -27,6 +30,7 @@ class VIOptimizer(SecondOrderOptimizer):
             for m in group['mean']:
                 state = self.state[m]
                 state['momentum_buffer'] = torch.zeros_like(m.data)
+                state['grad_ema_buffer'] = torch.zeros_like(m.data)
 
     def step(self, closure=None):
         """Performs a single optimization step.
