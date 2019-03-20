@@ -9,8 +9,10 @@ from torchcurv.utils import TensorAccumulator
 class SecondOrderOptimizer(Optimizer):
 
     def __init__(self, model, curv_type, curv_shapes, lr=0.01,
-                 momentum=0.9, momentum_type='precgrad', adjust_momentum=False,
-                 l2_reg=0, weight_decay=0, **curv_kwargs):
+                 momentum=0, momentum_type='precgrad', adjust_momentum=False,
+                 grad_ema_decay=1, grad_ema_type='grad', l2_reg=0, weight_decay=0,
+                 **curv_kwargs):
+
         # TODO implement error checker: hoge(optim_kwargs)
         """
         if not 0.0 <= lr:
@@ -29,8 +31,10 @@ class SecondOrderOptimizer(Optimizer):
                 "Invalid cov_ema_decay value: {}".format(cov_ema_decay))
         """
         self.model = model
-        defaults = {'lr': lr, 'lr_pre': lr, 'momentum': momentum, 'momentum_type': momentum_type,
-                    'adjust_momentum': adjust_momentum, 'l2_reg': l2_reg, 'weight_decay': weight_decay}
+        defaults = {'lr': lr, 'lr_pre': lr,
+                    'momentum': momentum, 'momentum_type': momentum_type, 'adjust_momentum': adjust_momentum,
+                    'grad_ema_decay': grad_ema_decay, 'grad_ema_type': grad_ema_type,
+                    'l2_reg': l2_reg, 'weight_decay': weight_decay}
         defaults.update(curv_kwargs)
         self.defaults = defaults
         self.state = defaultdict(dict)
@@ -60,6 +64,7 @@ class SecondOrderOptimizer(Optimizer):
             for p in params:
                 state = self.state[p]
                 state['momentum_buffer'] = torch.zeros_like(p.data)
+                state['grad_ema_buffer'] = torch.zeros_like(p.data)
 
     def get_curv_class(self, module):
         module_name = module.__class__.__name__
@@ -81,19 +86,40 @@ class SecondOrderOptimizer(Optimizer):
             for child in list(module.children()):
                 self.set_train_modules(child)
 
-    def apply_momentum(self, p, grad, momentum):
+    def apply_l2_reg(self, p, grad, group):
+        if group['l2_reg'] != 0:
+            if grad.is_sparse:
+                raise RuntimeError(
+                    "l2 regularization option is not compatible with sparse gradients")
+            grad.add_(group['l2_reg'], p.data)
+
+    def apply_weight_decay(self, p, grad, group):
+        if group['weight_decay'] != 0:
+            if hasattr(grad, 'is_sparse') and grad.is_sparse:
+                raise RuntimeError(
+                    "weight_decay option is not compatible with sparse gradients")
+            grad.add_(group['weight_decay'], p.data)
+
+    def apply_momentum(self, p, grad, group):
+        if group['adjust_momentum']:
+            lr, lr_pre, m = group['lr'], group['lr_pre'], group['momentum']
+            momentum = m/lr_pre*lr
+        else:
+            momentum = group['momentum']
+
         if momentum != 0:
             state = self.state[p]
             buf = state['momentum_buffer']
             buf.mul_(momentum).add_(grad)
             grad.copy_(buf)
 
-    def momentum(self, group):
-        if group['adjust_momentum']:
-            lr, lr_pre, m = group['lr'], group['lr_pre'], group['momentum']
-            return m/lr_pre*lr
-        else:
-            return group['momentum']
+    def apply_grad_ema_decay(self, p, grad, group):
+        grad_ema_decay = group['grad_ema_decay']
+        if grad_ema_decay != 1:
+            state = self.state[p]
+            buf = state['grad_ema_buffer']
+            buf.mul_(1 - grad_ema_decay).add_(grad.mul(grad_ema_decay))
+            grad.copy_(buf)
 
     def update_preprocess(self, group, target='params', attr='grad'):
         params = group[target]
@@ -106,23 +132,16 @@ class SecondOrderOptimizer(Optimizer):
                 continue
 
             if attr == 'grad':
-                if group['l2_reg'] != 0:
-                    if grad.is_sparse:
-                        raise RuntimeError(
-                            "l2 regularization option is not compatible with sparse gradients")
-                    grad.add_(group['l2_reg'], p.data)
+                self.apply_l2_reg(p, grad, group)
 
             if attr == 'precgrad':
-                if group['weight_decay'] != 0:
-                    if hasattr(grad, 'is_sparse') and grad.is_sparse:
-                        raise RuntimeError(
-                            "weight_decay option is not compatible with sparse gradients")
-                    grad.add_(group['weight_decay'], p.data)
+                self.apply_weight_decay(p, grad, group)
 
             if group['momentum_type'] == attr:
+                self.apply_momentum(p, grad, group)
 
-                momentum = self.momentum(group)
-                self.apply_momentum(p, grad, momentum)
+            if group['grad_ema_type'] == attr:
+                self.apply_grad_ema_decay(p, grad, group)
 
     def update(self, group, target='params'):
         params = group[target]
