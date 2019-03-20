@@ -9,14 +9,20 @@
   "arch_file": "models/lenet.py",
   "arch_name": "LeNet5BatchNorm",
   "arch_args": {
-    "affine": false
+    "affine": true
   },
   "optim_name": "VIOptimizer",
   "optim_args": {
-    "curv_type":"DiagFisher",
+    "curv_type": "Fisher",
+    "curv_shapes": {
+      "Conv2d": "Diag",
+      "Linear": "Diag",
+      "BatchNorm1d": "Diag",
+      "BatchNorm2d": "Diag"
+    },
     "momentum": 0.9,
     "adjust_momentum": false,
-    "momentum_type": "precgrad",
+    "momentum_type": "grad",
     "weight_decay": 0,
     "num_mc_samples": 10,
     "kl_weighting": 1,
