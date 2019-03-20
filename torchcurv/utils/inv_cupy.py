@@ -6,7 +6,7 @@ from cupy.cuda import cublas
 from cupy.cuda import device
 from cupy.linalg import util
 
-from torch.utils.dlpack import to_dlpack, from_dlpack
+from torchcurv.utils.cupy import to_cupy, from_cupy
 
 import warnings
 
@@ -19,9 +19,9 @@ use_cholesky = True
 
 
 def inv(m):
-    m_cp = cupy.fromDlpack(to_dlpack(m))
+    m_cp = to_cupy(m)
     m_inv_cp = inv_core(m_cp, use_cholesky)
-    return from_dlpack(m_inv_cp.toDlpack())
+    return from_cupy(m_inv_cp)
 
 
 def inv_core(a, cholesky=False):
