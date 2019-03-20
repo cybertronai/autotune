@@ -12,8 +12,8 @@ A PyTorch extension for second-order optimization & variational inference in tra
  
 ## Curvatures
 You can specify a type of matrix to be used as curvature from the following.
-- Hessian
-- Gauss-Newton matrix 
+- Hessian [WIP]
+- Gauss-Newton matrix [WIP] 
 - Fisher information matrix (Empirical Fisher)
 
 Refer Section 6 of [Optimization Methods for Large-Scale Machine Learning](https://arxiv.org/abs/1606.04838) by L´eon Bottou et al. (2018) for a clear explanation of the second-order optimzation using these matrices as curvature.
@@ -23,25 +23,28 @@ You can specify the approximation method(s) of curvature for each layer from the
 1. No approximation
 2. Diagonal approximation
 3. [K-FAC (Kronecker-Factored Approximate Curvature)](https://arxiv.org/abs/1503.05671)
-4. Block-diagonal approximation based on K-FAC
-5. Automatic reduction of curvature update frequency 
+4. Block-diagonal approximation based on K-FAC [WIP]
+5. Automatic reduction of curvature update frequency [WIP]
 
 (5 can be combined with 1, 2, 3 or 4)
 
 ## Quick Start
-To build the extension run
-```
+To build the extension run (on a Python 3, CUDA environment)
+```bash
 python setup.py install
 ```
 in the root directory of the cloned repository.
 
 To use the extension
-```
+```python
 import torchcurv
 ```
 
+## Examples
+- [CIFAR-10/100 classification](https://github.com/rioyokotalab/pytorch-curv/tree/master/examples/cifar)
+
 ## Applications
 - Image classification
-  - MNIST
-  - CIFAR-10
-  - ImageNet (1,000class)
+  - MNIST [WIP]
+  - CIFAR-10/100
+  - ImageNet (1,000class) [WIP]
