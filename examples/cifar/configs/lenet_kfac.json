@@ -10,7 +10,13 @@
   "arch_name": "LeNet5",
   "optim_name": "SecondOrderOptimizer",
   "optim_args": {
-    "curv_type":"KronFisher",
+    "curv_type":"Fisher",
+    "curv_shapes": {
+      "Conv2d": "Kron",
+      "Linear": "Kron",
+      "BatchNorm1d": "Diag",
+      "BatchNorm2d": "Diag"
+    },
     "momentum": 0.9,
     "momentum_type": "precgrad",
     "adjust_momentum": true,

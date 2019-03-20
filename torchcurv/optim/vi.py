@@ -7,13 +7,13 @@ from torchcurv.utils import TensorAccumulator
 
 class VIOptimizer(SecondOrderOptimizer):
 
-    def __init__(self, model, dataset_size, curv_type,
+    def __init__(self, model, dataset_size, curv_type, curv_shapes,
                  lr=0.01, momentum=0.9, momentum_type='precgrad', adjust_momentum=False, weight_decay=0,
                  num_mc_samples=10, kl_weighting=0.2, prior_variance=1., **curv_kwargs):
 
         l2_reg = kl_weighting / dataset_size / prior_variance if prior_variance != 0 else 0
 
-        super(VIOptimizer, self).__init__(model, curv_type, lr=lr, momentum=momentum,
+        super(VIOptimizer, self).__init__(model, curv_type, curv_shapes, lr=lr, momentum=momentum,
                                           momentum_type=momentum_type, adjust_momentum=adjust_momentum,
                                           l2_reg=l2_reg, weight_decay=weight_decay, **curv_kwargs)
 

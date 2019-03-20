@@ -1,32 +1,14 @@
 from collections import defaultdict
 
 import torch
-import torch.nn as nn
 from torch.optim import Optimizer
 import torchcurv
 from torchcurv.utils import TensorAccumulator
 
 
-def get_curv_class(curv_type, module):
-    # TODO implement
-    if isinstance(module, nn.Linear):
-        module_type = 'Linear'
-    elif isinstance(module, nn.Conv2d):
-        module_type = 'Conv2d'
-    elif isinstance(module, nn.BatchNorm2d):
-        #module_type = 'BatchNorm2d'
-        return None
-    else:
-        return None
-
-    curv_class = getattr(torchcurv, curv_type+module_type)
-
-    return curv_class
-
-
 class SecondOrderOptimizer(Optimizer):
 
-    def __init__(self, model, curv_type, lr=0.01,
+    def __init__(self, model, curv_type, curv_shapes, lr=0.01,
                  momentum=0.9, momentum_type='precgrad', adjust_momentum=False,
                  l2_reg=0, weight_decay=0, **curv_kwargs):
         # TODO implement error checker: hoge(optim_kwargs)
@@ -55,10 +37,12 @@ class SecondOrderOptimizer(Optimizer):
         self.train_modules = []
         self.set_train_modules(model)  # TODO implement better method
         self.param_groups = []
+        self.curv_type = curv_type
+        self.curv_shapes = curv_shapes
 
         for module in self.train_modules:
             params = list(module.parameters())
-            curv_class = get_curv_class(curv_type, module)
+            curv_class = self.get_curv_class(module)
             if curv_class is not None:
                 curvature = curv_class(module, **curv_kwargs)
             else:
@@ -76,6 +60,14 @@ class SecondOrderOptimizer(Optimizer):
             for p in params:
                 state = self.state[p]
                 state['momentum_buffer'] = torch.zeros_like(p.data)
+
+    def get_curv_class(self, module):
+        module_name = module.__class__.__name__
+        curv_shape = self.curv_shapes.get(module_name, '')
+        curv_name = curv_shape + self.curv_type + module_name
+        curv_class = getattr(torchcurv, curv_name, None)
+
+        return curv_class
 
     def zero_grad(self):
         r"""Clears the gradients of all optimized :class:`torch.Tensor` s."""

@@ -10,7 +10,13 @@
   "arch_name": "LeNet5",
   "optim_name": "VIOptimizer",
   "optim_args": {
-    "curv_type":"KronFisher",
+    "curv_type":"Fisher",
+    "curv_shapes": {
+      "Conv2d": "Kron",
+      "Linear": "Kron",
+      "BatchNorm1d": "Diag",
+      "BatchNorm2d": "Diag"
+    },
     "momentum": 0.9,
     "adjust_momentum": false,
     "momentum_type": "precgrad",
