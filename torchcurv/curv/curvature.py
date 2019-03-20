@@ -11,7 +11,8 @@ class Curvature(object):
     def __init__(self, module, ema_decay=1., damping=1e-7):
         self._module = module
         self.ema_decay = ema_decay
-        self.damping = damping
+        self._damping = damping
+        self.l2_reg = 0
 
         self._data = None
         self._acc_data = None
@@ -35,6 +36,10 @@ class Curvature(object):
     def bias(self):
         bias = getattr(self._module, 'bias', None)
         return False if bias is None else True
+
+    @property
+    def damping(self):
+        return self._damping + self.l2_reg
 
     def forward_preprocess(self, module, input):
         self.update_in_forward(input[0].data)

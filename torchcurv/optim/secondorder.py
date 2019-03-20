@@ -92,6 +92,9 @@ class SecondOrderOptimizer(Optimizer):
                 raise RuntimeError(
                     "l2 regularization option is not compatible with sparse gradients")
             grad.add_(group['l2_reg'], p.data)
+            curv = group['curv']
+            if curv is not None:
+                curv.l2_reg = group['l2_reg']
 
     def apply_weight_decay(self, p, grad, group):
         if group['weight_decay'] != 0:
