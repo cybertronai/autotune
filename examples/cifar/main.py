@@ -224,9 +224,9 @@ def main():
         root=args.root, train=False, download=True, transform=test_transform)
 
     train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2)
+        train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=8)
     test_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=args.test_batch_size, shuffle=False, num_workers=2)
+        test_dataset, batch_size=args.test_batch_size, shuffle=False, num_workers=8)
 
     # Setup model
     _, ext = os.path.splitext(args.arch_file)
