@@ -22,6 +22,7 @@
     "momentum_type": "precgrad",
     "weight_decay": 0.1,
     "num_mc_samples": 10,
+    "test_num_mc_samples": 10,
     "kl_weighting": 0.2,
     "prior_variance": 0.0
   },
