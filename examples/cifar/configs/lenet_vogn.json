@@ -24,9 +24,9 @@
     "grad_ema_type": "grad",
     "weight_decay": 0,
     "num_mc_samples": 10,
-    "test_num_mc_samples": 50,
+    "test_num_mc_samples": 10,
     "kl_weighting": 1,
-    "prior_variance": 1
+    "prior_variance": 1000
   },
   "curv_args": {
     "damping": 0,
