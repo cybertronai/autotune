@@ -53,6 +53,7 @@ class SecondOrderOptimizer(Optimizer):
                 curvature = None
 
             group = {
+                'name': module.__class__.__name__,
                 'params': params,
                 'curv': curvature,
                 'acc_curv': TensorAccumulator(),

@@ -68,14 +68,15 @@ def train(model, device, train_loader, optimizer, epoch, args, logger):
             log = {'epoch': epoch, 'iteration': iteration, 'elapsed_time': elapsed_time,
                    'accuracy': accuracy, 'loss': loss, 'lr': lr}
 
-            for i, param_group in enumerate(optimizer.param_groups):
-                p = parameters_to_vector(param_group['params'])
+            for i, group in enumerate(optimizer.param_groups):
+                p = parameters_to_vector(group['params'])
                 attr = 'p_pre_{}'.format(i)
                 p_pre = getattr(optimizer, attr)
                 p_norm = p.norm().item()
                 upd_norm = p.sub(p_pre).norm().item()
 
-                group_log = {'p_norm': p_norm, 'upd_norm': upd_norm}
+                name = group.get('name', '')
+                group_log = {'p_norm': p_norm, 'upd_norm': upd_norm, 'name': name}
                 log[i] = group_log
 
             logger.write(log)
