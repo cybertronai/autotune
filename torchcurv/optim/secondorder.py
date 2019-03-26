@@ -5,6 +5,9 @@ from torch.optim import Optimizer
 import torchcurv
 from torchcurv.utils import TensorAccumulator
 
+from torch.utils.chainer_communicaters import create_communicator
+import numpy as np
+
 
 class SecondOrderOptimizer(Optimizer):
 
@@ -185,3 +188,42 @@ class SecondOrderOptimizer(Optimizer):
             self.update(group)
 
         return loss
+
+
+def DistributedSecondOrderOptimizer(SecondOrderOptimizer):
+
+    def __init__(self, model, curv_type, curv_shapes, lr=0.01,
+                 momentum=0, momentum_type='precgrad', adjust_momentum=False,
+                 grad_ema_decay=1, grad_ema_type='grad', l2_reg=0, weight_decay=0,
+                 **curv_kwargs):
+
+        super(DistributedSecondOrderOptimizer, self).__init__(model, curv_type, curv_shapes, lr=lr, momentum=momentum,
+                                                              momentum_type=momentum_type, adjust_momentum=adjust_momentum,
+                                                              grad_ema_decay=grad_ema_decay, grad_ema_type=grad_ema_type,
+                                                              l2_reg=l2_reg, weight_decay=weight_decay, **curv_kwargs)
+
+        self.comm = create_communicator()
+
+        local_size = self.comm.size
+        local_rank = self.comm.rank
+        indices = np.array_split(np.arange(len(self.param_groups)), local_size)
+        indices = [local_indices.tolist() for local_indices in indices]
+        local_indices = indices[local_rank]
+        local_param_groups = [self.param_groups[i] for i in local_indices]
+
+        self.indices = indices
+        self.local_indices = local_indices
+        self.local_param_groups = local_param_groups
+        setattr(self.comm, 'indices', indices)
+
+    def update_preprocess(self, group, target='params', attr='grad'):
+        if attr == 'grad':
+            # reduce_scatterv
+            pass
+
+        if attr == 'precgrad':
+            # allgatherv
+            pass
+
+        super(DistributedSecondOrderOptimizer,
+              self).update(group, target, attr)
