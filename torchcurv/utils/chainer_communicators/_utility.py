@@ -5,6 +5,8 @@ import cupy
 
 from chainer.backends import cuda
 
+from torchcurv.utils.cupy import to_cupy
+
 
 class Packer(object):
 
@@ -109,7 +111,7 @@ def _check_array(array, name):
     return array
 
 
-def extract(fblocks, indices, extractors):
+def extract(param_groups, indices, extractors):
     """Extracts arrays from given fisher blocks using indices and extractors
 
     Args:
@@ -125,44 +127,48 @@ def extract(fblocks, indices, extractors):
         local_arrays = []
         for index in local_indices:
             for extractor in extractors:
-                for array in extractor(fblocks[index]):
+                for array in extractor(param_groups[index]):
                     local_arrays.append(array)
         arrays.append(local_arrays)
     return arrays
-
-
-def extract_attr(attr, triangular=False):
-    """Extracts arrays from a given ``FisherBlock``
-    """
-
-    def _extract_attr(fblock):
-        arrays = []
-        target = getattr(fblock, attr, None)
-        if target is not None:
-            for i, x in enumerate(target):
-                x = _check_array(x, fblock.linkname)
-                target[i] = x
-                arrays.append((x, triangular))
-        return arrays
-
-    return _extract_attr
 
 
 def extract_attr_from_params(attr, triangular=False):
     """Extracts arrays from all ``Parameter``s in a given ``FisherBlock``
     """
 
-    def _extract_attr_from_params(fblock):
+    def _extract_attr_from_params(group):
         arrays = []
-        for _, param in sorted(fblock.link.namedparams()):
+        for param in group['params']:
             x = getattr(param, attr, None)
             if x is not None:
-                x = _check_array(x, fblock.linkname)
-                setattr(param, attr, x)
-                arrays.append((x, triangular))
+                #x = _check_array(x, fblock.linkname)
+                #setattr(param, attr, x)
+                x_ten = x.data
+                x_cp = to_cupy(x_ten)
+                arrays.append((x_cp, triangular))
         return arrays
 
     return _extract_attr_from_params
+
+
+def extract_attr_from_curv(attr, triangular=False):
+    """Extracts arrays from all ``Parameter``s in a given ``FisherBlock``
+    """
+
+    def _extract_attr_from_curv(group):
+        arrays = []
+        target = getattr(group['curv'], attr, None)
+        if target is not None:
+            for x in target:
+                #x = _check_array(x, fblock.linkname)
+                #setattr(param, attr, x)
+                x_ten = x.data
+                x_cp = to_cupy(x_ten)
+                arrays.append((x_cp, triangular))
+        return arrays
+
+    return _extract_attr_from_curv
 
 
 def get_nelems(arrays):

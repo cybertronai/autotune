@@ -5,7 +5,7 @@ from torch.optim import Optimizer
 import torchcurv
 from torchcurv.utils import TensorAccumulator
 
-from torch.utils.chainer_communicaters import create_communicator
+from torchcurv.utils.chainer_communicators import create_communicator, _utility
 import numpy as np
 
 
@@ -190,7 +190,7 @@ class SecondOrderOptimizer(Optimizer):
         return loss
 
 
-def DistributedSecondOrderOptimizer(SecondOrderOptimizer):
+class DistributedSecondOrderOptimizer(SecondOrderOptimizer):
 
     def __init__(self, model, curv_type, curv_shapes, lr=0.01,
                  momentum=0, momentum_type='precgrad', adjust_momentum=False,
@@ -219,11 +219,11 @@ def DistributedSecondOrderOptimizer(SecondOrderOptimizer):
     def update_preprocess(self, group, target='params', attr='grad'):
         if attr == 'grad':
             # reduce_scatterv
-            pass
+            self.comm.reduce_scatterv_data(self.param_groups)
 
         if attr == 'precgrad':
             # allgatherv
-            pass
+            self.comm.allgatherv_data(self.param_groups)
 
         super(DistributedSecondOrderOptimizer,
-              self).update(group, target, attr)
+              self).update_preprocess(group, target, attr)

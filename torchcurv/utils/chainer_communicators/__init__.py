@@ -25,7 +25,7 @@ def create_communicator(communicator_name='pure_nccl',
             'dims is only available at \'pure_nccl\' communicator')
 
     if communicator_name == 'pure_nccl':
-        from chainerkfac.communicators.pure_nccl_communicator \
+        from torchcurv.utils.chainer_communicators.pure_nccl_communicator \
             import PureNCCLCommunicator
         return PureNCCLCommunicator(mpi_comm,
                                     rsv_comm_dtype=rsv_comm_dtype,

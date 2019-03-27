@@ -20,8 +20,8 @@ except ImportError as e:
     _hiercoll_available = False
     _hiercoll_available_exception = e
 
-from chainerkfac.communicators import base
-from chainerkfac.communicators import _utility
+from torchcurv.utils.chainer_communicators import base
+from torchcurv.utils.chainer_communicators import _utility
 
 NUM_STREAMS = 12
 
@@ -113,9 +113,9 @@ class PureNCCLCommunicator(base.KFACCommunicatorBase):
 
     def reduce_scatterv_data(
             self,
-            fblocks,
+            param_groups,
             extractors=[_utility.extract_attr_from_params('grad'),
-                        _utility.extract_attr('covs', True)]):
+                        _utility.extract_attr_from_curv('data', True)]):
         """Executes Reduce+ScatterV.
 
             Flow(no cast): pack(A) -> send(A) -> recv(B) -> mean(B->A)
@@ -138,8 +138,8 @@ class PureNCCLCommunicator(base.KFACCommunicatorBase):
         # This processes's assigned array index in arrays
         local_rank = self.rank
 
-        # Extract arrays from fblocks
-        arrays = _utility.extract(fblocks, self.indices, extractors)
+        # Extract arrays from param_groups
+        arrays = _utility.extract(param_groups, self.indices, extractors)
 
         # Get total number of elements, local number of elements, and local
         # number of elements' offset
@@ -217,9 +217,11 @@ class PureNCCLCommunicator(base.KFACCommunicatorBase):
                                 self._arrs_dtype.itemsize, stream,
                                 offset=nelems_offset)
 
+
     def allgatherv_data(
-            self, fblocks,
-            extractors=[_utility.extract_attr_from_params('kfgrad')]):
+            self,
+            param_groups,
+            extractors=[_utility.extract_attr_from_params('precgrad')]):
         """Executes AllGatherV.
 
             Flow(no cast): pack(A) -> send(A) -> recv(B) -> unpack(B)
@@ -235,7 +237,8 @@ class PureNCCLCommunicator(base.KFACCommunicatorBase):
         local_rank = self.rank
 
         # Allocate memory space for recieving
-        _utility.allocate_asgrad(fblocks, 'kfgrad')
+        # TODO
+        #_utility.allocate_asgrad(param_groups, 'kfgrad')
 
         # Initialize NCCL communicator if not
         self._init_comms()
@@ -243,8 +246,8 @@ class PureNCCLCommunicator(base.KFACCommunicatorBase):
         # Target NCCL communicator
         nccl_comm = self.nccl_comm
 
-        # Extract arrays from fblocks
-        arrays = _utility.extract(fblocks, self.indices, extractors)
+        # Extract arrays from param_groups
+        arrays = _utility.extract(param_groups, self.indices, extractors)
 
         # Get total number of elements, local number of elements, and local
         # number of elements' offset
@@ -313,6 +316,7 @@ class PureNCCLCommunicator(base.KFACCommunicatorBase):
             # Casting unnecessesary
             self._packer.unpack(arrays, self.gpu_buf_b,
                                 self._arrs_dtype.itemsize, stream)
+
 
     def _packcast(self, global_arrays, arrays, nelems, src_gpu_buf,
                   dst_gpu_buf, casting_kernels, stream, offset=0):

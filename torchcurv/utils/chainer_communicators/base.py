@@ -1,7 +1,7 @@
 from chainermn.communicators import mpi_communicator_base
 import warnings
 
-from chainerkfac.communicators import _utility
+from torchcurv.utils.chainer_communicators import _utility
 
 
 class KFACCommunicatorBase(mpi_communicator_base.MpiCommunicatorBase):
