@@ -10,4 +10,4 @@ mpirun \
 -x CUDA_CACHE_DISABLE=1 \
 python main.py \
 --dist_init_method $MASTER_ADDR \
---optim_name SGD
+--config lenet_distributed_kfac.json

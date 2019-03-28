@@ -9,14 +9,14 @@ import torch
 import torch.nn.functional as F
 from torch.nn.utils import parameters_to_vector
 from torchvision import datasets, transforms
-from torchcurv.optim import SecondOrderOptimizer, VIOptimizer
+from torchcurv.optim import SecondOrderOptimizer, VIOptimizer, DistributedSecondOrderOptimizer
 from torchcurv.utils import Logger
 
 DATASET_CIFAR10 = 'CIFAR-10'
 DATASET_CIFAR100 = 'CIFAR-100'
 
 
-def train(model, device, train_loader, optimizer, epoch, args, logger):
+def train(model, device, train_loader, optimizer, epoch, args, logger, dist):
     model.train()
 
     total_correct = 0
@@ -47,24 +47,36 @@ def train(model, device, train_loader, optimizer, epoch, args, logger):
         loss, output = optimizer.step(closure=closure)
 
         pred = output.argmax(dim=1, keepdim=True)
-        correct = pred.eq(target.view_as(pred)).sum().item()
+        correct = pred.eq(target.view_as(pred)).sum().data
+
+        loss = loss.data
+
+        if dist is not None:
+            loss = allreduce(loss, dist) / dist.get_world_size()
+            correct = allreduce(correct, dist)
+            data_size = torch.tensor(len(data)).to(device)
+            data_size = allreduce(data_size, dist)
 
         loss = loss.item()
+        correct = correct.item()
+        data_size = data_size.item()
+
         total_correct += correct
 
         iteration = base_num_iter + batch_idx + 1
-        total_data_size += len(data)
+        total_data_size += data_size
+        
 
         # for DDP
         if logger is not None:
             if batch_idx % args.log_interval == 0:
                 accuracy = 100. * total_correct / total_data_size
                 elapsed_time = logger.elapsed_time
-                print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}, '
+                print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}/{}, '
                       'Accuracy: {:.0f}/{} ({:.2f}%), '
                       'Elapsed Time: {:.1f}s'.format(
                       epoch, total_data_size, epoch_size, 100. * (batch_idx + 1) / num_iters_in_epoch,
-                      loss, total_correct, total_data_size, accuracy, elapsed_time))
+                      loss, total_data_size, total_correct, total_data_size, accuracy, elapsed_time))
 
                 # write to log
                 log = {'epoch': epoch, 'iteration': iteration, 'elapsed_time': elapsed_time,
@@ -288,13 +300,15 @@ def main():
         optim_class = SecondOrderOptimizer
     elif args.optim_name == VIOptimizer.__name__:
         optim_class = VIOptimizer
+    if args.optim_name == DistributedSecondOrderOptimizer.__name__:
+        optim_class = DistributedSecondOrderOptimizer
     else:
         optim_class = getattr(torch.optim, args.optim_name)
 
     optim_kwargs = extract_kwargs(optim_class.__init__, args.optim_args)
     optim_kwargs['lr'] = args.lr
 
-    if optim_class is SecondOrderOptimizer:
+    if optim_class in [SecondOrderOptimizer, DistributedSecondOrderOptimizer]:
         optimizer = optim_class(model, **optim_kwargs, **args.curv_args)
     elif optim_class is VIOptimizer:
         optimizer = optim_class(model, dataset_size=len(train_loader.dataset), **optim_kwargs, **args.curv_args)
@@ -353,7 +367,7 @@ def main():
             scheduler.step(epoch - 1)
 
         # train
-        accuracy, loss = train(model, device, train_loader, optimizer, epoch, args, logger)
+        accuracy, loss = train(model, device, train_loader, optimizer, epoch, args, logger, dist)
 
         #for DDP
         if rank == 0:
@@ -378,6 +392,10 @@ def main():
                 }
                 torch.save(data, path)
 
+def allreduce(tensor, dist):
+    t = tensor.clone()
+    dist.all_reduce(t)
+    return t
 
 if __name__ == '__main__':
     main()
