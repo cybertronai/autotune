@@ -4,12 +4,15 @@ import torch
 from torchcurv.optim import SecondOrderOptimizer
 from torchcurv.utils import TensorAccumulator
 
+GRAD_TYPE_RAW = 'raw'
+GRAD_TYPE_PRECONDITIONED = 'preconditioned'
+
 
 class VIOptimizer(SecondOrderOptimizer):
 
-    def __init__(self, model, dataset_size, curv_type, curv_shapes, lr=0.01,
-                 momentum=0, momentum_type='precgrad', adjust_momentum=False,
-                 grad_ema_decay=1, grad_ema_type='grad', weight_decay=0,
+    def __init__(self, model, dataset_size, curv_type='Fisher', curv_shapes=None,
+                 lr=0.01, momentum=0, momentum_type=GRAD_TYPE_PRECONDITIONED, adjust_momentum=False,
+                 grad_ema_decay=1, grad_ema_type=GRAD_TYPE_RAW, weight_decay=0,
                  num_mc_samples=10, test_num_mc_samples=10, kl_weighting=1, prior_variance=1,
                  **curv_kwargs):
 
@@ -32,6 +35,16 @@ class VIOptimizer(SecondOrderOptimizer):
                 state = self.state[m]
                 state['momentum_buffer'] = torch.zeros_like(m.data)
                 state['grad_ema_buffer'] = torch.zeros_like(m.data)
+
+    def zero_grad(self):
+        r"""Clears the gradients of all optimized :class:`torch.Tensor` s."""
+        for group in self.param_groups:
+            for m in group['mean']:
+                if m.grad is not None:
+                    m.grad.detach_()
+                    m.grad.zero_()
+
+        super(VIOptimizer, self).zero_grad()
 
     def step(self, closure=None):
         """Performs a single optimization step.
@@ -88,7 +101,7 @@ class VIOptimizer(SecondOrderOptimizer):
             acc_grads = group['acc_grads'].get()
             for m, acc_grad in zip(mean, acc_grads):
                 m.grad = acc_grad.clone()
-            self.update_preprocess(group, target='mean', attr='grad')
+            self.update_preprocess(group, target='mean', grad_type=GRAD_TYPE_RAW)
 
             curv = group['curv']
             if curv is not None:
@@ -100,7 +113,7 @@ class VIOptimizer(SecondOrderOptimizer):
                 curv.precondition_grad(mean)
 
             # update mean
-            self.update_preprocess(group, target='mean', attr='precgrad')
+            self.update_preprocess(group, target='mean', grad_type=GRAD_TYPE_PRECONDITIONED)
             self.update(group, target='mean')
 
             # set mean to model.params

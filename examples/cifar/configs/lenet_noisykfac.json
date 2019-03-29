@@ -10,7 +10,7 @@
   "arch_name": "LeNet5",
   "optim_name": "VIOptimizer",
   "optim_args": {
-    "curv_type":"Fisher",
+    "curv_type": "Fisher",
     "curv_shapes": {
       "Conv2d": "Kron",
       "Linear": "Kron",
@@ -19,7 +19,7 @@
     },
     "momentum": 0.9,
     "adjust_momentum": false,
-    "momentum_type": "precgrad",
+    "momentum_type": "preconditioned",
     "weight_decay": 0.1,
     "num_mc_samples": 10,
     "test_num_mc_samples": 10,

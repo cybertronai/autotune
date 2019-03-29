@@ -217,7 +217,6 @@ class PureNCCLCommunicator(base.KFACCommunicatorBase):
                                 self._arrs_dtype.itemsize, stream,
                                 offset=nelems_offset)
 
-
     def allgatherv_data(
             self,
             param_groups,

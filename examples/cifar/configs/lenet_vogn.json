@@ -21,7 +21,7 @@
       "BatchNorm2d": "Diag"
     },
     "grad_ema_decay": 0.1,
-    "grad_ema_type": "grad",
+    "grad_ema_type": "raw",
     "weight_decay": 0,
     "num_mc_samples": 10,
     "test_num_mc_samples": 10,

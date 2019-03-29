@@ -57,15 +57,15 @@ class KronFisherLinear(KronCurvature):
         if self.bias:
             grad = torch.cat(
                 (params[0].grad, params[1].grad.view(-1, 1)), 1)
-            precgrad = G_inv.mm(grad).mm(A_inv)
+            preconditioned_grad = G_inv.mm(grad).mm(A_inv)
 
-            setattr(params[0], 'precgrad', precgrad[:, :-1])
-            setattr(params[1], 'precgrad', precgrad[:, -1])
+            params[0].grad.copy_(preconditioned_grad[:, :-1])
+            params[1].grad.copy_(preconditioned_grad[:, -1])
         else:
             grad = params[0].grad
-            precgrad = G_inv.mm(grad).mm(A_inv)
+            preconditioned_grad = G_inv.mm(grad).mm(A_inv)
 
-            setattr(params[0], 'precgrad', precgrad)
+            params[0].grad.copy_(preconditioned_grad)
 
     def sample_params(self, params, mean, std_scale):
         A_ic, G_ic = self.std

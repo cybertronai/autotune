@@ -18,7 +18,7 @@
       "BatchNorm2d": "Diag"
     },
     "momentum": 0.9,
-    "momentum_type": "precgrad",
+    "momentum_type": "preconditioned",
     "adjust_momentum": true,
     "weight_decay": 0.05
   },

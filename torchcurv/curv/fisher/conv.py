@@ -72,15 +72,15 @@ class KronFisherConv2d(KronCurvature):
         if self.bias:
             grad2d = torch.cat(
                 (params[0].grad.reshape(oc, -1), params[1].grad.view(-1, 1)), 1)
-            precgrad2d = G_inv.mm(grad2d).mm(A_inv)
+            preconditioned_grad2d = G_inv.mm(grad2d).mm(A_inv)
 
-            setattr(params[0], 'precgrad', precgrad2d[:, 0:-1].reshape_as(params[0]))
-            setattr(params[1], 'precgrad', precgrad2d[:, -1])
+            params[0].grad.copy_(preconditioned_grad2d[:, 0:-1].reshape_as(params[0]))
+            params[1].grad.copy_(preconditioned_grad2d[:, -1])
         else:
             grad2d = params[0].grad.reshape(oc, -1)
-            precgrad2d = G_inv.mm(grad2d).mm(A_inv)
+            preconditioned_grad2d = G_inv.mm(grad2d).mm(A_inv)
 
-            setattr(params[0], 'precgrad', precgrad2d.reshape_as(params[0]))
+            params[0].grad.copy_(preconditioned_grad2d.reshape_as(params[0]))
 
     def sample_params(self, params, mean, std_scale):
         A_ic, G_ic = self.std

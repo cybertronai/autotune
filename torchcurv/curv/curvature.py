@@ -98,8 +98,7 @@ class DiagCurvature(Curvature):
 
     def precondition_grad(self, params):
         for param_i, inv_i in zip(params, self.inv):
-            grad = param_i.grad
-            setattr(param_i, 'precgrad', inv_i.mul(grad))
+            param_i.grad.copy_(inv_i.mul(param_i.grad))
 
     def update_std(self):
         self.std = [inv.sqrt() for inv in self.inv]
@@ -112,12 +111,12 @@ class DiagCurvature(Curvature):
 
 class KronCurvature(Curvature):
 
-    def __init__(self, module, pi_type=PI_TYPE_TRACENORM, **kwargs):
+    def __init__(self, module, ema_decay=1., damping=1e-7, pi_type=PI_TYPE_TRACENORM):
         self.pi_type = pi_type
         self._A = None
         self._G = None
 
-        super(KronCurvature, self).__init__(module, **kwargs)
+        super(KronCurvature, self).__init__(module, ema_decay=ema_decay, damping=damping)
 
     @property
     def data(self):

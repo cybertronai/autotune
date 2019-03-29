@@ -1,7 +1,6 @@
 import os
 import argparse
 from importlib import import_module
-import inspect
 import shutil
 import json
 
@@ -191,17 +190,6 @@ def main():
             config = json.load(f)
         dict_args.update(config)
 
-    def extract_kwargs(func, target):
-        if target is None:
-            return {}
-
-        keys = list(inspect.signature(func).parameters.keys())
-        kwargs = {}
-        for key, val in target.items():
-            if key in keys:
-                kwargs[key] = val
-        return kwargs
-
     # Set device
     use_cuda = not args.no_cuda and torch.cuda.is_available()
     device = torch.device('cuda' if use_cuda else 'cpu')
@@ -284,7 +272,7 @@ def main():
     module = import_module(module_path)
     arch_class = getattr(module, args.arch_name)
 
-    arch_kwargs = extract_kwargs(arch_class.__init__, args.arch_args)
+    arch_kwargs = {} if args.arch_args is None else args.arch_args
     arch_kwargs['num_classes'] = num_classes
 
     model = arch_class(**arch_kwargs)
@@ -305,7 +293,7 @@ def main():
     else:
         optim_class = getattr(torch.optim, args.optim_name)
 
-    optim_kwargs = extract_kwargs(optim_class.__init__, args.optim_args)
+    optim_kwargs = {} if args.optim_args is None else args.optim_args
     optim_kwargs['lr'] = args.lr
 
     if optim_class in [SecondOrderOptimizer, DistributedSecondOrderOptimizer]:
@@ -321,7 +309,7 @@ def main():
         scheduler = None
     else:
         scheduler_class = getattr(torch.optim.lr_scheduler, args.scheduler_name)
-        scheduler_kwargs = extract_kwargs(scheduler_class.__init__, args.scheduler_args)
+        scheduler_kwargs = {} if args.scheduler_args is None else args.scheduler
         scheduler = scheduler_class(optimizer, **scheduler_kwargs)
 
     # for DDP
