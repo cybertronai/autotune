@@ -128,12 +128,6 @@ class SecondOrderOptimizer(Optimizer):
             buf.mul_(1 - grad_ema_decay).add_(grad.mul(grad_ema_decay))
             grad.copy_(buf)
 
-    def backward_postprocess(self):
-        pass
-
-    def hogeprocess(self):
-        pass
-
     def update_preprocess(self, group, target='params', attr='grad'):
         params = group[target]
 
@@ -179,8 +173,6 @@ class SecondOrderOptimizer(Optimizer):
         if closure is not None:
             loss = closure()
 
-        self.backward_postprocess()
-
         for group in self.param_groups:
             params = group['params']
 
@@ -193,8 +185,6 @@ class SecondOrderOptimizer(Optimizer):
                 curv.precondition_grad(params)
 
             self.update_preprocess(group, attr='precgrad')
-
-        self.hogeprocess()
 
         for group in self.param_groups:
             self.update(group)
@@ -228,10 +218,36 @@ class DistributedSecondOrderOptimizer(SecondOrderOptimizer):
         self.local_param_groups = local_param_groups
         setattr(self.comm, 'indices', indices)
 
-    def backward_postprocess(self):
+    def step(self, closure=None):
+        """Performs a single optimization step.
+
+        Arguments:
+            closure (callable, optional): A closure that reevaluates the model
+                and returns the loss.
+        """
+        loss = None
+        if closure is not None:
+            loss = closure()
+
         # reduce_scatterv
         self.comm.reduce_scatterv_data(self.param_groups)
 
-    def hogeprocess(self):
+        for group in self.local_param_groups:
+            params = group['params']
+
+            self.update_preprocess(group, attr='grad')
+
+            curv = group['curv']
+            if curv is not None:
+                curv.update_ema()
+                curv.update_inv()
+                curv.precondition_grad(params)
+
+            self.update_preprocess(group, attr='precgrad')
+            self.update(group)
+
         # allgatherv
         self.comm.allgatherv_data(self.param_groups)
+
+        return loss
+

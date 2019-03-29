@@ -221,7 +221,7 @@ class PureNCCLCommunicator(base.KFACCommunicatorBase):
     def allgatherv_data(
             self,
             param_groups,
-            extractors=[_utility.extract_attr_from_params('precgrad')]):
+            extractors=[_utility.extract_attr_from_params('data')]):
         """Executes AllGatherV.
 
             Flow(no cast): pack(A) -> send(A) -> recv(B) -> unpack(B)
