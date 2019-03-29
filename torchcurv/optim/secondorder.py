@@ -185,8 +185,6 @@ class SecondOrderOptimizer(Optimizer):
                 curv.precondition_grad(params)
 
             self.update_preprocess(group, attr='precgrad')
-
-        for group in self.param_groups:
             self.update(group)
 
         return loss
