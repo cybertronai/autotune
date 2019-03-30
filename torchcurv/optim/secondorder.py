@@ -273,7 +273,7 @@ class DistributedSecondOrderOptimizer(SecondOrderOptimizer):
 
     def backward_postprocess(self, target='params'):
         super().backward_postprocess(target)
-        # reduce_scatterv
+        # reduce_scatter_v
         self.comm.reduce_scatterv_data(self.param_groups)
 
     def is_updated(self):
@@ -289,7 +289,7 @@ class DistributedSecondOrderOptimizer(SecondOrderOptimizer):
         loss = super().step(closure)
 
         if self.is_updated():
-            # allgatherv
+            # all_gather_v
             self.comm.allgatherv_data(self.param_groups)
 
         return loss
