@@ -135,7 +135,8 @@ class SecondOrderOptimizer(Optimizer):
             else:
                 self.optim_state['acc_step'] = 0
 
-        self.backward_postprocess()
+            self.backward_postprocess()
+
         self.optim_state['step'] += 1
 
         for group in self.local_param_groups:
