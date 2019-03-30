@@ -85,6 +85,10 @@ class SecondOrderOptimizer(Optimizer):
                 state['momentum_buffer'] = torch.zeros_like(p.data)
                 state['grad_ema_buffer'] = torch.zeros_like(p.data)
 
+    @property
+    def local_param_groups(self):
+        return self.param_groups
+
     def get_curv_class(self, module):
         module_name = module.__class__.__name__
         curv_shape = self.curv_shapes.get(module_name, '')
@@ -100,6 +104,102 @@ class SecondOrderOptimizer(Optimizer):
         else:
             for child in list(module.children()):
                 self.set_train_modules(child)
+
+    def step(self, closure=None):
+        """Performs a single optimization step.
+
+        Arguments:
+            closure (callable, optional): A closure that reevaluates the model
+                and returns the loss.
+        """
+
+        loss = None
+        n = self.defaults['acc_steps']
+
+        if closure is not None:
+            loss = closure()
+
+            for group in self.param_groups:
+                params = group['params']
+
+                grads = [p.grad.data for p in params]
+                group['acc_grads'].update(grads, scale=1/n)
+
+                curv = group['curv']
+                if curv is not None:
+                    group['acc_curv'].update(curv.data, scale=1/n)
+
+            self.optim_state['acc_step'] += 1
+            if self.optim_state['acc_step'] < n:
+                return loss
+            else:
+                self.optim_state['acc_step'] = 0
+
+        self.backward_postprocess()
+        self.optim_state['step'] += 1
+
+        for group in self.local_param_groups:
+            params = group['params']
+
+            self.update_preprocess(group, grad_type='raw')
+
+            curv = group['curv']
+            if curv is not None:
+                curv.step()
+                curv.precondition_grad(params)
+
+            self.update_preprocess(group, grad_type='preconditioned')
+            self.update(group)
+
+        return loss
+
+    def backward_postprocess(self):
+        for group in self.param_groups:
+            params = group['params']
+
+            acc_grads = group['acc_grads'].get()
+            for p, acc_grad in zip(params, acc_grads):
+                p.grad = acc_grad.clone()
+
+            curv = group['curv']
+            if curv is not None:
+                curv.data = group['acc_curv'].get()
+
+    def update(self, group, target='params'):
+        params = group[target]
+
+        for p in params:
+
+            grad = p.grad
+
+            if grad is None:
+                continue
+
+            p.data.add_(-group['lr'], grad)
+
+    def update_preprocess(self, group, target='params', grad_type='raw'):
+        assert grad_type in ['raw', 'preconditioned'], 'Invalid grad type: {}.'.format(grad_type)
+
+        params = group[target]
+
+        for p in params:
+
+            grad = p.grad
+
+            if grad is None:
+                continue
+
+            if grad_type == 'raw':
+                self.apply_l2_reg(p, grad, group)
+
+            if grad_type == 'preconditioned':
+                self.apply_weight_decay(p, grad, group)
+
+            if group['momentum_type'] == grad_type:
+                self.apply_momentum(p, grad, group)
+
+            if group['grad_ema_type'] == grad_type:
+                self.apply_grad_ema_decay(p, grad, group)
 
     def apply_l2_reg(self, p, grad, group):
         if group['l2_reg'] != 0:
@@ -139,101 +239,12 @@ class SecondOrderOptimizer(Optimizer):
             buf.mul_(1 - grad_ema_decay).add_(grad.mul(grad_ema_decay))
             grad.copy_(buf)
 
-    def update_preprocess(self, group, target='params', grad_type='raw'):
-        assert grad_type in ['raw', 'preconditioned'], 'Invalid grad type: {}.'.format(grad_type)
-
-        params = group[target]
-
-        for p in params:
-
-            grad = p.grad
-
-            if grad is None:
-                continue
-
-            if grad_type == 'raw':
-                self.apply_l2_reg(p, grad, group)
-
-            if grad_type == 'preconditioned':
-                self.apply_weight_decay(p, grad, group)
-
-            if group['momentum_type'] == grad_type:
-                self.apply_momentum(p, grad, group)
-
-            if group['grad_ema_type'] == grad_type:
-                self.apply_grad_ema_decay(p, grad, group)
-
-    def update(self, group, target='params'):
-        params = group[target]
-
-        for p in params:
-
-            grad = p.grad
-
-            if grad is None:
-                continue
-
-            p.data.add_(-group['lr'], grad)
-
-    def step(self, closure=None):
-        """Performs a single optimization step.
-
-        Arguments:
-            closure (callable, optional): A closure that reevaluates the model
-                and returns the loss.
-        """
-
-        loss = None
-        n = self.defaults['acc_steps']
-
-        if closure is not None:
-            loss = closure()
-
-            for group in self.param_groups:
-                params = group['params']
-
-                grads = [p.grad.data for p in params]
-                group['acc_grads'].update(grads, scale=1/n)
-
-                curv = group['curv']
-                if curv is not None:
-                    group['acc_curv'].update(curv.data, scale=1/n)
-
-            self.optim_state['acc_step'] += 1
-            if self.optim_state['acc_step'] < n:
-                return loss
-            else:
-                self.optim_state['acc_step'] = 0
-
-        self.optim_state['step'] += 1
-
-        for group in self.param_groups:
-            params = group['params']
-
-            acc_grads = group['acc_grads'].get()
-            for p, acc_grad in zip(params, acc_grads):
-                p.grad = acc_grad.clone()
-
-            self.update_preprocess(group, grad_type='raw')
-
-            curv = group['curv']
-            if curv is not None:
-                curv.data = group['acc_curv'].get()
-                curv.update_ema()
-                curv.update_inv()
-                curv.precondition_grad(params)
-
-            self.update_preprocess(group, grad_type='preconditioned')
-            self.update(group)
-
-        return loss
-
 
 class DistributedSecondOrderOptimizer(SecondOrderOptimizer):
 
     def __init__(self, *args, **kwargs):
 
-        super(DistributedSecondOrderOptimizer, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
         self.comm = create_communicator()
 
@@ -246,8 +257,20 @@ class DistributedSecondOrderOptimizer(SecondOrderOptimizer):
 
         self.indices = indices
         self.local_indices = local_indices
-        self.local_param_groups = local_param_groups
+        self._local_param_groups = local_param_groups
         setattr(self.comm, 'indices', indices)
+
+    @property
+    def local_param_groups(self):
+        return self._local_param_groups
+
+    def backward_postprocess(self):
+        super().backward_postprocess()
+        # reduce_scatterv
+        self.comm.reduce_scatterv_data(self.param_groups)
+
+    def is_params_updated(self):
+        return self.optim_state['acc_step'] == 0
 
     def step(self, closure=None):
         """Performs a single optimization step.
@@ -256,29 +279,11 @@ class DistributedSecondOrderOptimizer(SecondOrderOptimizer):
             closure (callable, optional): A closure that reevaluates the model
                 and returns the loss.
         """
-        loss = None
-        if closure is not None:
-            loss = closure()
+        loss = super().step(closure)
 
-        # reduce_scatterv
-        self.comm.reduce_scatterv_data(self.param_groups)
-
-        for group in self.local_param_groups:
-            params = group['params']
-
-            self.update_preprocess(group, grad_type='raw')
-
-            curv = group['curv']
-            if curv is not None:
-                curv.update_ema()
-                curv.update_inv()
-                curv.precondition_grad(params)
-
-            self.update_preprocess(group, grad_type='preconditioned')
-            self.update(group)
-
-        # allgatherv
-        self.comm.allgatherv_data(self.param_groups)
+        if self.is_params_updated():
+            # allgatherv
+            self.comm.allgatherv_data(self.param_groups)
 
         return loss
 
