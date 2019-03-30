@@ -115,7 +115,7 @@ class SecondOrderOptimizer(Optimizer):
                 and returns the loss.
         """
 
-        N = self.defaults['acc_steps']
+        n = self.defaults['acc_steps']
         loss = None
 
         if closure is not None:
@@ -127,15 +127,15 @@ class SecondOrderOptimizer(Optimizer):
                 params = group['params']
 
                 grads = [p.grad.data for p in params]
-                group['acc_grads'].update(grads, scale=1/N)
+                group['acc_grads'].update(grads, scale=1/n)
 
                 curv = group['curv']
                 if curv is not None:
-                    group['acc_curv'].update(curv.data, scale=1/N)
+                    group['acc_curv'].update(curv.data, scale=1/n)
 
             # update acc step
             self.optim_state['acc_step'] += 1
-            if self.optim_state['acc_step'] < N:
+            if self.optim_state['acc_step'] < n:
                 return loss
             else:
                 self.optim_state['acc_step'] = 0

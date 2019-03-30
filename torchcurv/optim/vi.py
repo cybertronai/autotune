@@ -54,6 +54,12 @@ class VIOptimizer(SecondOrderOptimizer):
                 for p, m in zip(params, mean):
                     p.data.copy_(m.data)
 
+    def set_mean_to_params(self):
+        for group in self.param_groups:
+            params, mean = group['params'], group['mean']
+            for p, m in zip(params, mean):
+                p.data.copy_(m.data)
+
     def step(self, closure=None):
         """Performs a single optimization step.
 
@@ -66,15 +72,15 @@ class VIOptimizer(SecondOrderOptimizer):
             return loss, output
         """
 
-        n = self.defaults['num_mc_samples'] if self.optim_state['step'] > 0 else 1
-        N = n * self.defaults['acc_steps']
+        m = self.defaults['num_mc_samples'] if self.optim_state['step'] > 0 else 1
+        n = self.defaults['acc_steps']
 
         acc_loss = TensorAccumulator()
         acc_output = TensorAccumulator()
 
         self.set_random_seed_by_step()
 
-        for _ in range(n):
+        for _ in range(m):
 
             # sampling
             self.sample_params()
@@ -82,19 +88,19 @@ class VIOptimizer(SecondOrderOptimizer):
             # forward and backward
             loss, output = closure()
 
-            acc_loss.update(loss, scale=1/n)
-            acc_output.update(output, scale=1/n)
+            acc_loss.update(loss, scale=1/m)
+            acc_output.update(output, scale=1/m)
 
             # update buf
             for group in self.param_groups:
                 params = group['params']
 
                 grads = [p.grad.data for p in params]
-                group['acc_grads'].update(grads, scale=1/N)
+                group['acc_grads'].update(grads, scale=1/m/n)
 
                 curv = group['curv']
                 if curv is not None:
-                    group['acc_curv'].update(curv.data, scale=1/N)
+                    group['acc_curv'].update(curv.data, scale=1/m/n)
 
         loss, output = acc_loss.get(), acc_output.get()
 
@@ -123,10 +129,8 @@ class VIOptimizer(SecondOrderOptimizer):
             self.update_preprocess(group, target='mean', grad_type='preconditioned')
             self.update(group, target='mean')
 
-            # set mean to model.params
-            params = group['params']
-            for p, m in zip(params, mean):
-                p.data.copy_(m.data)
+        # set mean to model.params
+        self.set_mean_to_params()
 
         return loss, output
 
@@ -138,26 +142,17 @@ class VIOptimizer(SecondOrderOptimizer):
         use_mean = mc_samples == 0
         n = 1 if use_mean else mc_samples
 
-        for i in range(n):
+        for _ in range(n):
 
-            # sampling
-            for group in self.param_groups:
-                params, mean = group['params'], group['mean']
-                curv = group['curv']
-                if (curv is not None) and (curv.std is not None) and (not use_mean):
-                    curv.sample_params(params, mean, self.defaults['std_scale'])
-                else:
-                    for p, m in zip(params, mean):
-                        p.data.copy_(m.data)
+            if not use_mean:
+                # sampling
+                self.sample_params()
 
             output = self.model(data)
             acc_output.update(output, scale=1/n)
 
         # set mean to model.params
-        for group in self.param_groups:
-            params, mean = group['params'], group['mean']
-            for p, m in zip(params, mean):
-                p.data.copy_(m.data)
+        self.set_mean_to_params()
 
         output = acc_output.get()
 
