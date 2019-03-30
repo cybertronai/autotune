@@ -91,7 +91,7 @@ class VIOptimizer(SecondOrderOptimizer):
             acc_loss.update(loss, scale=1/m)
             acc_output.update(output, scale=1/m)
 
-            # update buf
+            # accumulate
             for group in self.param_groups:
                 params = group['params']
 
@@ -157,3 +157,4 @@ class VIOptimizer(SecondOrderOptimizer):
         output = acc_output.get()
 
         return output
+

@@ -122,7 +122,7 @@ class SecondOrderOptimizer(Optimizer):
             # forward and backward
             loss = closure()
 
-            # update buf
+            # accumulate
             for group in self.param_groups:
                 params = group['params']
 
@@ -271,8 +271,8 @@ class DistributedSecondOrderOptimizer(SecondOrderOptimizer):
     def local_param_groups(self):
         return self._local_param_groups
 
-    def backward_postprocess(self):
-        super().backward_postprocess()
+    def backward_postprocess(self, target='params'):
+        super().backward_postprocess(target)
         # reduce_scatterv
         self.comm.reduce_scatterv_data(self.param_groups)
 
