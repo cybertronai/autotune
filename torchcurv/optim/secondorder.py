@@ -9,21 +9,13 @@ from torchcurv.utils import TensorAccumulator
 from torchcurv.utils.chainer_communicators import create_communicator
 import numpy as np
 
-GRAD_TYPE_RAW = 'raw'
-GRAD_TYPE_PRECONDITIONED = 'preconditioned'
-
 
 class SecondOrderOptimizer(Optimizer):
 
     def __init__(self, model, curv_type, curv_shapes,
-                 lr=0.01, momentum=0, momentum_type=GRAD_TYPE_PRECONDITIONED, adjust_momentum=False,
-                 grad_ema_decay=1, grad_ema_type=GRAD_TYPE_RAW, l2_reg=0, weight_decay=0,
+                 lr=0.01, momentum=0, momentum_type='preconditioned', adjust_momentum=False,
+                 grad_ema_decay=1, grad_ema_type='raw', l2_reg=0, weight_decay=0,
                  **curv_kwargs):
-
-        if momentum_type not in [GRAD_TYPE_RAW, GRAD_TYPE_PRECONDITIONED]:
-            raise ValueError('Invalid momentum type: {}'.format(momentum_type))
-        if grad_ema_type not in [GRAD_TYPE_RAW, GRAD_TYPE_PRECONDITIONED]:
-            raise ValueError('Invalid grad ema type: {}'.format(grad_ema_type))
 
         # TODO implement error checker: hoge(optim_kwargs)
         """
@@ -145,7 +137,9 @@ class SecondOrderOptimizer(Optimizer):
             buf.mul_(1 - grad_ema_decay).add_(grad.mul(grad_ema_decay))
             grad.copy_(buf)
 
-    def update_preprocess(self, group, target='params', grad_type=GRAD_TYPE_RAW):
+    def update_preprocess(self, group, target='params', grad_type='raw'):
+        assert grad_type in ['raw', 'preconditioned'], 'Invalid grad type: {}.'.format(grad_type)
+
         params = group[target]
 
         for p in params:
@@ -155,10 +149,10 @@ class SecondOrderOptimizer(Optimizer):
             if grad is None:
                 continue
 
-            if grad_type == GRAD_TYPE_RAW:
+            if grad_type == 'raw':
                 self.apply_l2_reg(p, grad, group)
 
-            if grad_type == GRAD_TYPE_PRECONDITIONED:
+            if grad_type == 'preconditioned':
                 self.apply_weight_decay(p, grad, group)
 
             if group['momentum_type'] == grad_type:
@@ -193,7 +187,7 @@ class SecondOrderOptimizer(Optimizer):
         for group in self.param_groups:
             params = group['params']
 
-            self.update_preprocess(group, grad_type=GRAD_TYPE_RAW)
+            self.update_preprocess(group, grad_type='raw')
 
             curv = group['curv']
             if curv is not None:
@@ -201,7 +195,7 @@ class SecondOrderOptimizer(Optimizer):
                 curv.update_inv()
                 curv.precondition_grad(params)
 
-            self.update_preprocess(group, grad_type=GRAD_TYPE_PRECONDITIONED)
+            self.update_preprocess(group, grad_type='preconditioned')
             self.update(group)
 
         return loss
@@ -244,7 +238,7 @@ class DistributedSecondOrderOptimizer(SecondOrderOptimizer):
         for group in self.local_param_groups:
             params = group['params']
 
-            self.update_preprocess(group, grad_type=GRAD_TYPE_RAW)
+            self.update_preprocess(group, grad_type='raw')
 
             curv = group['curv']
             if curv is not None:
@@ -252,7 +246,7 @@ class DistributedSecondOrderOptimizer(SecondOrderOptimizer):
                 curv.update_inv()
                 curv.precondition_grad(params)
 
-            self.update_preprocess(group, grad_type=GRAD_TYPE_PRECONDITIONED)
+            self.update_preprocess(group, grad_type='preconditioned')
             self.update(group)
 
         # allgatherv

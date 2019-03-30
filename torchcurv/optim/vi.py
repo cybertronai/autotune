@@ -4,15 +4,12 @@ import torch
 from torchcurv.optim import SecondOrderOptimizer
 from torchcurv.utils import TensorAccumulator
 
-GRAD_TYPE_RAW = 'raw'
-GRAD_TYPE_PRECONDITIONED = 'preconditioned'
-
 
 class VIOptimizer(SecondOrderOptimizer):
 
     def __init__(self, model, dataset_size, curv_type='Fisher', curv_shapes=None,
-                 lr=0.01, momentum=0, momentum_type=GRAD_TYPE_PRECONDITIONED, adjust_momentum=False,
-                 grad_ema_decay=1, grad_ema_type=GRAD_TYPE_RAW, weight_decay=0,
+                 lr=0.01, momentum=0, momentum_type='preconditioned', adjust_momentum=False,
+                 grad_ema_decay=1, grad_ema_type='raw', weight_decay=0,
                  num_mc_samples=10, test_num_mc_samples=10, kl_weighting=1, prior_variance=1,
                  **curv_kwargs):
 
@@ -101,7 +98,7 @@ class VIOptimizer(SecondOrderOptimizer):
             acc_grads = group['acc_grads'].get()
             for m, acc_grad in zip(mean, acc_grads):
                 m.grad = acc_grad.clone()
-            self.update_preprocess(group, target='mean', grad_type=GRAD_TYPE_RAW)
+            self.update_preprocess(group, target='mean', grad_type='raw')
 
             curv = group['curv']
             if curv is not None:
@@ -113,7 +110,7 @@ class VIOptimizer(SecondOrderOptimizer):
                 curv.precondition_grad(mean)
 
             # update mean
-            self.update_preprocess(group, target='mean', grad_type=GRAD_TYPE_PRECONDITIONED)
+            self.update_preprocess(group, target='mean', grad_type='preconditioned')
             self.update(group, target='mean')
 
             # set mean to model.params
