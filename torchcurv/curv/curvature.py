@@ -57,10 +57,12 @@ class Curvature(object):
     def update_in_backward(self, grad_output_data):
         raise NotImplementedError
 
-    def step(self):
+    def step(self, update_std=False):
         # TODO(oosawak): Add check for ema/inv timing
         self.update_ema()
         self.update_inv()
+        if update_std:
+            self.update_std()
 
     def update_ema(self):
         data = self.data

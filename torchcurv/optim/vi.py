@@ -1,5 +1,6 @@
 import math
 
+import torch
 from torchcurv.optim import SecondOrderOptimizer
 from torchcurv.utils import TensorAccumulator
 
@@ -37,6 +38,22 @@ class VIOptimizer(SecondOrderOptimizer):
 
         super(VIOptimizer, self).zero_grad()
 
+    def set_random_seed_by_step(self):
+        seed = self.optim_state['step']
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+
+    def sample_params(self):
+        for group in self.param_groups:
+            params, mean = group['params'], group['mean']
+            curv = group['curv']
+            if curv is not None and curv.std is not None:
+                curv.sample_params(params, mean, self.defaults['std_scale'])
+            else:
+                for p, m in zip(params, mean):
+                    p.data.copy_(m.data)
+
     def step(self, closure=None):
         """Performs a single optimization step.
 
@@ -50,20 +67,17 @@ class VIOptimizer(SecondOrderOptimizer):
         """
 
         n = self.defaults['num_mc_samples'] if self.optim_state['step'] > 0 else 1
+        N = n * self.defaults['acc_steps']
+
         acc_loss = TensorAccumulator()
         acc_output = TensorAccumulator()
 
-        for i in range(n):
+        self.set_random_seed_by_step()
+
+        for _ in range(n):
 
             # sampling
-            for group in self.param_groups:
-                params, mean = group['params'], group['mean']
-                curv = group['curv']
-                if curv is not None and curv.std is not None:
-                    curv.sample_params(params, mean, self.defaults['std_scale'])
-                else:
-                    for p, m in zip(params, mean):
-                        p.data.copy_(m.data)
+            self.sample_params()
 
             # forward and backward
             loss, output = closure()
@@ -76,31 +90,33 @@ class VIOptimizer(SecondOrderOptimizer):
                 params = group['params']
 
                 grads = [p.grad.data for p in params]
-                group['acc_grads'].update(grads, scale=1/n)
+                group['acc_grads'].update(grads, scale=1/N)
 
                 curv = group['curv']
                 if curv is not None:
-                    group['acc_curv'].update(curv.data, scale=1/n)
+                    group['acc_curv'].update(curv.data, scale=1/N)
 
+        loss, output = acc_loss.get(), acc_output.get()
+
+        # update acc step
+        self.optim_state['acc_step'] += 1
+        if self.optim_state['acc_step'] < n:
+            return loss, output
+        else:
+            self.optim_state['acc_step'] = 0
+
+        self.backward_postprocess(target='mean')
         self.optim_state['step'] += 1
 
         # update distribution
-        for group in self.param_groups:
-            mean = group['mean']
+        for group in self.local_param_groups:
 
-            # update mean grad
-            acc_grads = group['acc_grads'].get()
-            for m, acc_grad in zip(mean, acc_grads):
-                m.grad = acc_grad.clone()
             self.update_preprocess(group, target='mean', grad_type='raw')
 
-            curv = group['curv']
+            # update covariance
+            mean, curv = group['mean'], group['curv']
             if curv is not None:
-                # update covariance
-                curv.data = group['acc_curv'].get()
-                curv.update_ema()
-                curv.update_inv()
-                curv.update_std()
+                curv.step(update_std=True)
                 curv.precondition_grad(mean)
 
             # update mean
@@ -111,8 +127,6 @@ class VIOptimizer(SecondOrderOptimizer):
             params = group['params']
             for p, m in zip(params, mean):
                 p.data.copy_(m.data)
-
-        loss, output = acc_loss.get(), acc_output.get()
 
         return loss, output
 

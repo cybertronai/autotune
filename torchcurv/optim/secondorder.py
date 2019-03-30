@@ -115,24 +115,27 @@ class SecondOrderOptimizer(Optimizer):
                 and returns the loss.
         """
 
+        N = self.defaults['acc_steps']
         loss = None
-        n = self.defaults['acc_steps']
 
         if closure is not None:
+            # forward and backward
             loss = closure()
 
+            # update buf
             for group in self.param_groups:
                 params = group['params']
 
                 grads = [p.grad.data for p in params]
-                group['acc_grads'].update(grads, scale=1/n)
+                group['acc_grads'].update(grads, scale=1/N)
 
                 curv = group['curv']
                 if curv is not None:
-                    group['acc_curv'].update(curv.data, scale=1/n)
+                    group['acc_curv'].update(curv.data, scale=1/N)
 
+            # update acc step
             self.optim_state['acc_step'] += 1
-            if self.optim_state['acc_step'] < n:
+            if self.optim_state['acc_step'] < N:
                 return loss
             else:
                 self.optim_state['acc_step'] = 0
@@ -142,23 +145,24 @@ class SecondOrderOptimizer(Optimizer):
         self.optim_state['step'] += 1
 
         for group in self.local_param_groups:
-            params = group['params']
 
             self.update_preprocess(group, grad_type='raw')
 
-            curv = group['curv']
+            # update curvature
+            params, curv = group['params'], group['curv']
             if curv is not None:
                 curv.step()
                 curv.precondition_grad(params)
 
+            # update params
             self.update_preprocess(group, grad_type='preconditioned')
             self.update(group)
 
         return loss
 
-    def backward_postprocess(self):
+    def backward_postprocess(self, target='params'):
         for group in self.param_groups:
-            params = group['params']
+            params = group[target]
 
             acc_grads = group['acc_grads'].get()
             for p, acc_grad in zip(params, acc_grads):
