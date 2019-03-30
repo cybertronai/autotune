@@ -64,7 +64,6 @@ def train(model, device, train_loader, optimizer, epoch, args, logger, dist):
 
         iteration = base_num_iter + batch_idx + 1
         total_data_size += data_size
-        
 
         # for DDP
         if logger is not None:
@@ -282,7 +281,6 @@ def main():
     for param in list(model.parameters()):
         dist.broadcast(param.data, src=0)
 
-
     # Setup optimizer
     if args.optim_name == SecondOrderOptimizer.__name__:
         optim_class = SecondOrderOptimizer
@@ -302,7 +300,6 @@ def main():
         optimizer = optim_class(model, dataset_size=len(train_loader.dataset), **optim_kwargs, **args.curv_args)
     else:
         optimizer = optim_class(model.parameters(), **optim_kwargs)
-
 
     # Setup lr scheduler
     if args.scheduler_name is None:
@@ -346,7 +343,6 @@ def main():
         logger = Logger(args.out, args.log_file_name)
         logger.start()
 
-
     # Run training
     for epoch in range(start_epoch, args.epochs + 1):
 
@@ -357,7 +353,7 @@ def main():
         # train
         accuracy, loss = train(model, device, train_loader, optimizer, epoch, args, logger, dist)
 
-        #for DDP
+        # for DDP
         if rank == 0:
             # test
             test_accuracy, test_loss = test(model, test_loader, device)
@@ -380,10 +376,12 @@ def main():
                 }
                 torch.save(data, path)
 
+
 def allreduce(tensor, dist):
     t = tensor.clone()
     dist.all_reduce(t)
     return t
+
 
 if __name__ == '__main__':
     main()
