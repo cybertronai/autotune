@@ -309,7 +309,7 @@ def main():
         scheduler = None
     else:
         scheduler_class = getattr(torch.optim.lr_scheduler, args.scheduler_name)
-        scheduler_kwargs = {} if args.scheduler_args is None else args.scheduler
+        scheduler_kwargs = {} if args.scheduler_args is None else args.scheduler_args
         scheduler = scheduler_class(optimizer, **scheduler_kwargs)
 
     # for DDP
