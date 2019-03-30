@@ -28,10 +28,11 @@
     "ema_decay": 0.333,
     "pi_type": "tracenorm"
   },
-  "lr": 0.2,
+  "lr": 0.04,
   "scheduler_name": "ExponentialLR",
   "scheduler_args": {
     "gamma": 0.9
   },
+  "log_interval": 64,
   "no_cuda": false
 }
