@@ -269,7 +269,7 @@ class DistributedSecondOrderOptimizer(SecondOrderOptimizer):
         # reduce_scatterv
         self.comm.reduce_scatterv_data(self.param_groups)
 
-    def is_params_updated(self):
+    def is_updated(self):
         return self.optim_state['acc_step'] == 0
 
     def step(self, closure=None):
@@ -281,7 +281,7 @@ class DistributedSecondOrderOptimizer(SecondOrderOptimizer):
         """
         loss = super().step(closure)
 
-        if self.is_params_updated():
+        if self.is_updated():
             # allgatherv
             self.comm.allgatherv_data(self.param_groups)
 
