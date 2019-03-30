@@ -14,7 +14,7 @@ class SecondOrderOptimizer(Optimizer):
 
     def __init__(self, model, curv_type, curv_shapes,
                  lr=0.01, momentum=0, momentum_type='preconditioned', adjust_momentum=False,
-                 grad_ema_decay=1, grad_ema_type='raw', l2_reg=0, weight_decay=0,
+                 grad_ema_decay=1, grad_ema_type='raw', l2_reg=0, weight_decay=0, acc_steps=1,
                  **curv_kwargs):
 
         # TODO implement error checker: hoge(optim_kwargs)
@@ -38,10 +38,12 @@ class SecondOrderOptimizer(Optimizer):
         defaults = {'lr': lr, 'lr_pre': lr,
                     'momentum': momentum, 'momentum_type': momentum_type, 'adjust_momentum': adjust_momentum,
                     'grad_ema_decay': grad_ema_decay, 'grad_ema_type': grad_ema_type,
-                    'l2_reg': l2_reg, 'weight_decay': weight_decay}
+                    'l2_reg': l2_reg, 'weight_decay': weight_decay, 'acc_steps': acc_steps}
         defaults.update(curv_kwargs)
         self.defaults = defaults
         self.state = defaultdict(dict)
+        self.optim_state = {'step': 0, 'acc_step': 0}
+
         self.train_modules = []
         self.set_train_modules(model)  # TODO implement better method
         self.param_groups = []
@@ -180,17 +182,43 @@ class SecondOrderOptimizer(Optimizer):
             closure (callable, optional): A closure that reevaluates the model
                 and returns the loss.
         """
+
         loss = None
+        n = self.defaults['acc_steps']
+
         if closure is not None:
             loss = closure()
 
+            for group in self.param_groups:
+                params = group['params']
+
+                grads = [p.grad.data for p in params]
+                group['acc_grads'].update(grads, scale=1/n)
+
+                curv = group['curv']
+                if curv is not None:
+                    group['acc_curv'].update(curv.data, scale=1/n)
+
+            self.optim_state['acc_step'] += 1
+            if self.optim_state['acc_step'] < n:
+                return loss
+            else:
+                self.optim_state['acc_step'] = 0
+
+        self.optim_state['step'] += 1
+
         for group in self.param_groups:
             params = group['params']
+
+            acc_grads = group['acc_grads'].get()
+            for p, acc_grad in zip(params, acc_grads):
+                p.grad = acc_grad.clone()
 
             self.update_preprocess(group, grad_type='raw')
 
             curv = group['curv']
             if curv is not None:
+                curv.data = group['acc_curv'].get()
                 curv.update_ema()
                 curv.update_inv()
                 curv.precondition_grad(params)

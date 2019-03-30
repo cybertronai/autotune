@@ -24,8 +24,6 @@ class VIOptimizer(SecondOrderOptimizer):
         self.defaults['test_num_mc_samples'] = test_num_mc_samples
         self.defaults['std_scale'] = math.sqrt(kl_weighting / dataset_size)
 
-        self.state['step'] = 0
-
         for group in self.param_groups:
             group['mean'] = [p.clone().detach() for p in group['params']]
             for m in group['mean']:
@@ -55,7 +53,7 @@ class VIOptimizer(SecondOrderOptimizer):
             return loss, output
         """
 
-        n = self.defaults['num_mc_samples'] if self.state['step'] > 0 else 1
+        n = self.defaults['num_mc_samples'] if self.optim_state['step'] > 0 else 1
         acc_loss = TensorAccumulator()
         acc_output = TensorAccumulator()
 
@@ -88,7 +86,7 @@ class VIOptimizer(SecondOrderOptimizer):
                 if curv is not None:
                     group['acc_curv'].update(curv.data, scale=1/n)
 
-        self.state['step'] += 1
+        self.optim_state['step'] += 1
 
         # update distribution
         for group in self.param_groups:
