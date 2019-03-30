@@ -79,11 +79,13 @@ class SecondOrderOptimizer(Optimizer):
             }
 
             self.add_param_group(group)
+            self.init_buffer(params)
 
-            for p in params:
-                state = self.state[p]
-                state['momentum_buffer'] = torch.zeros_like(p.data)
-                state['grad_ema_buffer'] = torch.zeros_like(p.data)
+    def init_buffer(self, params):
+        for p in params:
+            state = self.state[p]
+            state['momentum_buffer'] = torch.zeros_like(p.data)
+            state['grad_ema_buffer'] = torch.zeros_like(p.data)
 
     @property
     def local_param_groups(self):

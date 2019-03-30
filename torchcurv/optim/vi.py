@@ -26,10 +26,7 @@ class VIOptimizer(SecondOrderOptimizer):
 
         for group in self.param_groups:
             group['mean'] = [p.clone().detach() for p in group['params']]
-            for m in group['mean']:
-                state = self.state[m]
-                state['momentum_buffer'] = torch.zeros_like(m.data)
-                state['grad_ema_buffer'] = torch.zeros_like(m.data)
+            self.init_buffer(group['mean'])
 
     def zero_grad(self):
         r"""Clears the gradients of all optimized :class:`torch.Tensor` s."""
