@@ -1,6 +1,5 @@
 import math
 
-import torch
 from torchcurv.optim import SecondOrderOptimizer
 from torchcurv.utils import TensorAccumulator
 
