@@ -243,22 +243,16 @@ def main():
     model = arch_class(**arch_kwargs)
     model = model.to(device)
 
-    # Setup optimizer
-    if args.optim_name == SecondOrderOptimizer.__name__:
-        optim_class = SecondOrderOptimizer
-    elif args.optim_name == VIOptimizer.__name__:
-        optim_class = VIOptimizer
-    else:
-        optim_class = getattr(torch.optim, args.optim_name)
-
     optim_kwargs = {} if args.optim_args is None else args.optim_args
     optim_kwargs['lr'] = args.lr
 
-    if optim_class is SecondOrderOptimizer:
-        optimizer = optim_class(model, **optim_kwargs, **args.curv_args)
-    elif optim_class is VIOptimizer:
-        optimizer = optim_class(model, dataset_size=len(train_loader.dataset), **optim_kwargs, **args.curv_args)
+    # Setup optimizer
+    if args.optim_name == SecondOrderOptimizer.__name__:
+        optimizer = SecondOrderOptimizer(model, **optim_kwargs, **args.curv_args)
+    elif args.optim_name == VIOptimizer.__name__:
+        optimizer = VIOptimizer(model, dataset_size=len(train_loader.dataset), **optim_kwargs, **args.curv_args)
     else:
+        optim_class = getattr(torch.optim, args.optim_name)
         optimizer = optim_class(model.parameters(), **optim_kwargs)
 
     # Setup lr scheduler

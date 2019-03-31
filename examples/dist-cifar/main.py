@@ -325,6 +325,11 @@ def main():
 
         # All config
         print('===========================')
+        print('MPI.COMM_WORLD size: {}'.format(global_size))
+        print('MC sample group size: {}'.format(size))
+        if hasattr(optimizer, 'indices'):
+            print('layer assignments: {}'.format(optimizer.indices))
+        print('---------------------------')
         for key, val in vars(args).items():
             if key == 'dataset':
                 print('{}: {}'.format(key, val))
