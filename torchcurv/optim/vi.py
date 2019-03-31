@@ -157,6 +157,8 @@ class VIOptimizer(SecondOrderOptimizer):
             if not use_mean:
                 # sampling
                 self.sample_params()
+            else:
+                self.copy_mean_to_params()
 
             output = self.model(data)
             acc_output.update(output, scale=1/n)

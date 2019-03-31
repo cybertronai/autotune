@@ -1,7 +1,7 @@
 {
   "dataset": "CIFAR-10",
   "epochs": 15,
-  "batch_size": 32,
+  "batch_size": 16,
   "test_batch_size": 128,
   "num_mc_sample_group": 1,
   "random_crop": false,
