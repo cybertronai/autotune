@@ -186,7 +186,7 @@ def main():
     # for DDP
     parser.add_argument('--dist_init_method', type=str,
                         help='torch.distributed init_method')
-    parser.add_argument('--num_mc_sample_group', type=int, default=1,
+    parser.add_argument('--num_mc_sample_groups', type=int, default=1,
                         help='number of the process groups in which mc sampled params are shared')
 
     args = parser.parse_args()
@@ -244,10 +244,10 @@ def main():
         root=args.root, train=False, download=True, transform=test_transform)
     
     # for DDP
-    num_mc_sample_group = args.num_mc_sample_group
-    if num_mc_sample_group > 1:
-        assert global_size % num_mc_sample_group == 0
-        size = int(global_size / num_mc_sample_group)
+    num_mc_sample_groups = args.num_mc_sample_groups
+    if num_mc_sample_groups > 1:
+        assert global_size % num_mc_sample_groups == 0
+        size = int(global_size / num_mc_sample_groups)
         rank = global_rank % size
     else:
         size = global_size
@@ -331,7 +331,7 @@ def main():
         # All config
         print('===========================')
         print('MPI.COMM_WORLD size: {}'.format(global_size))
-        print('num MC sample group: {}'.format(num_mc_sample_group))
+        print('num MC sample group: {}'.format(num_mc_sample_groups))
         print('MC sample group size: {}'.format(size))
         if hasattr(optimizer, 'indices'):
             print('layer assignments: {}'.format(optimizer.indices))
