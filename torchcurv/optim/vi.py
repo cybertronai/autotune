@@ -1,7 +1,8 @@
 import math
+import random
 
 import torch
-from torchcurv.optim import SecondOrderOptimizer
+from torchcurv.optim import SecondOrderOptimizer, DistributedSecondOrderOptimizer
 from torchcurv.utils import TensorAccumulator
 
 
@@ -24,6 +25,7 @@ class VIOptimizer(SecondOrderOptimizer):
         self.defaults['test_num_mc_samples'] = test_num_mc_samples
         self.defaults['std_scale'] = math.sqrt(kl_weighting / dataset_size)
         self.defaults['prior_variance'] = prior_variance
+        self.defaults['seed_base'] = random.random()
 
         for group in self.param_groups:
             group['mean'] = [torch.zeros_like(p) for p in group['params']]
@@ -39,8 +41,12 @@ class VIOptimizer(SecondOrderOptimizer):
 
         super(VIOptimizer, self).zero_grad()
 
-    def set_random_seed_by_step(self):
-        seed = self.optim_state['step']
+    @property
+    def seed(self):
+        return self.optim_state['step'] + self.defaults['seed_base']
+
+    def set_random_seed(self):
+        seed = self.seed
         torch.manual_seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
@@ -83,7 +89,7 @@ class VIOptimizer(SecondOrderOptimizer):
         acc_loss = TensorAccumulator()
         acc_output = TensorAccumulator()
 
-        self.set_random_seed_by_step()
+        self.set_random_seed()
 
         for _ in range(m):
 
@@ -162,4 +168,26 @@ class VIOptimizer(SecondOrderOptimizer):
         output = acc_output.get()
 
         return output
+
+
+class DistributedVIOptimizer(DistributedSecondOrderOptimizer, VIOptimizer):
+
+    def __init__(self, *args, mc_sample_group_id=0, **kwargs):
+        super(DistributedVIOptimizer).__init__(*args, **kwargs)
+        self.mc_sample_group_id = mc_sample_group_id
+
+    @property
+    def actual_optimizer(self):
+        return VIOptimizer
+
+    def zero_grad(self):
+        self.actual_optimizer.zero_grad(self)
+
+    @property
+    def seed(self):
+        step = self.optim_state['step']
+        group_id = self.mc_sample_group_id
+        base = self.defaults['seed_base']
+
+        return base * group_id + step
 

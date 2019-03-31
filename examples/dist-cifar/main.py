@@ -8,8 +8,11 @@ import torch
 import torch.nn.functional as F
 from torch.nn.utils import parameters_to_vector
 from torchvision import datasets, transforms
-from torchcurv.optim import SecondOrderOptimizer, VIOptimizer, DistributedSecondOrderOptimizer
+from torchcurv.optim import DistributedSecondOrderOptimizer, DistributedVIOptimizer
 from torchcurv.utils import Logger
+
+from mpi4py import MPI
+import torch.distributed as dist
 
 DATASET_CIFAR10 = 'CIFAR-10'
 DATASET_CIFAR100 = 'CIFAR-100'
@@ -146,7 +149,7 @@ def main():
                         help='name of the architecture')
     parser.add_argument('--arch_args', type=json.loads, default=None,
                         help='[JSON] arguments for the architecture')
-    parser.add_argument('--optim_name', type=str, default=SecondOrderOptimizer.__name__,
+    parser.add_argument('--optim_name', type=str, default=DistributedSecondOrderOptimizer.__name__,
                         help='name of the optimizer')
     parser.add_argument('--optim_args', type=json.loads, default=None,
                         help='[JSON] arguments for the optimizer')
@@ -175,10 +178,11 @@ def main():
                         help='dir to save output files')
     parser.add_argument('--config', default=None,
                         help='config file path')
-
     # for DDP
     parser.add_argument('--dist_init_method', type=str,
                         help='torch.distributed init_method')
+    parser.add_argument('--num_mc_sample_group', type=int, default=1,
+                        help='number of the process groups in which mc sampled params are shared')
 
     args = parser.parse_args()
     dict_args = vars(args)
@@ -189,21 +193,15 @@ def main():
             config = json.load(f)
         dict_args.update(config)
 
-    # Set device
-    use_cuda = not args.no_cuda and torch.cuda.is_available()
-    device = torch.device('cuda' if use_cuda else 'cpu')
-
     # for DDP
-    from mpi4py import MPI
-    import torch.distributed as dist
     comm = MPI.COMM_WORLD
-    size = comm.Get_size()
-    rank = comm.Get_rank()
+    global_size = comm.Get_size()
+    global_rank = comm.Get_rank()
     n_per_node = torch.cuda.device_count()
-    device = rank % n_per_node
+    device = global_rank % n_per_node
     torch.cuda.set_device(device)
     init_method = 'tcp://{}:23456'.format(args.dist_init_method)
-    dist.init_process_group('nccl', init_method=init_method, world_size=size, rank=rank)
+    dist.init_process_group('nccl', init_method=init_method, world_size=global_size, rank=global_rank)
 
     # Set random seed
     torch.manual_seed(args.seed)
@@ -241,11 +239,16 @@ def main():
         root=args.root, train=False, download=True, transform=test_transform)
     
     # for DDP
-    if True:
-        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, num_replicas=size, rank=rank)
+    num_mc_sample_group = args.num_mc_sample_group
+    if num_mc_sample_group > 1:
+        assert global_size % num_mc_sample_group == 0
+        size = global_size / num_mc_sample_group
+        rank = global_rank % size
     else:
-        train_sampler = None
+        size = global_size
+        rank = global_rank
 
+    train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, num_replicas=size, rank=rank)
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
         num_workers=0, pin_memory=True, sampler=train_sampler)
@@ -282,23 +285,19 @@ def main():
         dist.broadcast(param.data, src=0)
 
     # Setup optimizer
-    if args.optim_name == SecondOrderOptimizer.__name__:
-        optim_class = SecondOrderOptimizer
-    elif args.optim_name == VIOptimizer.__name__:
-        optim_class = VIOptimizer
-    if args.optim_name == DistributedSecondOrderOptimizer.__name__:
-        optim_class = DistributedSecondOrderOptimizer
-    else:
-        optim_class = getattr(torch.optim, args.optim_name)
-
     optim_kwargs = {} if args.optim_args is None else args.optim_args
     optim_kwargs['lr'] = args.lr
 
-    if optim_class in [SecondOrderOptimizer, DistributedSecondOrderOptimizer]:
-        optimizer = optim_class(model, **optim_kwargs, **args.curv_args)
-    elif optim_class is VIOptimizer:
-        optimizer = optim_class(model, dataset_size=len(train_loader.dataset), **optim_kwargs, **args.curv_args)
+    if args.optim_name == DistributedSecondOrderOptimizer.__name__:
+        optimizer = DistributedSecondOrderOptimizer(model, **optim_kwargs, **args.curv_args)
+    elif args.optim_name == DistributedVIOptimizer.__name__:
+        mc_sample_group_id = int(global_rank/size)
+        optimizer = DistributedVIOptimizer(model,
+                                           mc_sample_group_id=mc_sample_group_id,
+                                           dataset_size=len(train_loader.dataset),
+                                           **optim_kwargs, **args.curv_args)
     else:
+        optim_class = getattr(torch.optim, args.optim_name)
         optimizer = optim_class(model.parameters(), **optim_kwargs)
 
     # Setup lr scheduler
@@ -309,10 +308,11 @@ def main():
         scheduler_kwargs = {} if args.scheduler_args is None else args.scheduler_args
         scheduler = scheduler_class(optimizer, **scheduler_kwargs)
 
-    # for DDP
     logger = None
     start_epoch = 1
-    if rank == 0:
+
+    # for DDP
+    if global_rank == 0:
         # Load checkpoint
         if args.resume is not None:
             print('==> Resuming from checkpoint..')
@@ -354,7 +354,7 @@ def main():
         accuracy, loss = train(model, device, train_loader, optimizer, epoch, args, logger, dist)
 
         # for DDP
-        if rank == 0:
+        if global_rank == 0:
             # test
             test_accuracy, test_loss = test(model, test_loader, device)
 

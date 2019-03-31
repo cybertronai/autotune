@@ -1,5 +1,6 @@
 from collections import defaultdict
 import inspect
+import numpy as np
 
 import torch
 from torch.optim import Optimizer
@@ -7,7 +8,6 @@ import torchcurv
 from torchcurv.utils import TensorAccumulator
 
 from torchcurv.utils.chainer_communicators import create_communicator
-import numpy as np
 
 
 class SecondOrderOptimizer(Optimizer):
@@ -251,7 +251,7 @@ class DistributedSecondOrderOptimizer(SecondOrderOptimizer):
 
     def __init__(self, *args, **kwargs):
 
-        super().__init__(*args, **kwargs)
+        self.actual_optimizer.__init__(self, *args, **kwargs)
 
         self.comm = create_communicator()
 
@@ -268,11 +268,15 @@ class DistributedSecondOrderOptimizer(SecondOrderOptimizer):
         setattr(self.comm, 'indices', indices)
 
     @property
+    def actual_optimizer(self):
+        return SecondOrderOptimizer
+
+    @property
     def local_param_groups(self):
         return self._local_param_groups
 
     def backward_postprocess(self, target='params'):
-        super().backward_postprocess(target)
+        self.actual_optimizer.backward_postprocess(self, target)
         # reduce_scatter_v
         self.comm.reduce_scatterv_data(self.param_groups)
 
@@ -286,7 +290,7 @@ class DistributedSecondOrderOptimizer(SecondOrderOptimizer):
             closure (callable, optional): A closure that reevaluates the model
                 and returns the loss.
         """
-        loss = super().step(closure)
+        loss = self.actual_optimizer.step(self, closure)
 
         if self.is_updated():
             # all_gather_v
