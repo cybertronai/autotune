@@ -1,12 +1,12 @@
 {
   "dataset": "CIFAR-10",
   "epochs": 15,
-  "batch_size": 8,
+  "batch_size": 64,
   "test_batch_size": 128,
+  "num_mc_sample_group": 4,
   "random_crop": false,
   "random_horizontal_flip": false,
   "normalizing_data": false,
-  "num_mc_sample_group": 2,
   "arch_file": "models/lenet.py",
   "arch_name": "LeNet5",
   "optim_name": "DistributedVIOptimizer",
@@ -22,11 +22,11 @@
     "adjust_momentum": false,
     "momentum_type": "preconditioned",
     "weight_decay": 0.1,
-    "num_mc_samples": 5,
-    "test_num_mc_samples": 10,
+    "num_mc_samples": 1,
+    "test_num_mc_samples": 0,
     "kl_weighting": 0.2,
     "prior_variance": 1,
-    "acc_steps": 4
+    "acc_steps": 1
   },
   "curv_args": {
     "damping": 1e-4,
