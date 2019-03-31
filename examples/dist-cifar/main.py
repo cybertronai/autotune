@@ -242,7 +242,7 @@ def main():
     num_mc_sample_group = args.num_mc_sample_group
     if num_mc_sample_group > 1:
         assert global_size % num_mc_sample_group == 0
-        size = global_size / num_mc_sample_group
+        size = int(global_size / num_mc_sample_group)
         rank = global_rank % size
     else:
         size = global_size
