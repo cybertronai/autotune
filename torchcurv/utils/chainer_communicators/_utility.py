@@ -133,13 +133,13 @@ def extract(param_groups, indices, extractors):
     return arrays
 
 
-def extract_attr_from_params(attr, triangular=False):
+def extract_attr_from_params(attr, target='params', triangular=False):
     """Extracts arrays from all ``Parameter``s in a given ``FisherBlock``
     """
 
     def _extract_attr_from_params(group):
         arrays = []
-        for param in group['params']:
+        for param in group[target]:
             x = getattr(param, attr, None)
             if x is not None:
                 #x = _check_array(x, fblock.linkname)

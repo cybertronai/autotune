@@ -6,8 +6,8 @@ import torch
 from torch.optim import Optimizer
 import torchcurv
 from torchcurv.utils import TensorAccumulator
-
 from torchcurv.utils.chainer_communicators import create_communicator
+from torchcurv.utils.chainer_communicators import _utility
 
 
 class SecondOrderOptimizer(Optimizer):
@@ -275,10 +275,19 @@ class DistributedSecondOrderOptimizer(SecondOrderOptimizer):
     def local_param_groups(self):
         return self._local_param_groups
 
+    def get_extractors_for_rsv(self, target='params'):
+        extractors = [_utility.extract_attr_from_params('grad', target=target),
+                      _utility.extract_attr_from_curv('data', True)]
+        return extractors
+
+    def get_extractors_for_agv(self, target='params'):
+        extractors = [_utility.extract_attr_from_params('data', target=target)]
+        return extractors
+
     def backward_postprocess(self, target='params'):
         self.actual_optimizer.backward_postprocess(self, target)
         # reduce_scatter_v
-        self.comm.reduce_scatterv_data(self.param_groups)
+        self.comm.reduce_scatterv_data(self.param_groups, self.get_extractors_for_rsv())
 
     def is_updated(self):
         return self.optim_state['acc_step'] == 0
@@ -290,11 +299,12 @@ class DistributedSecondOrderOptimizer(SecondOrderOptimizer):
             closure (callable, optional): A closure that reevaluates the model
                 and returns the loss.
         """
+
         loss = self.actual_optimizer.step(self, closure)
 
         if self.is_updated():
             # all_gather_v
-            self.comm.allgatherv_data(self.param_groups)
+            self.comm.allgatherv_data(self.param_groups, self.get_extractors_for_agv())
 
         return loss
 

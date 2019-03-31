@@ -180,14 +180,20 @@ class DistributedVIOptimizer(DistributedSecondOrderOptimizer, VIOptimizer):
     def actual_optimizer(self):
         return VIOptimizer
 
-    def zero_grad(self):
-        self.actual_optimizer.zero_grad(self)
-
     @property
     def seed(self):
         step = self.optim_state['step']
         group_id = self.defaults['mc_sample_group_id']
         base = self.defaults['seed_base']
 
-        return base * group_id + step
+        return step + base * (group_id + 1)
+
+    def zero_grad(self):
+        self.actual_optimizer.zero_grad(self)
+
+    def get_extractors_for_rsv(self, target='mean'):
+        return super(DistributedVIOptimizer, self).get_extractors_for_rsv(target=target)
+
+    def get_extractors_for_agv(self, target='mean'):
+        return super(DistributedVIOptimizer, self).get_extractors_for_agv(target=target)
 

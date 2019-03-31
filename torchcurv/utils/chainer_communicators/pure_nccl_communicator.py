@@ -111,11 +111,7 @@ class PureNCCLCommunicator(base.KFACCommunicatorBase):
             else:
                 self.nccl_comm = HierNcclCommunicator(self.dims)
 
-    def reduce_scatterv_data(
-            self,
-            param_groups,
-            extractors=[_utility.extract_attr_from_params('grad'),
-                        _utility.extract_attr_from_curv('data', True)]):
+    def reduce_scatterv_data(self, param_groups, extractors):
         """Executes Reduce+ScatterV.
 
             Flow(no cast): pack(A) -> send(A) -> recv(B) -> mean(B->A)
@@ -131,7 +127,6 @@ class PureNCCLCommunicator(base.KFACCommunicatorBase):
 
         # Initialize NCCL communicator if not
         self._init_comms()
-
         # Target NCCL communicator
         nccl_comm = self.nccl_comm
 
@@ -217,10 +212,7 @@ class PureNCCLCommunicator(base.KFACCommunicatorBase):
                                 self._arrs_dtype.itemsize, stream,
                                 offset=nelems_offset)
 
-    def allgatherv_data(
-            self,
-            param_groups,
-            extractors=[_utility.extract_attr_from_params('data')]):
+    def allgatherv_data(self, param_groups, extractors):
         """Executes AllGatherV.
 
             Flow(no cast): pack(A) -> send(A) -> recv(B) -> unpack(B)
@@ -315,7 +307,6 @@ class PureNCCLCommunicator(base.KFACCommunicatorBase):
             # Casting unnecessesary
             self._packer.unpack(arrays, self.gpu_buf_b,
                                 self._arrs_dtype.itemsize, stream)
-
 
     def _packcast(self, global_arrays, arrays, nelems, src_gpu_buf,
                   dst_gpu_buf, casting_kernels, stream, offset=0):
