@@ -90,7 +90,8 @@ def train(model, device, train_loader, optimizer, epoch, args, logger, dist):
                     p_norm = p.norm().item()
                     upd_norm = p.sub(p_pre).norm().item()
 
-                    group_log = {'p_norm': p_norm, 'upd_norm': upd_norm}
+                    name = param_group.get('name', '')
+                    group_log = {'p_norm': p_norm, 'upd_norm': upd_norm, 'name': name}
                     log[i] = group_log
 
                 logger.write(log)
