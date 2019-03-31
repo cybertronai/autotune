@@ -65,7 +65,7 @@ class VIOptimizer(SecondOrderOptimizer):
                     std = noise.mul_(math.sqrt(self.defaults['prior_variance']))
                     p.data.copy_(torch.add(m, std))
 
-    def set_mean_to_params(self):
+    def copy_mean_to_params(self):
         for group in self.param_groups:
             params, mean = group['params'], group['mean']
             for p, m in zip(params, mean):
@@ -140,8 +140,7 @@ class VIOptimizer(SecondOrderOptimizer):
             self.update_preprocess(group, target='mean', grad_type='preconditioned')
             self.update(group, target='mean')
 
-        # set mean to model.params
-        self.set_mean_to_params()
+        self.copy_mean_to_params()
 
         return loss, output
 
@@ -162,8 +161,7 @@ class VIOptimizer(SecondOrderOptimizer):
             output = self.model(data)
             acc_output.update(output, scale=1/n)
 
-        # set mean to model.params
-        self.set_mean_to_params()
+        self.copy_mean_to_params()
 
         output = acc_output.get()
 
