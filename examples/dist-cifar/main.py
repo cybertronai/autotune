@@ -100,7 +100,7 @@ def train(model, device, train_loader, optimizer, epoch, args, logger, dist):
     return accuracy, loss
 
 
-def test(model, test_loader, device):
+def test(model, test_loader, device, optimizer):
     model.eval()
     test_loss = 0
     correct = 0
@@ -108,7 +108,11 @@ def test(model, test_loader, device):
     with torch.no_grad():
         for data, target in test_loader:
             data, target = data.to(device), target.to(device)
-            output = model(data)
+            if isinstance(optimizer, DistributedVIOptimizer):
+                output = optimizer.prediction(data)
+            else:
+                output = model(data)
+
             test_loss += F.cross_entropy(output, target, reduction='sum').item()  # sum up batch loss
             pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
             correct += pred.eq(target.view_as(pred)).sum().item()
@@ -361,7 +365,7 @@ def main():
         # for DDP
         if global_rank == 0:
             # test
-            test_accuracy, test_loss = test(model, test_loader, device)
+            test_accuracy, test_loss = test(model, test_loader, device, optimizer)
 
             # write to log
             iteration = epoch * len(train_loader)
