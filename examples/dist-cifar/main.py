@@ -331,6 +331,7 @@ def main():
         # All config
         print('===========================')
         print('MPI.COMM_WORLD size: {}'.format(global_size))
+        print('num MC sample group: {}'.format(num_mc_sample_group))
         print('MC sample group size: {}'.format(size))
         if hasattr(optimizer, 'indices'):
             print('layer assignments: {}'.format(optimizer.indices))
