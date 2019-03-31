@@ -173,8 +173,8 @@ class VIOptimizer(SecondOrderOptimizer):
 class DistributedVIOptimizer(DistributedSecondOrderOptimizer, VIOptimizer):
 
     def __init__(self, *args, mc_sample_group_id=0, **kwargs):
-        super(DistributedVIOptimizer).__init__(*args, **kwargs)
-        self.mc_sample_group_id = mc_sample_group_id
+        super(DistributedVIOptimizer, self).__init__(*args, **kwargs)
+        self.defaults['mc_sample_group_id'] = mc_sample_group_id
 
     @property
     def actual_optimizer(self):
@@ -186,7 +186,7 @@ class DistributedVIOptimizer(DistributedSecondOrderOptimizer, VIOptimizer):
     @property
     def seed(self):
         step = self.optim_state['step']
-        group_id = self.mc_sample_group_id
+        group_id = self.defaults['mc_sample_group_id']
         base = self.defaults['seed_base']
 
         return base * group_id + step
