@@ -275,19 +275,19 @@ class DistributedSecondOrderOptimizer(SecondOrderOptimizer):
     def local_param_groups(self):
         return self._local_param_groups
 
-    def get_extractors_for_rsv(self, target='params'):
-        extractors = [_utility.extract_attr_from_params('grad', target=target),
+    def extractors_for_rsv(self):
+        extractors = [_utility.extract_attr_from_params('grad'),
                       _utility.extract_attr_from_curv('data', True)]
         return extractors
 
-    def get_extractors_for_agv(self, target='params'):
-        extractors = [_utility.extract_attr_from_params('data', target=target)]
+    def extractors_for_agv(self):
+        extractors = [_utility.extract_attr_from_params('data')]
         return extractors
 
     def backward_postprocess(self, target='params'):
         self.actual_optimizer.backward_postprocess(self, target)
         # reduce_scatter_v
-        self.comm.reduce_scatterv_data(self.param_groups, self.get_extractors_for_rsv())
+        self.comm.reduce_scatterv_data(self.param_groups, self.extractors_for_rsv())
 
     def is_updated(self):
         return self.optim_state['acc_step'] == 0
@@ -304,7 +304,7 @@ class DistributedSecondOrderOptimizer(SecondOrderOptimizer):
 
         if self.is_updated():
             # all_gather_v
-            self.comm.allgatherv_data(self.param_groups, self.get_extractors_for_agv())
+            self.comm.allgatherv_data(self.param_groups, self.extractors_for_agv())
 
         return loss
 

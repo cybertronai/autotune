@@ -5,6 +5,7 @@ import cupy
 
 from chainer.backends import cuda
 
+import torch
 from torchcurv.utils.cupy import to_cupy
 
 
@@ -158,14 +159,29 @@ def extract_attr_from_curv(attr, triangular=False):
 
     def _extract_attr_from_curv(group):
         arrays = []
-        target = getattr(group['curv'], attr, None)
-        if target is not None:
-            for x in target:
-                #x = _check_array(x, fblock.linkname)
-                #setattr(param, attr, x)
-                x_ten = x.data
-                x_cp = to_cupy(x_ten)
-                arrays.append((x_cp, triangular))
+
+        curv = group['curv']
+        if curv is None:
+            return arrays
+
+        target = getattr(curv, attr, None)
+        if target is None:
+            if curv.data is not None:
+                zeros = []
+                for x in curv.data:
+                    zeros.append(torch.zeros_like(x))
+                setattr(curv, attr, zeros)
+                target = getattr(curv, attr)
+            else:
+                return arrays
+
+        for x in target:
+            #x = _check_array(x, fblock.linkname)
+            #setattr(param, attr, x)
+            x_ten = x.data
+            x_cp = to_cupy(x_ten)
+            arrays.append((x_cp, triangular))
+
         return arrays
 
     return _extract_attr_from_curv

@@ -4,6 +4,7 @@ import random
 import torch
 from torchcurv.optim import SecondOrderOptimizer, DistributedSecondOrderOptimizer
 from torchcurv.utils import TensorAccumulator
+from torchcurv.utils.chainer_communicators import _utility
 
 
 class VIOptimizer(SecondOrderOptimizer):
@@ -192,9 +193,13 @@ class DistributedVIOptimizer(DistributedSecondOrderOptimizer, VIOptimizer):
     def zero_grad(self):
         self.actual_optimizer.zero_grad(self)
 
-    def get_extractors_for_rsv(self, target='mean'):
-        return super(DistributedVIOptimizer, self).get_extractors_for_rsv(target=target)
+    def extractors_for_rsv(self):
+        extractors = [_utility.extract_attr_from_params('grad', target='mean'),
+                      _utility.extract_attr_from_curv('data', True)]
+        return extractors
 
-    def get_extractors_for_agv(self, target='mean'):
-        return super(DistributedVIOptimizer, self).get_extractors_for_agv(target=target)
+    def extractors_for_agv(self):
+        extractors = [_utility.extract_attr_from_params('data', target='mean'),
+                      _utility.extract_attr_from_curv('std', True)]
+        return extractors
 
