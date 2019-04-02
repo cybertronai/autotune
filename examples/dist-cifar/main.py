@@ -355,7 +355,7 @@ def main():
         print('MC sample group size: {}'.format(mc_group_size))
         print('Num MC sample groups: {}'.format(num_mc_groups))
         if hasattr(optimizer, 'indices'):
-            print('layer assignments: {}'.format(optimizer.indices))
+            print('layer assignment: {}'.format(optimizer.indices))
         print('---------------------------')
         for key, val in vars(args).items():
             if key == 'dataset':
