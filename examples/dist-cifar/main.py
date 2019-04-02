@@ -18,7 +18,9 @@ DATASET_CIFAR10 = 'CIFAR-10'
 DATASET_CIFAR100 = 'CIFAR-100'
 
 
-def train(model, device, train_loader, optimizer, epoch, args, logger, dist):
+def train(model, device, train_loader, optimizer, epoch, args,
+          rank, master_mc_group, mc_group_rank=0, data_group=None, logger=None):
+
     model.train()
 
     total_correct = 0
@@ -47,30 +49,37 @@ def train(model, device, train_loader, optimizer, epoch, args, logger, dist):
             return loss, output
 
         loss, output = optimizer.step(closure=closure)
+        data_size = torch.tensor(len(data)).to(device)
+
+        # [COMM] reduce across the all processes
+        dist.reduce(loss, dst=0)
+
+        # [COMM] reduce across the processes in a data group
+        if data_group is not None:
+            dist.reduce(output, dst=mc_group_rank, group=data_group)
 
         pred = output.argmax(dim=1, keepdim=True)
         correct = pred.eq(target.view_as(pred)).sum().data
 
-        loss = loss.data
+        # [COMM] reduce across the processes in the master MC sample group
+        if dist.get_world_size(master_mc_group) > 1:
+            correct = dist.reduce(correct, dst=0, group=master_mc_group)
+            data_size = dist.reduce(data_size, dst=0, group=master_mc_group)
 
-        if dist is not None:
-            loss = allreduce(loss, dist) / dist.get_world_size()
-            correct = allreduce(correct, dist)
-            data_size = torch.tensor(len(data)).to(device)
-            data_size = allreduce(data_size, dist)
+        # refresh results
+        if rank == 0:
+            loss = loss.item() / dist.get_world_size()
 
-        loss = loss.item()
-        correct = correct.item()
-        data_size = data_size.item()
+            correct = correct.item()
+            data_size = data_size.item()
 
-        total_correct += correct
+            total_correct += correct
 
-        iteration = base_num_iter + batch_idx + 1
-        total_data_size += data_size
+            iteration = base_num_iter + batch_idx + 1
+            total_data_size += data_size
 
-        # for DDP
-        if logger is not None:
-            if batch_idx % args.log_interval == 0:
+            # save log
+            if logger is not None and batch_idx % args.log_interval == 0:
                 accuracy = 100. * total_correct / total_data_size
                 elapsed_time = logger.elapsed_time
                 print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}, '
@@ -79,7 +88,6 @@ def train(model, device, train_loader, optimizer, epoch, args, logger, dist):
                       epoch, total_data_size, epoch_size, 100. * (batch_idx + 1) / num_iters_in_epoch,
                       loss, total_correct, total_data_size, accuracy, elapsed_time))
 
-                # write to log
                 log = {'epoch': epoch, 'iteration': iteration, 'elapsed_time': elapsed_time,
                        'accuracy': accuracy, 'loss': loss, 'lr': lr}
 
@@ -183,7 +191,7 @@ def main():
                         help='dir to save output files')
     parser.add_argument('--config', default=None,
                         help='config file path')
-    # for DDP
+    # [COMM]
     parser.add_argument('--dist_init_method', type=str,
                         help='torch.distributed init_method')
     parser.add_argument('--num_mc_sample_groups', type=int, default=1,
@@ -198,9 +206,13 @@ def main():
             config = json.load(f)
         dict_args.update(config)
 
-    # for DDP
+    # Set random seed
+    torch.manual_seed(args.seed)
+
+    # [COMM] Initialize process group
     comm = MPI.COMM_WORLD
     size = comm.Get_size()
+    ranks = list(range(size))
     rank = comm.Get_rank()
     n_per_node = torch.cuda.device_count()
     device = rank % n_per_node
@@ -208,8 +220,27 @@ def main():
     init_method = 'tcp://{}:23456'.format(args.dist_init_method)
     dist.init_process_group('nccl', init_method=init_method, world_size=size, rank=rank)
 
-    # Set random seed
-    torch.manual_seed(args.seed)
+    # [COMM] Setup process group for MC sample parallel
+    num_mc_groups = args.num_mc_sample_groups
+    if num_mc_groups > 1:
+        assert size % num_mc_groups == 0
+        mc_group_size = int(size / num_mc_groups)
+        mc_group_rank = rank % mc_group_size
+        mc_group_id = int(rank/mc_group_size)
+
+        master_mc_group_ranks = ranks[0:mc_group_size]
+        master_mc_group = dist.new_group(master_mc_group_ranks)
+
+        data_group_ranks = ranks[mc_group_rank:size:mc_group_size]
+        data_group = dist.new_group(data_group_ranks)
+    else:
+        mc_group_size = size
+        mc_group_rank = rank
+        mc_group_id = 0
+
+        master_mc_group = dist.new_group(ranks)
+
+        data_group = None
 
     # Setup data augmentation & data pre processing
     train_transforms, test_transforms = [], []
@@ -242,19 +273,10 @@ def main():
         root=args.root, train=True, download=True, transform=train_transform)
     test_dataset = dataset_class(
         root=args.root, train=False, download=True, transform=test_transform)
-    
-    # for DDP
-    num_mc_sample_groups = args.num_mc_sample_groups
-    if num_mc_sample_groups > 1:
-        assert size % num_mc_sample_groups == 0
-        group_size = int(size / num_mc_sample_groups)
-        group_rank = rank % group_size
-    else:
-        group_size = size
-        group_rank = rank
 
+    # [COMM] Setup distributed sampler for MC sample parallel
     train_sampler = torch.utils.data.distributed.DistributedSampler(
-        train_dataset, num_replicas=group_size, rank=group_rank)
+        train_dataset, num_replicas=mc_group_size, rank=mc_group_rank)
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
         num_workers=0, pin_memory=True, sampler=train_sampler)
@@ -285,8 +307,8 @@ def main():
 
     model = arch_class(**arch_kwargs)
     model = model.to(device)
-    
-    # for DDP
+
+    # [COMM] Broadcast model parameters
     for param in list(model.parameters()):
         dist.broadcast(param.data, src=0)
 
@@ -297,9 +319,8 @@ def main():
     if args.optim_name == DistributedSecondOrderOptimizer.__name__:
         optimizer = DistributedSecondOrderOptimizer(model, **optim_kwargs, **args.curv_args)
     elif args.optim_name == DistributedVIOptimizer.__name__:
-        mc_sample_group_id = int(rank/group_size)
         optimizer = DistributedVIOptimizer(model,
-                                           mc_sample_group_id=mc_sample_group_id,
+                                           mc_sample_group_id=mc_group_id,
                                            dataset_size=len(train_loader.dataset),
                                            **optim_kwargs, **args.curv_args)
     else:
@@ -317,7 +338,6 @@ def main():
     logger = None
     start_epoch = 1
 
-    # for DDP
     if rank == 0:
         # Load checkpoint
         if args.resume is not None:
@@ -332,8 +352,8 @@ def main():
         # All config
         print('===========================')
         print('MPI.COMM_WORLD size: {}'.format(size))
-        print('Num MC sample group: {}'.format(num_mc_sample_groups))
-        print('MC sample group size: {}'.format(group_size))
+        print('MC sample group size: {}'.format(mc_group_size))
+        print('Num MC sample groups: {}'.format(num_mc_groups))
         if hasattr(optimizer, 'indices'):
             print('layer assignments: {}'.format(optimizer.indices))
         print('---------------------------')
@@ -363,9 +383,9 @@ def main():
             scheduler.step(epoch - 1)
 
         # train
-        accuracy, loss = train(model, device, train_loader, optimizer, epoch, args, logger, dist)
+        accuracy, loss = train(model, device, train_loader, optimizer, epoch, args,
+                               rank, master_mc_group, mc_group_rank, data_group, logger)
 
-        # for DDP
         if rank == 0:
             # test
             test_accuracy, test_loss = test(model, test_loader, device, optimizer)
@@ -387,12 +407,6 @@ def main():
                     'epoch': epoch
                 }
                 torch.save(data, path)
-
-
-def allreduce(tensor, dist):
-    t = tensor.clone()
-    dist.all_reduce(t)
-    return t
 
 
 if __name__ == '__main__':
