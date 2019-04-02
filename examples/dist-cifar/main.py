@@ -356,6 +356,7 @@ def main():
         print('MPI.COMM_WORLD size: {}'.format(size))
         print('MC sample group size: {}'.format(mc_group_size))
         print('Num MC sample groups: {}'.format(num_mc_groups))
+        print('Global mini-batch size: {}'.format(mc_group_size * args.batch_size))
         if hasattr(optimizer, 'indices'):
             print('layer assignment: {}'.format(optimizer.indices))
         print('---------------------------')
