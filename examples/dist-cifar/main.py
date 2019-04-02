@@ -18,8 +18,8 @@ DATASET_CIFAR10 = 'CIFAR-10'
 DATASET_CIFAR100 = 'CIFAR-100'
 
 
-def train(model, device, train_loader, optimizer, epoch, args,
-          rank, master_mc_group, mc_group_rank=0, data_group=None, logger=None):
+def train(rank, model, device, train_loader, optimizer, epoch, args,
+          master_mc_group, mc_group_rank=0, data_group=None, logger=None):
 
     model.train()
 
@@ -109,7 +109,7 @@ def train(model, device, train_loader, optimizer, epoch, args,
     return accuracy, loss
 
 
-def test(model, test_loader, device, optimizer):
+def test(rank, model, test_loader, device, optimizer):
     model.eval()
     test_loss = 0
     correct = 0
@@ -122,15 +122,19 @@ def test(model, test_loader, device, optimizer):
             else:
                 output = model(data)
 
-            test_loss += F.cross_entropy(output, target, reduction='sum').item()  # sum up batch loss
+            test_loss += F.cross_entropy(output, target, reduction='sum')  # sum up batch loss
             pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
-            correct += pred.eq(target.view_as(pred)).sum().item()
+            correct += pred.eq(target.view_as(pred)).sum()
 
-    test_loss /= len(test_loader.dataset)
-    test_accuracy = 100. * correct / len(test_loader.dataset)
+    dist.reduce(test_loss, dst=0)
+    dist.reduce(correct, dst=0)
 
-    print('\nTest set: Average loss: {:.4f}, Accuracy: {:.0f}/{} ({:.2f}%)\n'.format(
-        test_loss, correct, len(test_loader.dataset), test_accuracy))
+    test_loss = test_loss.item() / len(test_loader.dataset)
+    test_accuracy = 100. * correct.item() / len(test_loader.dataset)
+
+    if rank == 0:
+        print('\nTest set: Average loss: {:.4f}, Accuracy: {:.0f}/{} ({:.2f}%)\n'.format(
+            test_loss, correct, len(test_loader.dataset), test_accuracy))
 
     return test_accuracy, test_loss
 
@@ -274,19 +278,17 @@ def main():
     test_dataset = dataset_class(
         root=args.root, train=False, download=True, transform=test_transform)
 
-    # [COMM] Setup distributed sampler for MC sample parallel
+    # [COMM] Setup distributed sampler for data parallel & MC sample parallel
     train_sampler = torch.utils.data.distributed.DistributedSampler(
         train_dataset, num_replicas=mc_group_size, rank=mc_group_rank)
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
-        num_workers=0, pin_memory=True, sampler=train_sampler)
+        pin_memory=True, sampler=train_sampler)
 
-    '''
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
-    '''
+    # [COMM] Setup distributed sampler for data parallel
+    test_sampler = torch.utils.data.distributed.DistributedSampler(test_dataset)
     test_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=args.test_batch_size, shuffle=False, num_workers=0)
+        test_dataset, batch_size=args.test_batch_size, shuffle=(test_sampler is None), sampler=test_sampler)
 
     # Setup model
     _, ext = os.path.splitext(args.arch_file)
@@ -383,13 +385,12 @@ def main():
             scheduler.step(epoch - 1)
 
         # train
-        accuracy, loss = train(model, device, train_loader, optimizer, epoch, args,
-                               rank, master_mc_group, mc_group_rank, data_group, logger)
+        accuracy, loss = train(rank, model, device, train_loader, optimizer, epoch, args,
+                               master_mc_group, mc_group_rank, data_group, logger)
+        # test
+        test_accuracy, test_loss = test(rank, model, test_loader, device, optimizer)
 
         if rank == 0:
-            # test
-            test_accuracy, test_loss = test(model, test_loader, device, optimizer)
-
             # write to log
             iteration = epoch * len(train_loader)
             log = {'epoch': epoch, 'iteration': iteration,
