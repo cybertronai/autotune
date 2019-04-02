@@ -283,12 +283,13 @@ def main():
         train_dataset, num_replicas=mc_group_size, rank=mc_group_rank)
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
-        pin_memory=True, sampler=train_sampler)
+        pin_memory=True, sampler=train_sampler, num_workers=8)
 
     # [COMM] Setup distributed sampler for data parallel
     test_sampler = torch.utils.data.distributed.DistributedSampler(test_dataset)
     test_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=args.test_batch_size, shuffle=(test_sampler is None), sampler=test_sampler)
+        test_dataset, batch_size=args.test_batch_size, shuffle=(test_sampler is None),
+        sampler=test_sampler, num_workers=8)
 
     # Setup model
     _, ext = os.path.splitext(args.arch_file)
