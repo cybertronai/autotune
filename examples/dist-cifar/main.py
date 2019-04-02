@@ -200,13 +200,13 @@ def main():
 
     # for DDP
     comm = MPI.COMM_WORLD
-    global_size = comm.Get_size()
-    global_rank = comm.Get_rank()
+    size = comm.Get_size()
+    rank = comm.Get_rank()
     n_per_node = torch.cuda.device_count()
-    device = global_rank % n_per_node
+    device = rank % n_per_node
     torch.cuda.set_device(device)
     init_method = 'tcp://{}:23456'.format(args.dist_init_method)
-    dist.init_process_group('nccl', init_method=init_method, world_size=global_size, rank=global_rank)
+    dist.init_process_group('nccl', init_method=init_method, world_size=size, rank=rank)
 
     # Set random seed
     torch.manual_seed(args.seed)
@@ -246,14 +246,15 @@ def main():
     # for DDP
     num_mc_sample_groups = args.num_mc_sample_groups
     if num_mc_sample_groups > 1:
-        assert global_size % num_mc_sample_groups == 0
-        size = int(global_size / num_mc_sample_groups)
-        rank = global_rank % size
+        assert size % num_mc_sample_groups == 0
+        group_size = int(size / num_mc_sample_groups)
+        group_rank = rank % group_size
     else:
-        size = global_size
-        rank = global_rank
+        group_size = size
+        group_rank = rank
 
-    train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, num_replicas=size, rank=rank)
+    train_sampler = torch.utils.data.distributed.DistributedSampler(
+        train_dataset, num_replicas=group_size, rank=group_rank)
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
         num_workers=0, pin_memory=True, sampler=train_sampler)
@@ -296,7 +297,7 @@ def main():
     if args.optim_name == DistributedSecondOrderOptimizer.__name__:
         optimizer = DistributedSecondOrderOptimizer(model, **optim_kwargs, **args.curv_args)
     elif args.optim_name == DistributedVIOptimizer.__name__:
-        mc_sample_group_id = int(global_rank/size)
+        mc_sample_group_id = int(rank/group_size)
         optimizer = DistributedVIOptimizer(model,
                                            mc_sample_group_id=mc_sample_group_id,
                                            dataset_size=len(train_loader.dataset),
@@ -317,7 +318,7 @@ def main():
     start_epoch = 1
 
     # for DDP
-    if global_rank == 0:
+    if rank == 0:
         # Load checkpoint
         if args.resume is not None:
             print('==> Resuming from checkpoint..')
@@ -330,9 +331,9 @@ def main():
 
         # All config
         print('===========================')
-        print('MPI.COMM_WORLD size: {}'.format(global_size))
-        print('num MC sample group: {}'.format(num_mc_sample_groups))
-        print('MC sample group size: {}'.format(size))
+        print('MPI.COMM_WORLD size: {}'.format(size))
+        print('Num MC sample group: {}'.format(num_mc_sample_groups))
+        print('MC sample group size: {}'.format(group_size))
         if hasattr(optimizer, 'indices'):
             print('layer assignments: {}'.format(optimizer.indices))
         print('---------------------------')
@@ -365,7 +366,7 @@ def main():
         accuracy, loss = train(model, device, train_loader, optimizer, epoch, args, logger, dist)
 
         # for DDP
-        if global_rank == 0:
+        if rank == 0:
             # test
             test_accuracy, test_loss = test(model, test_loader, device, optimizer)
 
