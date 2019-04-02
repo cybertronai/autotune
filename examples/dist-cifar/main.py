@@ -63,8 +63,8 @@ def train(model, device, train_loader, optimizer, epoch, args,
 
         # [COMM] reduce across the processes in the master MC sample group
         if dist.get_world_size(master_mc_group) > 1:
-            correct = dist.reduce(correct, dst=0, group=master_mc_group)
-            data_size = dist.reduce(data_size, dst=0, group=master_mc_group)
+            dist.reduce(correct, dst=0, group=master_mc_group)
+            dist.reduce(data_size, dst=0, group=master_mc_group)
 
         # refresh results
         if rank == 0:
