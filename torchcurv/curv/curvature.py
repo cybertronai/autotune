@@ -158,7 +158,7 @@ class KronCurvature(Curvature):
         A_inv, G_inv = self.inv
 
         self.std = [torchcurv.utils.cholesky(X)
-                     for X in [A_inv, G_inv]]
+                    for X in [A_inv, G_inv]]
 
     def sample_params(self, params, mean, std_scale):
         raise NotImplementedError
