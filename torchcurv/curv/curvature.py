@@ -8,7 +8,7 @@ PI_TYPE_TRACENORM = 'tracenorm'
 
 class Curvature(object):
 
-    def __init__(self, module, ema_decay=1., damping=1e-7):
+    def __init__(self, module, ema_decay=1., damping=1e-7, pre_curv=None, post_curv=None):
         self._module = module
         self.ema_decay = ema_decay
         self._damping = damping
@@ -21,7 +21,10 @@ class Curvature(object):
         self.inv = None
         self.std = None
 
-        module.register_forward_pre_hook(self.forward_preprocess)
+        self.pre_curv = pre_curv
+        self.post_curv = post_curv
+
+        module.register_forward_hook(self.forward_postprocess)
         module.register_backward_hook(self.backward_postprocess)
 
     @property
@@ -33,6 +36,10 @@ class Curvature(object):
         self._data = value
 
     @property
+    def module(self):
+        return self._module
+
+    @property
     def bias(self):
         bias = getattr(self._module, 'bias', None)
         return False if bias is None else True
@@ -41,10 +48,12 @@ class Curvature(object):
     def damping(self):
         return self._damping + self.l2_reg
 
-    def forward_preprocess(self, module, input):
+    def forward_postprocess(self, module, input, output):
+        assert self._module == module
         self.update_in_forward(input[0].data)
 
     def backward_postprocess(self, module, grad_input, grad_output):
+        assert self._module == module
         # for adjusting grad scale along with 'reduction' in loss function
         batch_size = grad_output[0].data.shape[0]
         grad_output_data = grad_output[0].data.mul(batch_size)
@@ -87,10 +96,10 @@ class Curvature(object):
         raise NotImplementedError
 
     def update_std(self):
-        raise NotImplementedError
+        pass
 
     def sample_params(self, params, mean, std_scale):
-        raise NotImplementedError
+        pass
 
 
 class DiagCurvature(Curvature):
@@ -132,6 +141,14 @@ class KronCurvature(Curvature):
     @data.setter
     def data(self, value):
         self._A, self._G = value
+
+    @property
+    def A(self):
+        return self._A
+
+    @property
+    def G(self):
+        return self._G
 
     def update_in_forward(self, input_data):
         raise NotImplementedError

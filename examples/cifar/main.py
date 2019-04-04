@@ -39,7 +39,7 @@ def train(model, device, train_loader, optimizer, epoch, args, logger):
             optimizer.zero_grad()
             output = model(data)
             loss = F.cross_entropy(output, target)
-            loss.backward()
+            loss.backward(create_graph=args.create_graph)
 
             return loss, output
 
@@ -153,6 +153,8 @@ def main():
     parser.add_argument('--scheduler_args', type=json.loads, default=None,
                         help='[JSON] arguments for the scheduler')
     # Options
+    parser.add_argument('--create_graph', action='store_true', default=False,
+                        help='create graph of the derivative')
     parser.add_argument('--no_cuda', action='store_true', default=False,
                         help='disables CUDA training')
     parser.add_argument('--seed', type=int, default=1,
