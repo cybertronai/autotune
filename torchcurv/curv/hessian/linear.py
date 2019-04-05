@@ -39,7 +39,6 @@ class KronHessianLinear(KronFisherLinear):
 
             # compute grad of post activation (we support piece wise activation only)
             zero_indices = [grad_output == 0]  # for avoiding division by zero
-            grad_output[zero_indices] = 1
             grad_activation = post_grad_input.div(grad_output)  # n x f_out
             grad_activation[zero_indices] = 0
             grad_activation_2d = torch.diag_embed(grad_activation)  # n x f_out x f_out
