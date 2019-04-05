@@ -5,7 +5,7 @@ from torchcurv import KronFisherLinear
 class KronHessianLinear(KronFisherLinear):
 
     def __init__(self, module, ema_decay=1., damping=0,
-                 pre_curv=None, post_curv=None, recursive_approx=True):
+                 pre_curv=None, post_curv=None, recursive_approx=False):
         super(KronHessianLinear, self).__init__(module, ema_decay, damping,
                                                 pre_curv=pre_curv, post_curv=post_curv)
         self.recursive_approx = recursive_approx
