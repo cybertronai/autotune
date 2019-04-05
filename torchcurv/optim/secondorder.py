@@ -68,7 +68,8 @@ class SecondOrderOptimizer(Optimizer):
             if curv_class is not None:
                 kwargs = extract_kwargs(curv_class.__init__, curv_kwargs)
                 curvature = curv_class(module, **kwargs, post_curv=post_curvature)
-                setattr(post_curvature, 'pre_curv', curvature)
+                if post_curvature is not None:
+                    setattr(post_curvature, 'pre_curv', curvature)
             else:
                 curvature = None
 

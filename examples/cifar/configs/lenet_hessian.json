@@ -1,0 +1,37 @@
+{
+  "dataset": "CIFAR-10",
+  "epochs": 15,
+  "batch_size": 4,
+  "test_batch_size": 128,
+  "random_crop": false,
+  "random_horizontal_flip": false,
+  "normalizing_data": true,
+  "arch_file": "models/lenet.py",
+  "arch_name": "LeNet5",
+  "optim_name": "SecondOrderOptimizer",
+  "optim_args": {
+    "curv_type":"Hessian",
+    "curv_shapes": {
+      "Conv2d": "hoge",
+      "Linear": "Kron"
+    },
+    "momentum": 0.9,
+    "momentum_type": "preconditioned",
+    "adjust_momentum": true,
+    "weight_decay": 0.05,
+    "acc_steps": 1
+  },
+  "curv_args": {
+    "damping": 1e-4,
+    "ema_decay": 0.333,
+    "pi_type": "tracenorm"
+  },
+  "lr": 0.04,
+  "scheduler_name": "ExponentialLR",
+  "scheduler_args": {
+    "gamma": 0.9
+  },
+  "create_graph": true,
+  "log_interval": 64,
+  "no_cuda": false
+}

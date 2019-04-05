@@ -78,7 +78,7 @@ class Curvature(object):
         ema = self.ema
         alpha = self.ema_decay
         if ema is None or alpha == 1:
-            self.ema = copy.deepcopy(data)
+            self.ema = [d.clone() for d in data]
         else:
             self.ema = [d.mul(alpha).add(1 - alpha, e)
                         for d, e in zip(data, ema)]
@@ -127,12 +127,14 @@ class DiagCurvature(Curvature):
 
 class KronCurvature(Curvature):
 
-    def __init__(self, module, ema_decay=1., damping=1e-7, pi_type=PI_TYPE_TRACENORM):
+    def __init__(self, module, ema_decay=1., damping=1e-7,
+                 pre_curv=None, post_curv=None, pi_type=PI_TYPE_TRACENORM):
         self.pi_type = pi_type
         self._A = None
         self._G = None
 
-        super(KronCurvature, self).__init__(module, ema_decay=ema_decay, damping=damping)
+        super(KronCurvature, self).__init__(module, ema_decay=ema_decay, damping=damping,
+                                            pre_curv=pre_curv, post_curv=post_curv)
 
     @property
     def data(self):
