@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 class FisherConv2d(Curvature):
 
-    def update_in_backward(self, grad_output_data):
+    def update_in_backward(self, grad_output):
         pass
 
     def precgrad(self, params):
@@ -14,7 +14,7 @@ class FisherConv2d(Curvature):
 
 class DiagFisherConv2d(DiagCurvature):
 
-    def update_in_backward(self, grad_output_data):
+    def update_in_backward(self, grad_output):
         conv2d = self._module
         data_input = getattr(conv2d, 'data_input', None)  # n x c_in x h_in x w_in
         assert data_input is not None
@@ -25,9 +25,9 @@ class DiagFisherConv2d(DiagCurvature):
                            padding=conv2d.padding, dilation=conv2d.dilation)
 
         # n x c_out x h_out x w_out
-        n, c_out, h, w = grad_output_data.shape
+        n, c_out, h, w = grad_output.shape
         # n x c_out x (h_out)(w_out)
-        grad_output2d = grad_output_data.reshape(n, c_out, -1)
+        grad_output2d = grad_output.reshape(n, c_out, -1)
 
         grad_in = torch.einsum('bik,bjk->bij',
                                grad_output2d, input2d)  # n x c_out x (c_in)(k_h)(k_w)
