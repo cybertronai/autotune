@@ -11,6 +11,10 @@
   "optim_name": "SecondOrderOptimizer",
   "optim_args": {
     "curv_type":"DiagFisher",
+    "curv_shapes": {
+      "Conv2d": "Kron",
+      "Linear": "Kron"
+    },
     "momentum": 0.9,
     "momentum_type": "grad",
     "adjust_momentum": true,
