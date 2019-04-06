@@ -119,8 +119,9 @@ class DiagCurvature(Curvature):
         return 1 / X_damp
 
     def precondition_grad(self, params):
-        for param_i, inv_i in zip(params, self.inv):
-            param_i.grad.copy_(inv_i.mul(param_i.grad))
+        for p, inv in zip(params, self.inv):
+            preconditioned_grad = inv.mul(p.grad)
+            p.grad.copy_(preconditioned_grad)
 
     def update_std(self):
         self.std = [inv.sqrt() for inv in self.inv]
