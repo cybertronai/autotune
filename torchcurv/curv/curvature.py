@@ -60,7 +60,7 @@ class Curvature(object):
         setattr(self._module, 'grad_input', grad_input[index].detach())
         setattr(self._module, 'grad_output', grad_output[0])
 
-        # for adjusting grad scale along with 'reduction' in loss function
+        # adjust grad scale along with 'reduction' in loss function
         batch_size = grad_output[0].shape[0]
         grad_output[0].mul_(batch_size)
 

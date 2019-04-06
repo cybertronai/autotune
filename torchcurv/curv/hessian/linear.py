@@ -15,7 +15,7 @@ class KronHessianLinear(KronFisherLinear):
         if output is None:
             return
 
-        n, dim = grad_output.size()
+        n, dim = grad_output.shape
         post_curv = self.post_curv
 
         if post_curv is not None:
@@ -51,6 +51,9 @@ class KronHessianLinear(KronFisherLinear):
                 inputs = output
                 grad = torch.autograd.grad(outputs, inputs, create_graph=True)
                 hessian_output[:, i, :] = grad[0]
+
+            # adjust grad scale along with 'reduction' in loss function
+            hessian_output.mul_(n)
 
         device = grad_output.device
         hessian_output = hessian_output.to(device)
