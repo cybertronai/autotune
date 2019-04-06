@@ -48,23 +48,28 @@ class Curvature(object):
     def forward_postprocess(self, module, input, output):
         assert self._module == module
 
-        setattr(self._module, 'data_input', input[0].detach())
+        data_input = input[0].detach()
+
+        setattr(self._module, 'data_input', data_input)
         setattr(self._module, 'data_output', output)
 
-        self.update_in_forward(input[0].detach())
+        self.update_in_forward(data_input)
 
     def backward_postprocess(self, module, grad_input, grad_output):
         assert self._module == module
 
         index = 1 if self.bias else 0
-        setattr(self._module, 'grad_input', grad_input[index].detach())
-        setattr(self._module, 'grad_output', grad_output[0])
+        grad_input = grad_input[index].detach()
+        grad_output = grad_output[0]
 
         # adjust grad scale along with 'reduction' in loss function
-        batch_size = grad_output[0].shape[0]
-        grad_output[0].mul_(batch_size)
+        batch_size = grad_output.shape[0]
+        grad_output.mul_(batch_size)
 
-        self.update_in_backward(grad_output[0])
+        setattr(self._module, 'grad_input', grad_input)
+        setattr(self._module, 'grad_output', grad_output)
+
+        self.update_in_backward(grad_output)
 
     def update_in_forward(self, data_input):
         pass
