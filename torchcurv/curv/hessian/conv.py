@@ -1,16 +1,5 @@
-from torchcurv import Curvature, DiagCurvature, KronCurvature
+from torchcurv import KronFisherConv2d
 
 
-class HessianConv2d(Curvature):
-
-        pass
-
-
-class DiagHessianConv2d(DiagCurvature):
-
-        pass
-
-
-class KronHessianConv2d(KronCurvature):
-
-        pass
+class KronHessianConv2d(KronFisherConv2d):
+    pass

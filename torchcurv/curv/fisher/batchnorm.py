@@ -9,11 +9,12 @@ class FisherBatchNorm1d(Curvature):
 
 class DiagFisherBatchNorm1d(DiagCurvature):
 
-    def update_in_backward(self, grad_output_data):
-        input_data = self._input_data  # n x f
+    def update_in_backward(self, grad_output):
+        data_input = getattr(self._module, 'data_input', None)  # n x f
+        assert data_input is not None
 
-        in_in = input_data.mul(input_data)  # n x f
-        grad_grad = grad_output_data.mul(grad_output_data)  # n x f
+        in_in = data_input.mul(data_input)  # n x f
+        grad_grad = grad_output.mul(grad_output)  # n x f
 
         data_w = in_in.mul(grad_grad).mean(dim=0)  # f x 1
 
@@ -26,17 +27,18 @@ class DiagFisherBatchNorm1d(DiagCurvature):
 
 class FisherBatchNorm2d(Curvature):
 
-    def update_in_backward(self, grad_output_data):
+    def update_in_backward(self, grad_output):
         pass
 
 
 class DiagFisherBatchNorm2d(DiagCurvature):
 
-    def update_in_backward(self, grad_out_data):
-        input_data = self._input_data  # n x c x h x w
+    def update_in_backward(self, grad_out):
+        data_input = getattr(self._module, 'data_input', None)  # n x c x h x w
+        assert data_input is not None
 
-        in_in = input_data.mul(input_data).sum(dim=(2, 3))  # n x c
-        grad_grad = grad_out_data.mul(grad_out_data).sum(dim=(2, 3))  # n x c
+        in_in = data_input.mul(data_input).sum(dim=(2, 3))  # n x c
+        grad_grad = grad_out.mul(grad_out).sum(dim=(2, 3))  # n x c
 
         data_w = in_in.mul(grad_grad).mean(dim=0)  # c x 1
 

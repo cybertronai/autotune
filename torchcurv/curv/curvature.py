@@ -1,8 +1,6 @@
 import torch
 import torchcurv
 
-import copy
-
 PI_TYPE_TRACENORM = 'tracenorm'
 
 
@@ -16,7 +14,6 @@ class Curvature(object):
 
         self._data = None
         self._acc_data = None
-        self._input_data = None
         self.ema = None
         self.inv = None
         self.std = None
@@ -50,20 +47,29 @@ class Curvature(object):
 
     def forward_postprocess(self, module, input, output):
         assert self._module == module
-        self.update_in_forward(input[0].data)
+
+        setattr(self._module, 'data_input', input[0].detach())
+        setattr(self._module, 'data_output', output)
+
+        self.update_in_forward(input[0].detach())
 
     def backward_postprocess(self, module, grad_input, grad_output):
         assert self._module == module
+
+        index = 1 if self.bias else 0
+        setattr(self._module, 'grad_input', grad_input[index].detach())
+        setattr(self._module, 'grad_output', grad_output[0])
+
         # for adjusting grad scale along with 'reduction' in loss function
-        batch_size = grad_output[0].data.shape[0]
-        grad_output_data = grad_output[0].data.mul(batch_size)
+        batch_size = grad_output[0].shape[0]
+        grad_output[0].mul_(batch_size)
 
-        self.update_in_backward(grad_output_data)
+        self.update_in_backward(grad_output[0])
 
-    def update_in_forward(self, input_data):
-        self._input_data = input_data.clone().detach()
+    def update_in_forward(self, data_input):
+        pass
 
-    def update_in_backward(self, grad_output_data):
+    def update_in_backward(self, grad_output):
         raise NotImplementedError
 
     def step(self, update_std=False):
@@ -96,10 +102,10 @@ class Curvature(object):
         raise NotImplementedError
 
     def update_std(self):
-        pass
+        raise NotImplementedError
 
     def sample_params(self, params, mean, std_scale):
-        pass
+        raise NotImplementedError
 
 
 class DiagCurvature(Curvature):

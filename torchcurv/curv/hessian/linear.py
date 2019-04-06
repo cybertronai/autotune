@@ -10,18 +10,11 @@ class KronHessianLinear(KronFisherLinear):
                                                 pre_curv=pre_curv, post_curv=post_curv)
         self.recursive_approx = recursive_approx
 
-    def forward_postprocess(self, module, input, output):
-        super(KronHessianLinear, self).forward_postprocess(module, input, output)
-        setattr(self._module, 'output', output)
-
-    def backward_postprocess(self, module, grad_input, grad_output):
-        index = 1 if self.bias else 0
-        setattr(self._module, 'grad_input', grad_input[index])
+    def update_in_backward(self, grad_output):
         output = getattr(self._module, 'output', None)
         if output is None:
             return
 
-        grad_output = grad_output[0]
         n, dim = grad_output.size()
         post_curv = self.post_curv
 
