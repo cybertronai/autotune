@@ -12,7 +12,7 @@
   "optim_args": {
     "curv_type":"Hessian",
     "curv_shapes": {
-      "Conv2d": "hoge",
+      "Conv2d": "Kron",
       "Linear": "Kron"
     },
     "momentum": 0.9,

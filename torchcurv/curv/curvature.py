@@ -6,7 +6,7 @@ PI_TYPE_TRACENORM = 'tracenorm'
 
 class Curvature(object):
 
-    def __init__(self, module, ema_decay=1., damping=1e-7, pre_curv=None, post_curv=None):
+    def __init__(self, module, ema_decay=1., damping=1e-7, post_curv=None):
         self._module = module
         self.ema_decay = ema_decay
         self._damping = damping
@@ -18,7 +18,6 @@ class Curvature(object):
         self.inv = None
         self.std = None
 
-        self.pre_curv = pre_curv
         self.post_curv = post_curv
 
         module.register_forward_hook(self.forward_postprocess)
@@ -62,14 +61,17 @@ class Curvature(object):
         grad_input = grad_input[index].detach()
         grad_output = grad_output[0]
 
-        # adjust grad scale along with 'reduction' in loss function
-        batch_size = grad_output.shape[0]
-        grad_output.mul_(batch_size)
-
-        setattr(self._module, 'grad_input', grad_input)
-        setattr(self._module, 'grad_output', grad_output)
+        setattr(module, 'grad_input', grad_input)
+        setattr(module, 'grad_output', grad_output)
 
         self.update_in_backward(grad_output)
+
+        # adjust grad scale along with 'reduction' in loss function
+        batch_size = grad_output.shape[0]
+        self.adjust_data_scale(batch_size**2)
+
+    def adjust_data_scale(self, scale):
+        self._data = [d.mul(scale) for d in self._data]
 
     def update_in_forward(self, data_input):
         pass
@@ -140,13 +142,13 @@ class DiagCurvature(Curvature):
 class KronCurvature(Curvature):
 
     def __init__(self, module, ema_decay=1., damping=1e-7,
-                 pre_curv=None, post_curv=None, pi_type=PI_TYPE_TRACENORM):
+                 post_curv=None, pi_type=PI_TYPE_TRACENORM):
         self.pi_type = pi_type
         self._A = None
         self._G = None
 
         super(KronCurvature, self).__init__(module, ema_decay=ema_decay, damping=damping,
-                                            pre_curv=pre_curv, post_curv=post_curv)
+                                            post_curv=post_curv)
 
     @property
     def data(self):
@@ -169,6 +171,9 @@ class KronCurvature(Curvature):
 
     def update_in_backward(self, grad_output_data):
         raise NotImplementedError
+
+    def adjust_data_scale(self, scale):
+        self._G.mul_(scale)
 
     def update_inv(self):
         A, G = self.ema
