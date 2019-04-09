@@ -23,12 +23,24 @@ class KronHessian(KronCurvature):
         if post_curv is not None:
             post_module = post_curv.module
 
+        import time
+
+        print('-----------------')
+        start = time.time()
+
+        print(self.module)
+
+        if post_curv is not None:
+            post_module = post_curv.module
+            print(post_module)
+
             post_output = getattr(post_module, 'data_output')
             post_dim = post_output.shape[1]
 
             post_out_grad_out = torch.zeros((n, post_dim, dim))  # n x post_dim x dim
             if post_dim <= dim:
                 post_output = reshape_4d_to_2d(post_output)
+                print('n: {}, dim: {}'.format(len(post_output), post_dim))
                 for i in range(post_dim):
                     outputs = tuple(po[i] for po in post_output)
                     grad = torch.autograd.grad(outputs, output, create_graph=True)
@@ -36,6 +48,7 @@ class KronHessian(KronCurvature):
             else:
                 post_grad_output = getattr(post_module, 'grad_output')
                 grad_output = reshape_4d_to_2d(grad_output)
+                print('n: {}, dim: {}'.format(len(grad_output), dim))
                 for i in range(dim):
                     outputs = tuple(g[i] for g in grad_output)
                     grad = torch.autograd.grad(outputs, post_grad_output, create_graph=True)
@@ -67,6 +80,7 @@ class KronHessian(KronCurvature):
         else:
             # compute sample hessian_output from scratch
             hessian_output = torch.zeros((n, dim, dim))
+            print('n: {}, dim: {}'.format(len(grad_output), dim))
             for i in range(dim):
                 outputs = tuple(g[i] for g in reshape_4d_to_2d(grad_output))
                 grad = torch.autograd.grad(outputs, output, create_graph=True)
@@ -77,6 +91,9 @@ class KronHessian(KronCurvature):
 
         # refresh hessian_output
         self._G = hessian_output.sum((0,))  # dim x dim
+
+        elapsed = time.time() - start
+        print('{}s'.format(elapsed))
 
     def precondition_grad(self, params):
         raise NotImplementedError
