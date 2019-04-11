@@ -310,20 +310,19 @@ def main():
                 torch.save(data, path)
 
 
-def scheduler_type(scheduler):
-    if scheduler is None:
-        return 'none'
-
-    if isinstance(scheduler, torchcurv.optim.lr_scheduler.IterLRScheduler):
-        return 'iter'
-    else:
-        return 'epoch'
-
-
 def train(rank, model, device, train_loader, optimizer, scheduler, epoch, args,
           master_mc_group, mc_group_rank=0, data_group=None, logger=None):
 
-    if scheduler_type(scheduler) == 'epoch':
+    def scheduler_type():
+        if scheduler is None:
+            return 'none'
+
+        if isinstance(scheduler, torchcurv.optim.lr_scheduler.IterLRScheduler):
+            return 'iter'
+        else:
+            return 'epoch'
+
+    if scheduler_type() == 'epoch':
         scheduler.step(epoch - 1)
 
     model.train()
@@ -338,7 +337,7 @@ def train(rank, model, device, train_loader, optimizer, scheduler, epoch, args,
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
 
-        if scheduler_type(scheduler) == 'iter':
+        if scheduler_type() == 'iter':
             scheduler.step()
 
         for i, param_group in enumerate(optimizer.param_groups):
