@@ -193,9 +193,7 @@ def get_nelems(arrays):
     nelems = 0
     for local_arrays in arrays:
         for array, triangular in local_arrays:
-            if triangular:
-                if array.shape[0] != array.shape[1]:
-                    raise RuntimeError('get_nelems: not a square matrix')
+            if triangular and array.shape[0] != array.shape[1]:
                 nelems += array.shape[0] * (array.shape[0] + 1) // 2
             else:
                 nelems += array.size
