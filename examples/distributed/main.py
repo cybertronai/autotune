@@ -62,6 +62,8 @@ def main():
     # Options
     parser.add_argument('--no_cuda', action='store_true', default=False,
                         help='disables CUDA training')
+    parser.add_argument('--download', action='store_true', default=False,
+                        help='if True, downloads the dataset (CIFAR-10 or 100) from the internet')
     parser.add_argument('--seed', type=int, default=1,
                         help='random seed')
     parser.add_argument('--num_workers', type=int, default=0,
@@ -152,27 +154,31 @@ def main():
     val_transform = transforms.Compose(val_transforms)
 
     # Setup data loader
-    if args.dataset == DATASET_CIFAR10:
-        # CIFAR-10
-        num_classes = 10
-        dataset_class = datasets.CIFAR10
-        train_root = val_root = args.root
-    elif args.dataset == DATASET_CIFAR100:
-        # CIFAR-100
-        num_classes = 100
-        dataset_class = datasets.CIFAR100
-        train_root = val_root = args.root
-    else:
+    if args.dataset == DATASET_IMAGENET:
         # ImageNet
         num_classes = 1000
         dataset_class = datasets.ImageFolder
         train_root = os.path.join(args.root, 'train')
         val_root = os.path.join(args.root, 'val')
 
-    train_dataset = dataset_class(
-        root=train_root, train=True, transform=train_transform)
-    val_dataset = dataset_class(
-        root=val_root, train=False, transform=val_transform)
+        train_dataset = dataset_class(
+            root=train_root, transform=train_transform)
+        val_dataset = dataset_class(
+            root=val_root, transform=val_transform)
+    else:
+        if args.dataset == DATASET_CIFAR10:
+            # CIFAR-10
+            num_classes = 10
+            dataset_class = datasets.CIFAR10
+        else:
+            # CIFAR-100
+            num_classes = 100
+            dataset_class = datasets.CIFAR100
+
+        train_dataset = dataset_class(
+            root=args.root, train=True, download=args.download, transform=train_transform)
+        val_dataset = dataset_class(
+            root=args.root, train=False, download=args.download, transform=val_transform)
 
     # [COMM] Setup distributed sampler for data parallel & MC sample parallel
     train_sampler = torch.utils.data.distributed.DistributedSampler(
