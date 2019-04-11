@@ -375,8 +375,8 @@ def train(rank, model, device, train_loader, optimizer, scheduler, epoch, args,
                 print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}, '
                       'Accuracy: {:.0f}/{} ({:.2f}%), '
                       'Elapsed Time: {:.1f}s'.format(
-                    epoch, total_data_size, epoch_size, 100. * (batch_idx + 1) / num_iters_in_epoch,
-                    loss, total_correct, total_data_size, accuracy, elapsed_time))
+                      epoch, total_data_size, epoch_size, 100. * (batch_idx + 1) / num_iters_in_epoch,
+                      loss, total_correct, total_data_size, accuracy, elapsed_time))
 
                 lr = optimizer.param_groups[0]['lr']
                 log = {'epoch': epoch, 'iteration': iteration, 'elapsed_time': elapsed_time,
