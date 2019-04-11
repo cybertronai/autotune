@@ -64,6 +64,8 @@ def main():
                         help='disables CUDA training')
     parser.add_argument('--seed', type=int, default=1,
                         help='random seed')
+    parser.add_argument('--num_workers', type=int, default=0,
+                        help='number of sub processes for data loading')
     parser.add_argument('--log_interval', type=int, default=50,
                         help='how many batches to wait before logging training status')
     parser.add_argument('--log_file_name', type=str, default='log',
@@ -177,13 +179,13 @@ def main():
         train_dataset, num_replicas=mc_group_size, rank=mc_group_rank)
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
-        pin_memory=True, sampler=train_sampler, num_workers=8)
+        pin_memory=True, sampler=train_sampler, num_workers=args.num_workers)
 
     # [COMM] Setup distributed sampler for data parallel
     val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset)
     val_loader = torch.utils.data.DataLoader(
         val_dataset, batch_size=args.val_batch_size, shuffle=(val_sampler is None),
-        sampler=val_sampler, num_workers=8)
+        sampler=val_sampler, num_workers=args.num_workers)
 
     # Setup model
     if args.arch_file is None:
@@ -216,6 +218,7 @@ def main():
     optim_kwargs = {} if args.optim_args is None else args.optim_args
     optim_kwargs['lr'] = args.lr
 
+    # Setup optimizer
     if args.optim_name == DistributedSecondOrderOptimizer.__name__:
         optimizer = DistributedSecondOrderOptimizer(model, **optim_kwargs, **args.curv_args)
     elif args.optim_name == DistributedVIOptimizer.__name__:

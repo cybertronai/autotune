@@ -7,7 +7,7 @@ import json
 import torch
 import torch.nn.functional as F
 from torch.nn.utils import parameters_to_vector
-from torchvision import datasets, transforms
+from torchvision import datasets, transforms, models
 import torchcurv
 from torchcurv.optim import SecondOrderOptimizer, VIOptimizer
 from torchcurv.utils import Logger
@@ -37,7 +37,7 @@ def main():
     parser.add_argument('--random_horizontal_flip', action='store_true',
                         help='[data augmentation] random horizontal flip')
     # Training Settings
-    parser.add_argument('--arch_file', type=str, default='models/lenet.py',
+    parser.add_argument('--arch_file', type=str, default=None,
                         help='name of file which defines the architecture')
     parser.add_argument('--arch_name', type=str, default='LeNet5',
                         help='name of the architecture')
@@ -60,6 +60,8 @@ def main():
                         help='disables CUDA training')
     parser.add_argument('--seed', type=int, default=1,
                         help='random seed')
+    parser.add_argument('--num_workers', type=int, default=0,
+                        help='number of sub processes for data loading')
     parser.add_argument('--log_interval', type=int, default=50,
                         help='how many batches to wait before logging training status')
     parser.add_argument('--log_file_name', type=str, default='log',
@@ -108,11 +110,13 @@ def main():
     train_transform = transforms.Compose(train_transforms)
     val_transform = transforms.Compose(val_transforms)
 
-    # Setup data loader for CIFAR-10/CIFAR-100
+    # Setup data loader
     if args.dataset == DATASET_CIFAR10:
+        # CIFAR-10
         num_classes = 10
         dataset_class = datasets.CIFAR10
     else:
+        # CIFAR-100
         num_classes = 100
         dataset_class = datasets.CIFAR100
 
@@ -122,23 +126,26 @@ def main():
         root=args.root, train=False, download=True, transform=val_transform)
 
     train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=8)
+        train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
     val_loader = torch.utils.data.DataLoader(
-        val_dataset, batch_size=args.val_batch_size, shuffle=False, num_workers=8)
+        val_dataset, batch_size=args.val_batch_size, shuffle=False, num_workers=args.num_workers)
 
     # Setup model
-    _, ext = os.path.splitext(args.arch_file)
-    dirname = os.path.dirname(args.arch_file)
-
-    if dirname == '':
-        module_path = args.arch_file.replace(ext, '')
-    elif dirname == '.':
-        module_path = os.path.basename(args.arch_file).replace(ext, '')
+    if args.arch_file is None:
+        arch_class = getattr(models, args.arch_name)
     else:
-        module_path = '.'.join(os.path.split(args.arch_file)).replace(ext, '')
+        _, ext = os.path.splitext(args.arch_file)
+        dirname = os.path.dirname(args.arch_file)
 
-    module = import_module(module_path)
-    arch_class = getattr(module, args.arch_name)
+        if dirname == '':
+            module_path = args.arch_file.replace(ext, '')
+        elif dirname == '.':
+            module_path = os.path.basename(args.arch_file).replace(ext, '')
+        else:
+            module_path = '.'.join(os.path.split(args.arch_file)).replace(ext, '')
+
+        module = import_module(module_path)
+        arch_class = getattr(module, args.arch_name)
 
     arch_kwargs = {} if args.arch_args is None else args.arch_args
     arch_kwargs['num_classes'] = num_classes
@@ -201,17 +208,13 @@ def main():
     # Run training
     for epoch in range(start_epoch, args.epochs + 1):
 
-        # update learning rate
-        if scheduler is not None:
-            scheduler.step(epoch - 1)
-
         # train
-        accuracy, loss = train(model, device, train_loader, optimizer, epoch, args, logger)
+        accuracy, loss = train(model, device, train_loader, optimizer, scheduler, epoch, args, logger)
 
         # val
         val_accuracy, val_loss = validate(model, device, val_loader, optimizer)
 
-        # write to log
+        # save log
         iteration = epoch * len(train_loader)
         log = {'epoch': epoch, 'iteration': iteration,
                'accuracy': accuracy, 'loss': loss,
@@ -230,7 +233,21 @@ def main():
             torch.save(data, path)
 
 
-def train(model, device, train_loader, optimizer, epoch, args, logger):
+def scheduler_type(scheduler):
+    if scheduler is None:
+        return 'none'
+
+    if isinstance(scheduler, torchcurv.optim.lr_scheduler.IterLRScheduler):
+        return 'iter'
+    else:
+        return 'epoch'
+
+
+def train(model, device, train_loader, optimizer, scheduler, epoch, args, logger):
+
+    if scheduler_type(scheduler) == 'epoch':
+        scheduler.step(epoch - 1)
+
     model.train()
 
     total_correct = 0
@@ -239,10 +256,12 @@ def train(model, device, train_loader, optimizer, epoch, args, logger):
     epoch_size = len(train_loader.dataset)
     num_iters_in_epoch = len(train_loader)
     base_num_iter = (epoch - 1) * num_iters_in_epoch
-    lr = optimizer.param_groups[0]['lr']
 
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
+
+        if scheduler_type(scheduler) == 'iter':
+            scheduler.step()
 
         for i, param_group in enumerate(optimizer.param_groups):
             p = parameters_to_vector(param_group['params'])
@@ -278,7 +297,8 @@ def train(model, device, train_loader, optimizer, epoch, args, logger):
                 epoch, total_data_size, epoch_size, 100. * (batch_idx + 1) / num_iters_in_epoch,
                 loss, total_correct, total_data_size, accuracy, elapsed_time))
 
-            # write to log
+            # save log
+            lr = optimizer.param_groups[0]['lr']
             log = {'epoch': epoch, 'iteration': iteration, 'elapsed_time': elapsed_time,
                    'accuracy': accuracy, 'loss': loss, 'lr': lr}
 
