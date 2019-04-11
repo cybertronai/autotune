@@ -154,9 +154,9 @@ def main():
         dataset_class = datasets.CIFAR100
 
     train_dataset = dataset_class(
-        root=args.root, train=True, download=True, transform=train_transform)
+        root=args.root, train=True, transform=train_transform)
     val_dataset = dataset_class(
-        root=args.root, train=False, download=True, transform=val_transform)
+        root=args.root, train=False, transform=val_transform)
 
     # [COMM] Setup distributed sampler for data parallel & MC sample parallel
     train_sampler = torch.utils.data.distributed.DistributedSampler(
