@@ -17,13 +17,14 @@ import torch.distributed as dist
 
 DATASET_CIFAR10 = 'CIFAR-10'
 DATASET_CIFAR100 = 'CIFAR-100'
+DATASET_IMAGENET = 'ImageNet'
 
 
 def main():
     parser = argparse.ArgumentParser()
     # Data
     parser.add_argument('--dataset', type=str,
-                        choices=[DATASET_CIFAR10, DATASET_CIFAR100], default=DATASET_CIFAR10,
+                        choices=[DATASET_CIFAR10, DATASET_CIFAR100, DATASET_IMAGENET], default=DATASET_CIFAR10,
                         help='name of dataset')
     parser.add_argument('--root', type=str, default='./data',
                         help='root of dataset')
@@ -138,25 +139,38 @@ def main():
     val_transforms.append(transforms.ToTensor())
 
     if args.normalizing_data:
-        normalize = transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+        if args.dataset in [DATASET_CIFAR10, DATASET_CIFAR100]:
+            normalize = transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+        else:
+            normalize = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
         train_transforms.append(normalize)
         val_transforms.append(normalize)
 
     train_transform = transforms.Compose(train_transforms)
     val_transform = transforms.Compose(val_transforms)
 
-    # Setup data loader for CIFAR-10/CIFAR-100
+    # Setup data loader
     if args.dataset == DATASET_CIFAR10:
+        # CIFAR-10
         num_classes = 10
         dataset_class = datasets.CIFAR10
-    else:
+        train_root = val_root = args.root
+    elif args.dataset == DATASET_CIFAR100:
+        # CIFAR-100
         num_classes = 100
         dataset_class = datasets.CIFAR100
+        train_root = val_root = args.root
+    else:
+        # ImageNet
+        num_classes = 1000
+        dataset_class = datasets.ImageFolder
+        train_root = os.path.join(args.root, 'train')
+        val_root = os.path.join(args.root, 'val')
 
     train_dataset = dataset_class(
-        root=args.root, train=True, transform=train_transform)
+        root=train_root, train=True, transform=train_transform)
     val_dataset = dataset_class(
-        root=args.root, train=False, transform=val_transform)
+        root=val_root, train=False, transform=val_transform)
 
     # [COMM] Setup distributed sampler for data parallel & MC sample parallel
     train_sampler = torch.utils.data.distributed.DistributedSampler(
