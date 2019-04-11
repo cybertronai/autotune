@@ -132,23 +132,27 @@ def main():
         data_group = None
 
     # Setup data augmentation & data pre processing
+    if args.dataset in [DATASET_CIFAR10, DATASET_CIFAR100]:
+        normalize = transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+        random_crop = transforms.RandomCrop(32, padding=4)
+    else:
+        normalize = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+        random_crop = transforms.RandomCrop(224)
+
     train_transforms, val_transforms = [], []
+
+    if args.normalizing_data:
+        train_transforms.append(normalize)
+        val_transforms.append(normalize)
+
     if args.random_crop:
-        train_transforms.append(transforms.RandomCrop(32, padding=4))
+        train_transforms.append(random_crop)
 
     if args.random_horizontal_flip:
         train_transforms.append(transforms.RandomHorizontalFlip())
 
     train_transforms.append(transforms.ToTensor())
     val_transforms.append(transforms.ToTensor())
-
-    if args.normalizing_data:
-        if args.dataset in [DATASET_CIFAR10, DATASET_CIFAR100]:
-            normalize = transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
-        else:
-            normalize = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
-        train_transforms.append(normalize)
-        val_transforms.append(normalize)
 
     train_transform = transforms.Compose(train_transforms)
     val_transform = transforms.Compose(val_transforms)
@@ -157,14 +161,11 @@ def main():
     if args.dataset == DATASET_IMAGENET:
         # ImageNet
         num_classes = 1000
-        dataset_class = datasets.ImageFolder
         train_root = os.path.join(args.root, 'train')
         val_root = os.path.join(args.root, 'val')
 
-        train_dataset = dataset_class(
-            root=train_root, transform=train_transform)
-        val_dataset = dataset_class(
-            root=val_root, transform=val_transform)
+        train_dataset = datasets.ImageFolder(root=train_root, transform=train_transform)
+        val_dataset = datasets.ImageFolder(root=val_root, transform=val_transform)
     else:
         if args.dataset == DATASET_CIFAR10:
             # CIFAR-10
