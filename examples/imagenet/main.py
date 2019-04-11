@@ -7,6 +7,7 @@ import torch
 import torch.nn.functional as F
 from torch.nn.utils import parameters_to_vector
 from torchvision import datasets, transforms, models
+import torchcurv
 from torchcurv.optim import DistributedSecondOrderOptimizer, DistributedVIOptimizer
 from torchcurv.utils import Logger
 
@@ -160,6 +161,7 @@ def main():
     # Setup model
     arch_class = getattr(models, args.arch_name)
     arch_kwargs = {} if args.arch_args is None else args.arch_args
+    arch_kwargs['num_classes'] = 1000
 
     model = arch_class(**arch_kwargs)
     model = model.to(device)
@@ -187,7 +189,9 @@ def main():
     if args.scheduler_name is None:
         scheduler = None
     else:
-        scheduler_class = getattr(torch.optim.lr_scheduler, args.scheduler_name)
+        scheduler_class = getattr(torchcurv.optim.lr_scheduler, args.scheduler_name, None)
+        if scheduler_class is None:
+            scheduler_class = getattr(torch.optim.lr_scheduler, args.scheduler_name)
         scheduler_kwargs = {} if args.scheduler_args is None else args.scheduler_args
         scheduler = scheduler_class(optimizer, **scheduler_kwargs)
 

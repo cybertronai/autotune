@@ -8,109 +8,12 @@ import torch
 import torch.nn.functional as F
 from torch.nn.utils import parameters_to_vector
 from torchvision import datasets, transforms
+import torchcurv
 from torchcurv.optim import SecondOrderOptimizer, VIOptimizer
 from torchcurv.utils import Logger
 
 DATASET_CIFAR10 = 'CIFAR-10'
 DATASET_CIFAR100 = 'CIFAR-100'
-
-
-def train(model, device, train_loader, optimizer, epoch, args, logger):
-    model.train()
-
-    total_correct = 0
-    loss = None
-    total_data_size = 0
-    epoch_size = len(train_loader.dataset)
-    num_iters_in_epoch = len(train_loader)
-    base_num_iter = (epoch - 1) * num_iters_in_epoch
-    lr = optimizer.param_groups[0]['lr']
-
-    for batch_idx, (data, target) in enumerate(train_loader):
-        data, target = data.to(device), target.to(device)
-
-        for i, param_group in enumerate(optimizer.param_groups):
-            p = parameters_to_vector(param_group['params'])
-            attr = 'p_pre_{}'.format(i)
-            setattr(optimizer, attr, p.clone())
-
-        # update params
-        def closure():
-            optimizer.zero_grad()
-            output = model(data)
-            loss = F.cross_entropy(output, target)
-            loss.backward()
-
-            return loss, output
-
-        loss, output = optimizer.step(closure=closure)
-
-        pred = output.argmax(dim=1, keepdim=True)
-        correct = pred.eq(target.view_as(pred)).sum().item()
-
-        loss = loss.item()
-        total_correct += correct
-
-        iteration = base_num_iter + batch_idx + 1
-        total_data_size += len(data)
-
-        if batch_idx % args.log_interval == 0:
-            accuracy = 100. * total_correct / total_data_size
-            elapsed_time = logger.elapsed_time
-            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}, '
-                  'Accuracy: {:.0f}/{} ({:.2f}%), '
-                  'Elapsed Time: {:.1f}s'.format(
-                  epoch, total_data_size, epoch_size, 100. * (batch_idx + 1) / num_iters_in_epoch,
-                  loss, total_correct, total_data_size, accuracy, elapsed_time))
-
-            # write to log
-            log = {'epoch': epoch, 'iteration': iteration, 'elapsed_time': elapsed_time,
-                   'accuracy': accuracy, 'loss': loss, 'lr': lr}
-
-            for i, group in enumerate(optimizer.param_groups):
-                p = parameters_to_vector(group['params'])
-                attr = 'p_pre_{}'.format(i)
-                p_pre = getattr(optimizer, attr)
-                p_norm = p.norm().item()
-                upd_norm = p.sub(p_pre).norm().item()
-
-                name = group.get('name', '')
-                group_log = {'p_norm': p_norm, 'upd_norm': upd_norm, 'name': name}
-                log[i] = group_log
-
-            logger.write(log)
-
-    accuracy = 100. * total_correct / epoch_size
-
-    return accuracy, loss
-
-
-def test(model, device, test_loader, optimizer):
-    model.eval()
-    test_loss = 0
-    correct = 0
-
-    with torch.no_grad():
-        for data, target in test_loader:
-
-            data, target = data.to(device), target.to(device)
-
-            if isinstance(optimizer, VIOptimizer):
-                output = optimizer.prediction(data)
-            else:
-                output = model(data)
-
-            test_loss += F.cross_entropy(output, target, reduction='sum').item()  # sum up batch loss
-            pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
-            correct += pred.eq(target.view_as(pred)).sum().item()
-
-    test_loss /= len(test_loader.dataset)
-    test_accuracy = 100. * correct / len(test_loader.dataset)
-
-    print('\nTest set: Average loss: {:.4f}, Accuracy: {:.0f}/{} ({:.2f}%)\n'.format(
-        test_loss, correct, len(test_loader.dataset), test_accuracy))
-
-    return test_accuracy, test_loss
 
 
 def main():
@@ -125,8 +28,8 @@ def main():
                         help='number of epochs to train)')
     parser.add_argument('--batch_size', type=int, default=128,
                         help='input batch size for training')
-    parser.add_argument('--test_batch_size', type=int, default=128,
-                        help='input batch size for testing')
+    parser.add_argument('--val_batch_size', type=int, default=128,
+                        help='input batch size for valing')
     parser.add_argument('--normalizing_data', action='store_true',
                         help='[data pre processing] normalizing data')
     parser.add_argument('--random_crop', action='store_true',
@@ -187,7 +90,7 @@ def main():
     torch.manual_seed(args.seed)
 
     # Setup data augmentation & data pre processing
-    train_transforms, test_transforms = [], []
+    train_transforms, val_transforms = [], []
     if args.random_crop:
         train_transforms.append(transforms.RandomCrop(32, padding=4))
 
@@ -195,15 +98,15 @@ def main():
         train_transforms.append(transforms.RandomHorizontalFlip())
 
     train_transforms.append(transforms.ToTensor())
-    test_transforms.append(transforms.ToTensor())
+    val_transforms.append(transforms.ToTensor())
 
     if args.normalizing_data:
         normalize = transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
         train_transforms.append(normalize)
-        test_transforms.append(normalize)
+        val_transforms.append(normalize)
 
     train_transform = transforms.Compose(train_transforms)
-    test_transform = transforms.Compose(test_transforms)
+    val_transform = transforms.Compose(val_transforms)
 
     # Setup data loader for CIFAR-10/CIFAR-100
     if args.dataset == DATASET_CIFAR10:
@@ -215,13 +118,13 @@ def main():
 
     train_dataset = dataset_class(
         root=args.root, train=True, download=True, transform=train_transform)
-    test_dataset = dataset_class(
-        root=args.root, train=False, download=True, transform=test_transform)
+    val_dataset = dataset_class(
+        root=args.root, train=False, download=True, transform=val_transform)
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=8)
-    test_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=args.test_batch_size, shuffle=False, num_workers=8)
+    val_loader = torch.utils.data.DataLoader(
+        val_dataset, batch_size=args.val_batch_size, shuffle=False, num_workers=8)
 
     # Setup model
     _, ext = os.path.splitext(args.arch_file)
@@ -259,7 +162,9 @@ def main():
     if args.scheduler_name is None:
         scheduler = None
     else:
-        scheduler_class = getattr(torch.optim.lr_scheduler, args.scheduler_name)
+        scheduler_class = getattr(torchcurv.optim.lr_scheduler, args.scheduler_name, None)
+        if scheduler_class is None:
+            scheduler_class = getattr(torch.optim.lr_scheduler, args.scheduler_name)
         scheduler_kwargs = {} if args.scheduler_args is None else args.scheduler_args
         scheduler = scheduler_class(optimizer, **scheduler_kwargs)
 
@@ -279,7 +184,7 @@ def main():
         if key == 'dataset':
             print('{}: {}'.format(key, val))
             print('train data size: {}'.format(len(train_loader.dataset)))
-            print('test data size: {}'.format(len(test_loader.dataset)))
+            print('val data size: {}'.format(len(val_loader.dataset)))
         else:
             print('{}: {}'.format(key, val))
     print('===========================')
@@ -303,14 +208,14 @@ def main():
         # train
         accuracy, loss = train(model, device, train_loader, optimizer, epoch, args, logger)
 
-        # test
-        test_accuracy, test_loss = test(model, device, test_loader, optimizer)
+        # val
+        val_accuracy, val_loss = validate(model, device, val_loader, optimizer)
 
         # write to log
         iteration = epoch * len(train_loader)
         log = {'epoch': epoch, 'iteration': iteration,
                'accuracy': accuracy, 'loss': loss,
-               'test_accuracy': test_accuracy, 'test_loss': test_loss,
+               'val_accuracy': val_accuracy, 'val_loss': val_loss,
                'lr': optimizer.param_groups[0]['lr']}
         logger.write(log)
 
@@ -323,6 +228,104 @@ def main():
                 'epoch': epoch
             }
             torch.save(data, path)
+
+
+def train(model, device, train_loader, optimizer, epoch, args, logger):
+    model.train()
+
+    total_correct = 0
+    loss = None
+    total_data_size = 0
+    epoch_size = len(train_loader.dataset)
+    num_iters_in_epoch = len(train_loader)
+    base_num_iter = (epoch - 1) * num_iters_in_epoch
+    lr = optimizer.param_groups[0]['lr']
+
+    for batch_idx, (data, target) in enumerate(train_loader):
+        data, target = data.to(device), target.to(device)
+
+        for i, param_group in enumerate(optimizer.param_groups):
+            p = parameters_to_vector(param_group['params'])
+            attr = 'p_pre_{}'.format(i)
+            setattr(optimizer, attr, p.clone())
+
+        # update params
+        def closure():
+            optimizer.zero_grad()
+            output = model(data)
+            loss = F.cross_entropy(output, target)
+            loss.backward()
+
+            return loss, output
+
+        loss, output = optimizer.step(closure=closure)
+
+        pred = output.argmax(dim=1, keepdim=True)
+        correct = pred.eq(target.view_as(pred)).sum().item()
+
+        loss = loss.item()
+        total_correct += correct
+
+        iteration = base_num_iter + batch_idx + 1
+        total_data_size += len(data)
+
+        if batch_idx % args.log_interval == 0:
+            accuracy = 100. * total_correct / total_data_size
+            elapsed_time = logger.elapsed_time
+            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}, '
+                  'Accuracy: {:.0f}/{} ({:.2f}%), '
+                  'Elapsed Time: {:.1f}s'.format(
+                epoch, total_data_size, epoch_size, 100. * (batch_idx + 1) / num_iters_in_epoch,
+                loss, total_correct, total_data_size, accuracy, elapsed_time))
+
+            # write to log
+            log = {'epoch': epoch, 'iteration': iteration, 'elapsed_time': elapsed_time,
+                   'accuracy': accuracy, 'loss': loss, 'lr': lr}
+
+            for i, group in enumerate(optimizer.param_groups):
+                p = parameters_to_vector(group['params'])
+                attr = 'p_pre_{}'.format(i)
+                p_pre = getattr(optimizer, attr)
+                p_norm = p.norm().item()
+                upd_norm = p.sub(p_pre).norm().item()
+
+                name = group.get('name', '')
+                group_log = {'p_norm': p_norm, 'upd_norm': upd_norm, 'name': name}
+                log[i] = group_log
+
+            logger.write(log)
+
+    accuracy = 100. * total_correct / epoch_size
+
+    return accuracy, loss
+
+
+def validate(model, device, val_loader, optimizer):
+    model.eval()
+    val_loss = 0
+    correct = 0
+
+    with torch.no_grad():
+        for data, target in val_loader:
+
+            data, target = data.to(device), target.to(device)
+
+            if isinstance(optimizer, VIOptimizer):
+                output = optimizer.prediction(data)
+            else:
+                output = model(data)
+
+            val_loss += F.cross_entropy(output, target, reduction='sum').item()  # sum up batch loss
+            pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
+            correct += pred.eq(target.view_as(pred)).sum().item()
+
+    val_loss /= len(val_loader.dataset)
+    val_accuracy = 100. * correct / len(val_loader.dataset)
+
+    print('\nEval: Average loss: {:.4f}, Accuracy: {:.0f}/{} ({:.2f}%)\n'.format(
+        val_loss, correct, len(val_loader.dataset), val_accuracy))
+
+    return val_accuracy, val_loss
 
 
 if __name__ == '__main__':
