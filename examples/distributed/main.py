@@ -133,10 +133,10 @@ def main():
 
     # Setup data augmentation & data pre processing
     if args.dataset in [DATASET_CIFAR10, DATASET_CIFAR100]:
-        random_crop = transforms.RandomSizedCrop(32, padding=4)
+        random_crop = transforms.RandomResizedCrop(32)
         normalize = transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
     else:
-        random_crop = transforms.RandomSizedCrop(224)
+        random_crop = transforms.RandomResizedCrop(224)
         normalize = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
 
     train_transforms, val_transforms = [], []
@@ -378,6 +378,11 @@ def train(rank, model, device, train_loader, optimizer, scheduler, epoch, args,
         if dist.get_world_size(master_mc_group) > 1:
             dist.reduce(correct, dst=0, group=master_mc_group)
             dist.reduce(data_size, dst=0, group=master_mc_group)
+
+        ####### profile
+        if batch_idx == 2:
+            exit()
+        #######
 
         # refresh results
         if rank == 0:
