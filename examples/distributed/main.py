@@ -136,18 +136,25 @@ def main():
     # Setup data augmentation & data pre processing
     if args.dataset in [DATASET_CIFAR10, DATASET_CIFAR100]:
         random_crop = transforms.RandomResizedCrop(32)
+        centor_crop = transforms.CenterCrop(32)
         normalize = transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
     else:
         random_crop = transforms.RandomResizedCrop(224)
+        centor_crop = transforms.CenterCrop(224)
         normalize = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
 
     train_transforms, val_transforms = [], []
 
     if args.random_crop:
         train_transforms.append(random_crop)
+    else:
+        train_transforms.append(centor_crop)
 
     if args.random_horizontal_flip:
         train_transforms.append(transforms.RandomHorizontalFlip())
+
+    val_transforms.append(transforms.Resize(256))
+    val_transforms.append(transforms.CenterCrop(224))
 
     train_transforms.append(transforms.ToTensor())
     val_transforms.append(transforms.ToTensor())
