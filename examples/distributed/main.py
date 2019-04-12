@@ -200,7 +200,7 @@ def main():
     # [COMM] Setup distributed sampler for data parallel
     val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset)
     val_loader = torch.utils.data.DataLoader(
-        val_dataset, batch_size=args.val_batch_size, shuffle=(val_sampler is None),
+        val_dataset, batch_size=args.val_batch_size, shuffle=False,
         sampler=val_sampler, num_workers=args.num_workers)
 
     # Setup model
