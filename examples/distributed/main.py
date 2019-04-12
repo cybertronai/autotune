@@ -28,6 +28,10 @@ def main():
                         help='name of dataset')
     parser.add_argument('--root', type=str, default='./data',
                         help='root of dataset')
+    parser.add_argument('--train_root', type=str, default=None,
+                        help='root of train dataset')
+    parser.add_argument('--val_root', type=str, default=None,
+                        help='root of validate dataset')
     parser.add_argument('--epochs', type=int, default=10,
                         help='number of epochs to train)')
     parser.add_argument('--batch_size', type=int, default=128,
@@ -159,9 +163,9 @@ def main():
     if args.dataset == DATASET_IMAGENET:
         # ImageNet
         num_classes = 1000
-        train_root = os.path.join(args.root, 'train')
-        val_root = os.path.join(args.root, 'val')
 
+        train_root = args.root if args.train_root is None else args.train_root
+        val_root = args.root if args.val_root is None else args.val_root
         train_dataset = datasets.ImageFolder(root=train_root, transform=train_transform)
         val_dataset = datasets.ImageFolder(root=val_root, transform=val_transform)
     else:
@@ -376,11 +380,6 @@ def train(rank, model, device, train_loader, optimizer, scheduler, epoch, args,
         if dist.get_world_size(master_mc_group) > 1:
             dist.reduce(correct, dst=0, group=master_mc_group)
             dist.reduce(data_size, dst=0, group=master_mc_group)
-
-        ####### profile
-        if batch_idx == 10:
-            exit()
-        #######
 
         # refresh results
         if rank == 0:
