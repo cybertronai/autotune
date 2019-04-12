@@ -1,0 +1,37 @@
+{
+  "dataset": "ImageNet",
+  "epochs": 36,
+  "batch_size": 32,
+  "val_batch_size": 32,
+  "random_crop": true,
+  "random_horizontal_flip": true,
+  "normalizing_data": true,
+  "arch_name": "resnet50",
+  "optim_name": "DistributedSecondOrderOptimizer",
+  "optim_args": {
+    "curv_type": "Fisher",
+    "curv_shapes": {
+      "Conv2d": "Kron",
+      "Linear": "Kron",
+      "BatchNorm1d": "Diag",
+      "BatchNorm2d": "Diag"
+    },
+    "momentum": 0.997,
+    "momentum_type": "preconditioned",
+    "adjust_momentum": true,
+    "normalizing_weights": true,
+    "acc_steps": 4
+  },
+  "curv_args": {
+    "damping": 2.5e-4,
+    "ema_decay": 1,
+    "pi_type": "tracenorm"
+  },
+  "lr": 8.18e-3,
+  "scheduler_name": "PolynomialDecayIterLR",
+  "scheduler_args": {
+    "start_iter": 313,
+    "rate": 11,
+    "max_count": 16600
+  }
+}

@@ -60,8 +60,6 @@ def main():
     parser.add_argument('--scheduler_args', type=json.loads, default=None,
                         help='[JSON] arguments for the scheduler')
     # Options
-    parser.add_argument('--no_cuda', action='store_true', default=False,
-                        help='disables CUDA training')
     parser.add_argument('--download', action='store_true', default=False,
                         help='if True, downloads the dataset (CIFAR-10 or 100) from the internet')
     parser.add_argument('--seed', type=int, default=1,
@@ -380,7 +378,7 @@ def train(rank, model, device, train_loader, optimizer, scheduler, epoch, args,
             dist.reduce(data_size, dst=0, group=master_mc_group)
 
         ####### profile
-        if batch_idx == 2:
+        if batch_idx == 10:
             exit()
         #######
 
