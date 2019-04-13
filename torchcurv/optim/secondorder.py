@@ -252,11 +252,11 @@ class SecondOrderOptimizer(Optimizer):
         params = group[target]
         curv = group['curv']
 
-        def apply_normalizing_weights(p):
+        def apply_normalizing_weights(p, eps=1e-9):
             scale = group['weight_scale']
             if scale == 'auto':
                 scale = np.sqrt(2.0 * w.data.shape[0])
-            norm = p.data.norm()
+            norm = p.data.norm() + eps
             p.data.div_(norm).mul_(scale)
 
         if group['normalizing_weights']:
