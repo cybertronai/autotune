@@ -135,6 +135,7 @@ class VIOptimizer(SecondOrderOptimizer):
             # update mean
             self.update_preprocess(group, target='mean', grad_type='preconditioned')
             self.update(group, target='mean')
+            self.update_postprocess(group, target='mean')
 
         self.copy_mean_to_params()
 

@@ -1,8 +1,8 @@
 {
   "dataset": "CIFAR-10",
   "epochs": 15,
-  "batch_size": 128,
-  "test_batch_size": 128,
+  "batch_size": 32,
+  "val_batch_size": 128,
   "random_crop": false,
   "random_horizontal_flip": false,
   "normalizing_data": true,
@@ -23,8 +23,8 @@
     "grad_ema_decay": 0.1,
     "grad_ema_type": "raw",
     "weight_decay": 0,
-    "num_mc_samples": 1,
-    "test_num_mc_samples": 0,
+    "num_mc_samples": 5,
+    "val_num_mc_samples": 5,
     "kl_weighting": 1,
     "prior_variance": 1000,
     "acc_steps": 1
