@@ -33,6 +33,10 @@ class Curvature(object):
         self._data = value
 
     @property
+    def module(self):
+        return self._module
+
+    @property
     def bias(self):
         bias = getattr(self._module, 'bias', None)
         return False if bias is None else True

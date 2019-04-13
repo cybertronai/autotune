@@ -250,16 +250,18 @@ class SecondOrderOptimizer(Optimizer):
 
     def update_postprocess(self, group, target='params'):
         params = group[target]
+        curv = group['curv']
 
         def apply_normalizing_weights(p):
             scale = group['weight_scale']
             norm = p.data.norm()
             p.data.div_(norm).mul_(scale)
 
-        for p in params:
-
-            if group['normalizing_weights']:
-                apply_normalizing_weights(p)
+        if group['normalizing_weights']:
+            for p, _p in zip(params, group['params']):
+                w = getattr(curv.module, 'w', None)
+                if w is not None and w == _p:
+                    apply_normalizing_weights(p)
 
 
 class DistributedSecondOrderOptimizer(SecondOrderOptimizer):
