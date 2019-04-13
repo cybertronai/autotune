@@ -28,6 +28,11 @@ You can specify the approximation method(s) of curvature for each layer from the
 
 (5 can be combined with 1, 2, 3 or 4)
 
+## Distributed Training
+This extension supports *data parallelism* and *MC samples parallelism* (for VI)
+for distributed training among multiple processes (GPUs).
+![](docs/distributed_vi.png) 
+
 ## Quick Start
 To build the extension run (on a Python 3, CUDA environment)
 ```bash
