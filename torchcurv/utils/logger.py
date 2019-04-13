@@ -1,6 +1,7 @@
 import os
 import time
 import json
+import shutil
 
 
 # Select the best-resolution timer function
@@ -21,6 +22,9 @@ class Logger(object):
         self._log = []
         self._start_at = None
 
+        if not os.path.isdir(self.out):
+            os.makedirs(self.out)
+
     def start(self):
         self._start_at = _get_time()
 
@@ -32,7 +36,10 @@ class Logger(object):
 
     def write(self, log):
         self._log.append(log)
-        path = os.path.join(self.out, self.logname)
-        with open(path, 'w') as f:
+        tmp_path = os.path.join(self.out, 'tmp')
+        with open(tmp_path, 'w') as f:
             json.dump(self._log, f, indent=4)
+
+        path = os.path.join(self.out, self.logname)
+        shutil.move(tmp_path, path)
 

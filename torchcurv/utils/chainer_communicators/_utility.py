@@ -180,7 +180,8 @@ def extract_attr_from_curv(attr, triangular=False):
             #setattr(param, attr, x)
             x_ten = x.data
             x_cp = to_cupy(x_ten)
-            arrays.append((x_cp, triangular))
+            _triangular = triangular and x_cp.ndim == 2 and x_cp.shape[0] == x_cp.shape[1]
+            arrays.append((x_cp, _triangular))
 
         return arrays
 

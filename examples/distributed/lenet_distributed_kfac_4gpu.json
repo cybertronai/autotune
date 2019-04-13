@@ -1,42 +1,38 @@
 {
   "dataset": "CIFAR-10",
   "epochs": 15,
-  "batch_size": 32,
+  "batch_size": 4,
   "val_batch_size": 128,
   "random_crop": false,
   "random_horizontal_flip": false,
   "normalizing_data": true,
   "arch_file": "models/lenet.py",
-  "arch_name": "LeNet5BatchNorm",
-  "arch_args": {
-    "affine": true
-  },
-  "optim_name": "VIOptimizer",
+  "arch_name": "LeNet5",
+  "optim_name": "DistributedSecondOrderOptimizer",
   "optim_args": {
     "curv_type": "Fisher",
     "curv_shapes": {
-      "Conv2d": "Diag",
-      "Linear": "Diag",
+      "Conv2d": "Kron",
+      "Linear": "Kron",
       "BatchNorm1d": "Diag",
       "BatchNorm2d": "Diag"
     },
-    "grad_ema_decay": 0.1,
-    "grad_ema_type": "raw",
-    "weight_decay": 0,
-    "num_mc_samples": 5,
-    "val_num_mc_samples": 5,
-    "kl_weighting": 1,
-    "prior_variance": 1000,
+    "momentum": 0.9,
+    "momentum_type": "preconditioned",
+    "adjust_momentum": true,
+    "weight_decay": 0.05,
     "acc_steps": 4
   },
   "curv_args": {
-    "damping": 0,
-    "ema_decay": 0.001
+    "damping": 1e-4,
+    "ema_decay": 0.333,
+    "pi_type": "tracenorm"
   },
-  "lr": 0.01,
+  "lr": 0.04,
   "scheduler_name": "ExponentialLR",
   "scheduler_args": {
     "gamma": 0.9
   },
+  "log_interval": 64,
   "no_cuda": false
 }

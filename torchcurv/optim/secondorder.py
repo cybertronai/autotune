@@ -14,8 +14,9 @@ class SecondOrderOptimizer(Optimizer):
 
     def __init__(self, model, curv_type, curv_shapes,
                  lr=0.01, momentum=0, momentum_type='preconditioned', adjust_momentum=False,
-                 grad_ema_decay=1, grad_ema_type='raw', l2_reg=0, weight_decay=0, acc_steps=1,
-                 **curv_kwargs):
+                 grad_ema_decay=1, grad_ema_type='raw', l2_reg=0, weight_decay=0,
+                 normalizing_weights=False, weight_scale='auto',
+                 acc_steps=1, **curv_kwargs):
 
         # TODO implement error checker: hoge(optim_kwargs)
         """
@@ -38,7 +39,9 @@ class SecondOrderOptimizer(Optimizer):
         defaults = {'lr': lr, 'lr_pre': lr,
                     'momentum': momentum, 'momentum_type': momentum_type, 'adjust_momentum': adjust_momentum,
                     'grad_ema_decay': grad_ema_decay, 'grad_ema_type': grad_ema_type,
-                    'l2_reg': l2_reg, 'weight_decay': weight_decay, 'acc_steps': acc_steps}
+                    'l2_reg': l2_reg, 'weight_decay': weight_decay,
+                    'normalizing_weights': normalizing_weights, 'weight_scale': weight_scale,
+                    'acc_steps': acc_steps}
         defaults.update(curv_kwargs)
         self.defaults = defaults
         self.state = defaultdict(dict)
@@ -157,6 +160,7 @@ class SecondOrderOptimizer(Optimizer):
             # update params
             self.update_preprocess(group, grad_type='preconditioned')
             self.update(group)
+            self.update_postprocess(group)
 
         return loss
 
@@ -186,8 +190,44 @@ class SecondOrderOptimizer(Optimizer):
 
     def update_preprocess(self, group, target='params', grad_type='raw'):
         assert grad_type in ['raw', 'preconditioned'], 'Invalid grad type: {}.'.format(grad_type)
-
         params = group[target]
+        state = self.state
+
+        def apply_l2_reg(p, grad):
+            if group['l2_reg'] != 0:
+                if grad.is_sparse:
+                    raise RuntimeError(
+                        "l2 regularization option is not compatible with sparse gradients")
+                grad.add_(group['l2_reg'], p.data)
+                curv = group['curv']
+                if curv is not None:
+                    curv.l2_reg = group['l2_reg']
+
+        def apply_weight_decay(p, grad):
+            if group['weight_decay'] != 0:
+                if hasattr(grad, 'is_sparse') and grad.is_sparse:
+                    raise RuntimeError(
+                        "weight_decay option is not compatible with sparse gradients")
+                grad.add_(group['weight_decay'], p.data)
+
+        def apply_momentum(p, grad):
+            if group['adjust_momentum']:
+                lr, lr_pre, m = group['lr'], group['lr_pre'], group['momentum']
+                momentum = m/lr_pre*lr
+            else:
+                momentum = group['momentum']
+
+            if momentum != 0:
+                buf = state[p]['momentum_buffer']
+                buf.mul_(momentum).add_(grad)
+                grad.copy_(buf)
+
+        def apply_grad_ema_decay(p, grad):
+            grad_ema_decay = group['grad_ema_decay']
+            if grad_ema_decay != 1:
+                buf = state[p]['grad_ema_buffer']
+                buf.mul_(1 - grad_ema_decay).add_(grad.mul(grad_ema_decay))
+                grad.copy_(buf)
 
         for p in params:
 
@@ -197,54 +237,33 @@ class SecondOrderOptimizer(Optimizer):
                 continue
 
             if grad_type == 'raw':
-                self.apply_l2_reg(p, grad, group)
+                apply_l2_reg(p, grad)
 
             if grad_type == 'preconditioned':
-                self.apply_weight_decay(p, grad, group)
+                apply_weight_decay(p, grad)
 
             if group['momentum_type'] == grad_type:
-                self.apply_momentum(p, grad, group)
+                apply_momentum(p, grad)
 
             if group['grad_ema_type'] == grad_type:
-                self.apply_grad_ema_decay(p, grad, group)
+                apply_grad_ema_decay(p, grad)
 
-    def apply_l2_reg(self, p, grad, group):
-        if group['l2_reg'] != 0:
-            if grad.is_sparse:
-                raise RuntimeError(
-                    "l2 regularization option is not compatible with sparse gradients")
-            grad.add_(group['l2_reg'], p.data)
-            curv = group['curv']
-            if curv is not None:
-                curv.l2_reg = group['l2_reg']
+    def update_postprocess(self, group, target='params'):
+        params = group[target]
+        curv = group['curv']
 
-    def apply_weight_decay(self, p, grad, group):
-        if group['weight_decay'] != 0:
-            if hasattr(grad, 'is_sparse') and grad.is_sparse:
-                raise RuntimeError(
-                    "weight_decay option is not compatible with sparse gradients")
-            grad.add_(group['weight_decay'], p.data)
+        def apply_normalizing_weights(p, eps=1e-9):
+            scale = group['weight_scale']
+            if scale == 'auto':
+                scale = np.sqrt(2.0 * w.data.shape[0])
+            norm = p.data.norm() + eps
+            p.data.div_(norm).mul_(scale)
 
-    def apply_momentum(self, p, grad, group):
-        if group['adjust_momentum']:
-            lr, lr_pre, m = group['lr'], group['lr_pre'], group['momentum']
-            momentum = m/lr_pre*lr
-        else:
-            momentum = group['momentum']
-
-        if momentum != 0:
-            state = self.state[p]
-            buf = state['momentum_buffer']
-            buf.mul_(momentum).add_(grad)
-            grad.copy_(buf)
-
-    def apply_grad_ema_decay(self, p, grad, group):
-        grad_ema_decay = group['grad_ema_decay']
-        if grad_ema_decay != 1:
-            state = self.state[p]
-            buf = state['grad_ema_buffer']
-            buf.mul_(1 - grad_ema_decay).add_(grad.mul(grad_ema_decay))
-            grad.copy_(buf)
+        if group['normalizing_weights']:
+            for p, _p in zip(params, group['params']):
+                w = getattr(curv.module, 'weight', None)
+                if w is not None and w is _p:
+                    apply_normalizing_weights(p)
 
 
 class DistributedSecondOrderOptimizer(SecondOrderOptimizer):
