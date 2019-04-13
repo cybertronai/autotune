@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 class FisherConv2d(Curvature):
 
-    def update_in_backward(self, grad_output_data):
+    def update_in_backward(self, grad_output):
         pass
 
     def precgrad(self, params):
@@ -14,19 +14,20 @@ class FisherConv2d(Curvature):
 
 class DiagFisherConv2d(DiagCurvature):
 
-    def update_in_backward(self, grad_output_data):
-        input_data = self._input_data  # n x c_in x h_in x w_in
+    def update_in_backward(self, grad_output):
         conv2d = self._module
+        data_input = getattr(conv2d, 'data_input', None)  # n x c_in x h_in x w_in
+        assert data_input is not None
 
         # n x (c_in)(k_h)(k_w) x (h_out)(w_out)
-        input2d = F.unfold(input_data,
+        input2d = F.unfold(data_input,
                            kernel_size=conv2d.kernel_size, stride=conv2d.stride,
                            padding=conv2d.padding, dilation=conv2d.dilation)
 
         # n x c_out x h_out x w_out
-        n, c_out, h, w = grad_output_data.shape
+        n, c_out, h, w = grad_output.shape
         # n x c_out x (h_out)(w_out)
-        grad_output2d = grad_output_data.reshape(n, c_out, -1)
+        grad_output2d = grad_output.reshape(n, c_out, -1)
 
         grad_in = torch.einsum('bik,bjk->bij',
                                grad_output2d, input2d)  # n x c_out x (c_in)(k_h)(k_w)
@@ -43,13 +44,13 @@ class DiagFisherConv2d(DiagCurvature):
 
 class KronFisherConv2d(KronCurvature):
 
-    def update_in_forward(self, input_data):
+    def update_in_forward(self, data_input):
         kernel_size, stride, padding, dilation = \
             self._module.kernel_size, self._module.stride, self._module.padding, self._module.dilation
-        input_data2d = F.unfold(input_data, kernel_size=kernel_size,
-                                stride=stride, padding=padding, dilation=dilation)
-        n, a, _ = input_data2d.shape
-        m = input_data2d.transpose(0, 1).reshape(a, -1)
+        data_input_2d = F.unfold(data_input, kernel_size=kernel_size,
+                                 stride=stride, padding=padding, dilation=dilation)
+        n, a, _ = data_input_2d.shape
+        m = data_input_2d.transpose(0, 1).reshape(a, -1)
         a, b = m.shape
         if self.bias:
             m = torch.cat((m, m.new_ones((1, b))), 0)
@@ -57,9 +58,9 @@ class KronFisherConv2d(KronCurvature):
         A = torch.einsum('ik,jk->ij', m, m).div(n)
         self._A = A
 
-    def update_in_backward(self, grad_output_data):
-        n, c, h, w = grad_output_data.shape  # n x c x h x w
-        m = grad_output_data.transpose(0, 1).reshape(c, -1)  # c x nhw
+    def update_in_backward(self, grad_output):
+        n, c, h, w = grad_output.shape  # n x c x h x w
+        m = grad_output.transpose(0, 1).reshape(c, -1)  # c x nhw
 
         G = torch.einsum('ik,jk->ij', m, m).div(n*h*w)
         self._G = G

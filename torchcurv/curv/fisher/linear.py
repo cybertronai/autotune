@@ -13,12 +13,14 @@ class FisherLinear(Curvature):
 
 class DiagFisherLinear(DiagCurvature):
 
-    def update_in_backward(self, grad_output_data):
-        input_data = self._input_data  # n x f_in
-        n = input_data.shape[0]
+    def update_in_backward(self, grad_output):
+        data_input = getattr(self._module, 'data_input', None)  # n x f_in
+        assert data_input is not None
 
-        in_in = input_data.mul(input_data)  # n x f_in
-        grad_grad = grad_output_data.mul(grad_output_data)  # n x f_out
+        n = data_input.shape[0]
+
+        in_in = data_input.mul(data_input)  # n x f_in
+        grad_grad = grad_output.mul(grad_output)  # n x f_out
 
         data_w = torch.einsum('ki,kj->ij', grad_grad,
                               in_in).div(n)  # f_out x f_in
@@ -42,12 +44,12 @@ class KronFisherLinear(KronCurvature):
         A = torch.einsum('ki,kj->ij', input_data, input_data).div(n)
         self._A = A
 
-    def update_in_backward(self, grad_output_data):
-        n = grad_output_data.shape[0]  # n x f_out
+    def update_in_backward(self, grad_output):
+        n = grad_output.shape[0]  # n x f_out
 
         # f_out x f_out
         G = torch.einsum(
-            'ki,kj->ij', grad_output_data, grad_output_data).div(n)
+            'ki,kj->ij', grad_output, grad_output).div(n)
         self._G = G
 
     def precondition_grad(self, params):

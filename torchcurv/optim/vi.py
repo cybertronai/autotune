@@ -30,7 +30,7 @@ class VIOptimizer(SecondOrderOptimizer):
         self.defaults['seed_base'] = random.random()
 
         for group in self.param_groups:
-            group['mean'] = [torch.zeros_like(p) for p in group['params']]
+            group['mean'] = [p.data.detach().clone() for p in group['params']]
             self.init_buffer(group['mean'])
 
     def zero_grad(self):
@@ -60,12 +60,6 @@ class VIOptimizer(SecondOrderOptimizer):
             if curv is not None and curv.std is not None:
                 # sample from posterior
                 curv.sample_params(params, mean, self.defaults['std_scale'])
-            else:
-                # sample from prior
-                for p, m in zip(params, mean):
-                    noise = torch.randn_like(m)
-                    std = noise.mul_(math.sqrt(self.defaults['prior_variance']))
-                    p.data.copy_(torch.add(m, std))
 
     def copy_mean_to_params(self):
         for group in self.param_groups:
@@ -85,7 +79,7 @@ class VIOptimizer(SecondOrderOptimizer):
             return loss, output
         """
 
-        m = self.defaults['num_mc_samples']
+        m = self.defaults['num_mc_samples'] if self.optim_state['step'] > 0 else 1
         n = self.defaults['acc_steps']
 
         acc_loss = TensorAccumulator()

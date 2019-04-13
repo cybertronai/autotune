@@ -1,8 +1,8 @@
 {
   "dataset": "CIFAR-10",
-  "epochs": 100,
-  "batch_size": 128,
-  "val_batch_size": 128,
+  "epochs": 15,
+  "batch_size": 32,
+  "test_batch_size": 128,
   "random_crop": false,
   "random_horizontal_flip": false,
   "normalizing_data": true,
@@ -10,24 +10,28 @@
   "arch_name": "LeNet5",
   "optim_name": "SecondOrderOptimizer",
   "optim_args": {
-    "curv_type":"DiagFisher",
+    "curv_type":"Hessian",
     "curv_shapes": {
       "Conv2d": "Kron",
       "Linear": "Kron"
     },
     "momentum": 0.9,
-    "momentum_type": "grad",
+    "momentum_type": "preconditioned",
     "adjust_momentum": true,
-    "weight_decay": 0.05
+    "weight_decay": 0.05,
+    "acc_steps": 1
   },
   "curv_args": {
     "damping": 1e-4,
-    "ema_decay": 0.99
+    "ema_decay": 0.333,
+    "pi_type": "tracenorm"
   },
-  "lr": 0.01,
+  "lr": 0.04,
   "scheduler_name": "ExponentialLR",
   "scheduler_args": {
     "gamma": 0.9
   },
+  "create_graph": true,
+  "log_interval": 64,
   "no_cuda": false
 }

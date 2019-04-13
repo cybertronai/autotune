@@ -64,14 +64,19 @@ class SecondOrderOptimizer(Optimizer):
                     kwargs[key] = val
             return kwargs
 
-        for module in self.train_modules:
+        post_curvature = None
+        for module in self.train_modules[::-1]:
             params = list(module.parameters())
             curv_class = self.get_curv_class(module)
             if curv_class is not None:
                 kwargs = extract_kwargs(curv_class.__init__, curv_kwargs)
-                curvature = curv_class(module, **kwargs)
+                curvature = curv_class(module, **kwargs, post_curv=post_curvature)
+                if post_curvature is not None:
+                    setattr(post_curvature, 'pre_curv', curvature)
             else:
                 curvature = None
+
+            post_curvature = curvature
 
             group = {
                 'name': module.__class__.__name__,
