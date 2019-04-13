@@ -15,7 +15,7 @@ class SecondOrderOptimizer(Optimizer):
     def __init__(self, model, curv_type, curv_shapes,
                  lr=0.01, momentum=0, momentum_type='preconditioned', adjust_momentum=False,
                  grad_ema_decay=1, grad_ema_type='raw', l2_reg=0, weight_decay=0,
-                 normalizing_weights=False, weight_scale=1.,
+                 normalizing_weights=False, weight_scale='auto',
                  acc_steps=1, **curv_kwargs):
 
         # TODO implement error checker: hoge(optim_kwargs)
@@ -254,13 +254,15 @@ class SecondOrderOptimizer(Optimizer):
 
         def apply_normalizing_weights(p):
             scale = group['weight_scale']
+            if scale == 'auto':
+                scale = np.sqrt(2.0 * w.data.shape[0])
             norm = p.data.norm()
             p.data.div_(norm).mul_(scale)
 
         if group['normalizing_weights']:
             for p, _p in zip(params, group['params']):
-                w = getattr(curv.module, 'w', None)
-                if w is not None and w == _p:
+                w = getattr(curv.module, 'weight', None)
+                if w is not None and w is _p:
                     apply_normalizing_weights(p)
 
 
