@@ -42,5 +42,4 @@ class Logger(object):
 
         path = os.path.join(self.out, self.logname)
         shutil.move(tmp_path, path)
-        os.remove(tmp_path)
 
