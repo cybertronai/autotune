@@ -1,6 +1,6 @@
 {
   "dataset": "CIFAR-10",
-  "epochs": 15,
+  "epochs": 30,
   "batch_size": 128,
   "val_batch_size": 128,
   "random_crop": false,
@@ -25,7 +25,7 @@
     "num_mc_samples": 10,
     "val_num_mc_samples": 0,
     "kl_weighting": 1,
-    "init_variance": 0.08,
+    "init_precision": 8e-3,
     "prior_variance": 1,
     "acc_steps": 1
   },

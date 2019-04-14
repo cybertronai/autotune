@@ -13,7 +13,7 @@ class VIOptimizer(SecondOrderOptimizer):
                  lr=0.01, momentum=0, momentum_type='preconditioned', adjust_momentum=False,
                  grad_ema_decay=1, grad_ema_type='raw', weight_decay=0,
                  num_mc_samples=10, val_num_mc_samples=10, kl_weighting=1,
-                 prior_variance=1, init_variance=None,
+                 prior_variance=1, init_precision=None,
                  seed=1, **curv_kwargs):
 
         l2_reg = kl_weighting / dataset_size / prior_variance if prior_variance != 0 else 0
@@ -27,7 +27,6 @@ class VIOptimizer(SecondOrderOptimizer):
         self.defaults['val_num_mc_samples'] = val_num_mc_samples
         self.defaults['std_scale'] = math.sqrt(kl_weighting / dataset_size)
         self.defaults['prior_variance'] = prior_variance
-        self.defaults['init_variance'] = init_variance
         random.seed(seed)
         self.defaults['seed_base'] = random.random()
 
@@ -35,9 +34,9 @@ class VIOptimizer(SecondOrderOptimizer):
             group['mean'] = [p.data.detach().clone() for p in group['params']]
             self.init_buffer(group['mean'])
 
-            if init_variance is not None:
+            if init_precision is not None:
                 curv = group['curv']
-                curv.element_wise_init(init_variance)
+                curv.element_wise_init(init_precision)
                 curv.step(update_std=True)
 
     def zero_grad(self):
