@@ -1,3 +1,4 @@
+import sys
 import math
 import random
 
@@ -28,7 +29,7 @@ class VIOptimizer(SecondOrderOptimizer):
         self.defaults['std_scale'] = math.sqrt(kl_weighting / dataset_size)
         self.defaults['prior_variance'] = prior_variance
         random.seed(seed)
-        self.defaults['seed_base'] = random.random()
+        self.defaults['seed_base'] = random.randint(1, sys.maxsize/2)
 
         for group in self.param_groups:
             group['mean'] = [p.data.detach().clone() for p in group['params']]
@@ -178,18 +179,11 @@ class DistributedVIOptimizer(DistributedSecondOrderOptimizer, VIOptimizer):
     def __init__(self, *args, mc_sample_group_id=0, **kwargs):
         super(DistributedVIOptimizer, self).__init__(*args, **kwargs)
         self.defaults['mc_sample_group_id'] = mc_sample_group_id
+        self.defaults['seed_base'] *= (mc_sample_group_id + 1) / self.comm.size
 
     @property
     def actual_optimizer(self):
         return VIOptimizer
-
-    @property
-    def seed(self):
-        step = self.optim_state['step']
-        group_id = self.defaults['mc_sample_group_id']
-        base = self.defaults['seed_base']
-
-        return step + base * (group_id + 1)
 
     def zero_grad(self):
         self.actual_optimizer.zero_grad(self)

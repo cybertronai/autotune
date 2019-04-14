@@ -139,11 +139,13 @@ def main():
     train_transforms, val_transforms = [], []
 
     if args.dataset in [DATASET_CIFAR10, DATASET_CIFAR100]:
+        # CIFAR-10/100
         if args.random_crop:
             train_transforms.append(transforms.RandomCrop(32, padding=4))
 
         normalize = transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
     else:
+        # ImageNet
         if args.random_resized_crop:
             train_transforms.append(transforms.RandomResizedCrop(224))
         else:
@@ -155,11 +157,11 @@ def main():
 
         normalize = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
 
+        val_transforms.append(transforms.Resize(256))
+        val_transforms.append(transforms.CenterCrop(224))
+
     if args.random_horizontal_flip:
         train_transforms.append(transforms.RandomHorizontalFlip())
-
-    val_transforms.append(transforms.Resize(256))
-    val_transforms.append(transforms.CenterCrop(224))
 
     train_transforms.append(transforms.ToTensor())
     val_transforms.append(transforms.ToTensor())
@@ -278,9 +280,13 @@ def main():
         # All config
         print('===========================')
         print('MPI.COMM_WORLD size: {}'.format(size))
-        print('MC sample group size: {}'.format(mc_group_size))
-        print('Num MC sample groups: {}'.format(num_mc_groups))
-        print('Global mini-batch size: {}'.format(mc_group_size * args.batch_size))
+        print('global mini-batch size: {}'.format(mc_group_size * args.batch_size))
+
+        num_mc_samples = optim_kwargs.get('num_mc_samples', None)
+        if num_mc_samples is not None:
+            print('global num MC samples: {}'.format(num_mc_groups * num_mc_samples))
+            print('MC sample group: {} processes/group x {} group'.format(mc_group_size, num_mc_groups))
+
         if hasattr(optimizer, 'indices'):
             print('layer assignment: {}'.format(optimizer.indices))
         print('---------------------------')
