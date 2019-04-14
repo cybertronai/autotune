@@ -22,11 +22,10 @@
     },
     "grad_ema_decay": 0.1,
     "grad_ema_type": "raw",
-    "weight_decay": 0,
     "num_mc_samples": 10,
     "val_num_mc_samples": 0,
     "kl_weighting": 1,
-    "init_variance": 400,
+    "init_variance": 0.08,
     "prior_variance": 1,
     "acc_steps": 1
   },
