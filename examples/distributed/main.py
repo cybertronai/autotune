@@ -140,9 +140,7 @@ def main():
 
     if args.dataset in [DATASET_CIFAR10, DATASET_CIFAR100]:
         if args.random_crop:
-            train_transforms.append(transforms.RandomCrop(32))
-        else:
-            train_transforms.append(transforms.CenterCrop(32))
+            train_transforms.append(transforms.RandomCrop(32, padding=4))
 
         normalize = transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
     else:
