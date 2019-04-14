@@ -12,7 +12,7 @@ class VIOptimizer(SecondOrderOptimizer):
     def __init__(self, model, dataset_size, curv_type='Fisher', curv_shapes=None,
                  lr=0.01, momentum=0, momentum_type='preconditioned', adjust_momentum=False,
                  grad_ema_decay=1, grad_ema_type='raw', weight_decay=0,
-                 num_mc_samples=10, test_num_mc_samples=10, kl_weighting=1,
+                 num_mc_samples=10, val_num_mc_samples=10, kl_weighting=1,
                  prior_variance=1, init_variance=None,
                  seed=1, **curv_kwargs):
 
@@ -24,7 +24,7 @@ class VIOptimizer(SecondOrderOptimizer):
                                           l2_reg=l2_reg, weight_decay=weight_decay, **curv_kwargs)
 
         self.defaults['num_mc_samples'] = num_mc_samples
-        self.defaults['test_num_mc_samples'] = test_num_mc_samples
+        self.defaults['val_num_mc_samples'] = val_num_mc_samples
         self.defaults['std_scale'] = math.sqrt(kl_weighting / dataset_size)
         self.defaults['prior_variance'] = prior_variance
         self.defaults['init_variance'] = init_variance
@@ -151,7 +151,7 @@ class VIOptimizer(SecondOrderOptimizer):
     def prediction(self, data):
 
         acc_output = TensorAccumulator()
-        mc_samples = self.defaults['test_num_mc_samples']
+        mc_samples = self.defaults['val_num_mc_samples']
 
         use_mean = mc_samples == 0
         n = 1 if use_mean else mc_samples
