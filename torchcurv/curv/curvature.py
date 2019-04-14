@@ -1,4 +1,4 @@
-import numpy as np
+import math
 
 import torch
 import torchcurv
@@ -204,7 +204,7 @@ class KronCurvature(Curvature):
         raise NotImplementedError
 
     def element_wise_init(self, value):
-        super(KronCurvature, self).element_wise_init(np.sqrt(value))
+        super(KronCurvature, self).element_wise_init(math.sqrt(value))
         self._A, self._G = self._data
 
     @property
