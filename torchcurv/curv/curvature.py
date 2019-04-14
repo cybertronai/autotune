@@ -1,3 +1,5 @@
+import numpy as np
+
 import torch
 import torchcurv
 
@@ -30,6 +32,33 @@ class Curvature(object):
     @data.setter
     def data(self, value):
         self._data = value
+
+    @property
+    def shape(self):
+        if self._data is None:
+            return self._get_shape()
+
+        return tuple([d.shape for d in self._data])
+
+    @property
+    def device(self):
+        return next(self._module.parameters()).device
+
+    def _get_shape(self):
+        size = 0
+        for p in self._module.parameters():
+            size += p.view(-1).shape[0]
+
+        return tuple((size, size))
+
+    def element_wise_init(self, value):
+        init_data = []
+        for s in self.shape:
+            diag = torch.ones(s[0], device=self.device).mul(value)  # 1d
+            diag = torch.diag(diag)  # 1d -> 2d
+            init_data.append(diag)
+
+        self._data = init_data
 
     @property
     def module(self):
@@ -117,6 +146,12 @@ class Curvature(object):
 
 class DiagCurvature(Curvature):
 
+    def _get_shape(self):
+        return tuple(p.shape for p in self.module.parameters())
+
+    def element_wise_init(self, value):
+        self._data = [torch.ones(s, device=self.device).mul(value) for s in self.shape]
+
     def update_in_backward(self, grad_output_data):
         raise NotImplementedError
 
@@ -157,6 +192,20 @@ class KronCurvature(Curvature):
     @data.setter
     def data(self, value):
         self._A, self._G = value
+
+    @property
+    def shape(self):
+        if self._A is None or self._G is None:
+            return self._get_shape()
+
+        return self._A.shape, self._G.shape
+
+    def _get_shape(self):
+        raise NotImplementedError
+
+    def element_wise_init(self, value):
+        super(KronCurvature, self).element_wise_init(np.sqrt(value))
+        self._A, self._G = self._data
 
     @property
     def A(self):

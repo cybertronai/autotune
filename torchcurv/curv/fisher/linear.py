@@ -84,3 +84,17 @@ class KronFisherLinear(KronCurvature):
             param = mean.add(std_scale, G_ic.mm(
                 torch.randn_like(m)).mm(A_ic))
             params[0].data = param
+
+    def _get_shape(self):
+        linear = self._module
+        w = getattr(linear, 'weight')
+        f_out, f_in = w.shape
+
+        G_shape = (f_out, f_out)
+
+        if self.bias:
+            A_shape = (f_in + 1, f_in + 1)
+        else:
+            A_shape = (f_in, f_in)
+
+        return A_shape, G_shape

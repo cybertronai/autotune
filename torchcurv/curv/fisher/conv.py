@@ -45,24 +45,32 @@ class DiagFisherConv2d(DiagCurvature):
 class KronFisherConv2d(KronCurvature):
 
     def update_in_forward(self, data_input):
-        kernel_size, stride, padding, dilation = \
-            self._module.kernel_size, self._module.stride, self._module.padding, self._module.dilation
-        data_input_2d = F.unfold(data_input, kernel_size=kernel_size,
-                                 stride=stride, padding=padding, dilation=dilation)
-        n, a, _ = data_input_2d.shape
-        m = data_input_2d.transpose(0, 1).reshape(a, -1)
+        conv2d = self._module
+
+        # n x (c_in)(k_h)(k_w) x (h_out)(w_out)
+        input2d = F.unfold(data_input,
+                           kernel_size=conv2d.kernel_size, stride=conv2d.stride,
+                           padding=conv2d.padding, dilation=conv2d.dilation)
+
+        n, a, _ = input2d.shape
+
+        # (c_in)(k_h)(k_w) x n(h_out)(w_out)
+        m = input2d.transpose(0, 1).reshape(a, -1)
         a, b = m.shape
         if self.bias:
+            # {(c_in)(k_h)(k_w) + 1} x n(h_out)(w_out)
             m = torch.cat((m, m.new_ones((1, b))), 0)
 
+        # (c_in)(k_h)(k_w) x (c_in)(k_h)(k_w) or
+        # {(c_in)(k_h)(k_w) + 1} x {(c_in)(k_h)(k_w) + 1}
         A = torch.einsum('ik,jk->ij', m, m).div(n)
         self._A = A
 
     def update_in_backward(self, grad_output):
-        n, c, h, w = grad_output.shape  # n x c x h x w
-        m = grad_output.transpose(0, 1).reshape(c, -1)  # c x nhw
+        n, c, h, w = grad_output.shape  # n x c_out x h_out x w_out
+        m = grad_output.transpose(0, 1).reshape(c, -1)  # c_out x n(h_out)(w_out)
 
-        G = torch.einsum('ik,jk->ij', m, m).div(n*h*w)
+        G = torch.einsum('ik,jk->ij', m, m).div(n*h*w)  # c_out x c_out
         self._G = G
 
     def precondition_grad(self, params):
@@ -99,3 +107,17 @@ class KronFisherConv2d(KronCurvature):
                 torch.randn_like(m)).mm(A_ic))
             params[0].data = param.reshape(oc, ic, h, w)
 
+    def _get_shape(self):
+        linear = self._module
+        w = getattr(linear, 'weight')
+        c_out, c_in, k_h, k_w = w.shape
+
+        G_shape = (c_out, c_out)
+
+        dim = c_in * k_h * k_w
+        if self.bias:
+            A_shape = (dim + 1, dim + 1)
+        else:
+            A_shape = (dim, dim)
+
+        return A_shape, G_shape

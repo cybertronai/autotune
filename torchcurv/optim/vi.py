@@ -12,7 +12,8 @@ class VIOptimizer(SecondOrderOptimizer):
     def __init__(self, model, dataset_size, curv_type='Fisher', curv_shapes=None,
                  lr=0.01, momentum=0, momentum_type='preconditioned', adjust_momentum=False,
                  grad_ema_decay=1, grad_ema_type='raw', weight_decay=0,
-                 num_mc_samples=10, test_num_mc_samples=10, kl_weighting=1, prior_variance=1,
+                 num_mc_samples=10, test_num_mc_samples=10, kl_weighting=1,
+                 prior_variance=1, init_variance=None,
                  seed=1, **curv_kwargs):
 
         l2_reg = kl_weighting / dataset_size / prior_variance if prior_variance != 0 else 0
@@ -26,12 +27,18 @@ class VIOptimizer(SecondOrderOptimizer):
         self.defaults['test_num_mc_samples'] = test_num_mc_samples
         self.defaults['std_scale'] = math.sqrt(kl_weighting / dataset_size)
         self.defaults['prior_variance'] = prior_variance
+        self.defaults['init_variance'] = init_variance
         random.seed(seed)
         self.defaults['seed_base'] = random.random()
 
         for group in self.param_groups:
             group['mean'] = [p.data.detach().clone() for p in group['params']]
             self.init_buffer(group['mean'])
+
+            if init_variance is not None:
+                curv = group['curv']
+                curv.element_wise_init(init_variance)
+                curv.step(update_std=True)
 
     def zero_grad(self):
         r"""Clears the gradients of all optimized :class:`torch.Tensor` s."""
@@ -79,7 +86,7 @@ class VIOptimizer(SecondOrderOptimizer):
             return loss, output
         """
 
-        m = self.defaults['num_mc_samples'] if self.optim_state['step'] > 0 else 1
+        m = self.defaults['num_mc_samples']
         n = self.defaults['acc_steps']
 
         acc_loss = TensorAccumulator()
