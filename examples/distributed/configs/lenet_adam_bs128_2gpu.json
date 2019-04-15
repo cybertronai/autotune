@@ -1,0 +1,22 @@
+{
+    "dataset": "CIFAR-10",
+    "epochs": 15,
+    "batch_size": 64,
+    "val_batch_size": 128,
+    "random_crop": false,
+    "random_horizontal_flip": false,
+    "normalizing_data": true,
+    "arch_file": "models/lenet.py",
+    "arch_name": "LeNet5",
+    "optim_name": "Adam",
+    "optim_args": {
+        "betas": [0.9, 0.999],
+        "weight_decay": 0.01
+    },
+    "lr": 1e-3,
+    "scheduler_name": "ExponentialLR",
+    "scheduler_args": {
+        "gamma": 0.9
+    },
+    "no_cuda": false
+}
