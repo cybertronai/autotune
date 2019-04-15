@@ -9,7 +9,7 @@ import torch.nn.functional as F
 from torch.nn.utils import parameters_to_vector
 from torchvision import datasets, transforms, models
 import torchcurv
-from torchcurv.optim import DistributedSecondOrderOptimizer, DistributedVIOptimizer
+from torchcurv.optim import DistributedFirstOrderOptimizer, DistributedSecondOrderOptimizer, DistributedVIOptimizer
 from torchcurv.utils import Logger
 
 from mpi4py import MPI
@@ -252,6 +252,7 @@ def main():
     else:
         optim_class = getattr(torch.optim, args.optim_name)
         optimizer = optim_class(model.parameters(), **optim_kwargs)
+        optimizer = DistributedFirstOrderOptimizer(optimizer, model, dist)
 
     # Setup lr scheduler
     if args.scheduler_name is None:
