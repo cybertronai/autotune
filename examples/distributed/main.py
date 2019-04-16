@@ -323,8 +323,10 @@ def main():
         print('val data size: {}'.format(len(val_loader.dataset)))
 
         print('MPI.COMM_WORLD size: {}'.format(size))
-        print('global mini-batch size: {}'.format(mc_group_size * args.batch_size))
-        print('steps/epoch: {}'.format(math.ceil(len(train_loader.dataset) / mc_group_size / args.batch_size)))
+        acc_steps = getattr(optimizer, 'acc_steps', 1)
+        global_batch_size = mc_group_size * args.batch_size * acc_steps
+        print('global mini-batch size: {}'.format(global_batch_size))
+        print('steps/epoch: {}'.format(math.ceil(len(train_loader.dataset) / global_batch_size)))
 
         num_mc_samples = optim_kwargs.get('num_mc_samples', None)
         if num_mc_samples is not None:
