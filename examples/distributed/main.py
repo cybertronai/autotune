@@ -3,6 +3,7 @@ import argparse
 from importlib import import_module
 import shutil
 import json
+import math
 
 import torch
 import torch.nn as nn
@@ -317,8 +318,13 @@ def main():
 
         # All config
         print('===========================')
+        print('dataset: {}'.format(vars(args)['dataset']))
+        print('train data size: {}'.format(len(train_loader.dataset)))
+        print('val data size: {}'.format(len(val_loader.dataset)))
+
         print('MPI.COMM_WORLD size: {}'.format(size))
         print('global mini-batch size: {}'.format(mc_group_size * args.batch_size))
+        print('steps/epoch: {}'.format(math.ceil(len(train_loader.dataset) / mc_group_size / args.batch_size)))
 
         num_mc_samples = optim_kwargs.get('num_mc_samples', None)
         if num_mc_samples is not None:
@@ -327,15 +333,12 @@ def main():
 
         if hasattr(optimizer, 'indices'):
             print('layer assignment: {}'.format(optimizer.indices))
+
         print('---------------------------')
+
         for key, val in vars(args).items():
             if key == 'dataset':
-                print('{}: {}'.format(key, val))
-                print('train data size: {} ({} steps/epoch)'.format(
-                    len(train_loader.dataset),
-                    len(train_loader.dataset) / mc_group_size / args.batch_size,
-                ))
-                print('val data size: {}'.format(len(val_loader.dataset)))
+                continue
             else:
                 print('{}: {}'.format(key, val))
         print('===========================')
