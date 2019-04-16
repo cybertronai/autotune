@@ -110,6 +110,9 @@ class MomentumCorrectionLR(object):
         super(MomentumCorrectionLR, self).__setattr__(
             'scheduler', scheduler)
 
+        for group in self.optimizer.param_groups:
+            group['init_momentum'] = group['momentum']
+
     def step(self, count=None):
         for group in self.optimizer.param_groups:
             group['lr_pre'] = group['lr']
@@ -118,7 +121,7 @@ class MomentumCorrectionLR(object):
 
         for group in self.optimizer.param_groups:
             lr, lr_pre = group['lr'], group['lr_pre']
-            m = group.get('momentum', 0)
+            m = group.get('init_momentum', 0)
             group['momentum'] = m * lr / lr_pre
 
     def __getattr__(self, item):
