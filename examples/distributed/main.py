@@ -343,6 +343,8 @@ def main():
         shutil.copy(os.path.realpath(__file__), args.out)
         if args.config is not None:
             shutil.copy(args.config, args.out)
+        if args.arch_file is not None:
+            shutil.copy(args.arch_file, args.out)
 
         # Setup logger
         logger = Logger(args.out, args.log_file_name)
