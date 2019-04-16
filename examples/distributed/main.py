@@ -331,7 +331,10 @@ def main():
         for key, val in vars(args).items():
             if key == 'dataset':
                 print('{}: {}'.format(key, val))
-                print('train data size: {}'.format(len(train_loader.dataset)))
+                print('train data size: {} ({} steps/epoch)'.format(
+                    len(train_loader.dataset),
+                    len(train_loader.dataset) / mc_group_size / args.batch_size,
+                ))
                 print('val data size: {}'.format(len(val_loader.dataset)))
             else:
                 print('{}: {}'.format(key, val))
