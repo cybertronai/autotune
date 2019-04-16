@@ -121,6 +121,8 @@ class MomentumCorrectionLR(object):
 
         for group in self.optimizer.param_groups:
             lr, lr_pre = group['lr'], group['lr_pre']
+            if lr == lr_pre:
+                continue
             m = group.get('init_momentum', 0)
             group['momentum'] = m * lr / lr_pre
 
