@@ -87,7 +87,8 @@ class Curvature(object):
         assert self._module == module
 
         index = 1 if self.bias else 0
-        grad_input = grad_input[index].detach()
+
+        grad_input = None if grad_input[index] is None else grad_input[index].detach()
         grad_output = grad_output[0]
 
         setattr(module, 'grad_input', grad_input)
