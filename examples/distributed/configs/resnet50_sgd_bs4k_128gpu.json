@@ -25,6 +25,7 @@
     "milestones": [30, 60, 80],
     "gamma": 0.1
   },
+  "warmup_epochs": 5,
   "warmup_scheduler_name": "GradualWarmupIterLR",
   "warmup_scheduler_args": {
     "initial_lr": 0.0125,

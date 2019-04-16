@@ -36,7 +36,7 @@ def main():
     parser.add_argument('--val_root', type=str, default=None,
                         help='root of validate dataset')
     parser.add_argument('--epochs', type=int, default=10,
-                        help='number of epochs to train)')
+                        help='number of epochs to train')
     parser.add_argument('--batch_size', type=int, default=128,
                         help='input batch size for training')
     parser.add_argument('--val_batch_size', type=int, default=128,
@@ -66,6 +66,8 @@ def main():
                         help='name of the learning rate scheduler')
     parser.add_argument('--scheduler_args', type=json.loads, default=None,
                         help='[JSON] arguments for the scheduler')
+    parser.add_argument('--warmup_epochs', type=int, default=5,
+                        help='number of epochs for warmup lr')
     parser.add_argument('--warmup_scheduler_name', type=str, default=None,
                         help='name of the learning rate scheduler')
     parser.add_argument('--warmup_scheduler_args', type=json.loads, default=None,
@@ -293,9 +295,9 @@ def main():
         return _scheduler
 
     if args.scheduler_name is None:
-        scheduler = None
+        main_scheduler = None
     else:
-        scheduler = get_scheduler(args.scheduler_name, args.scheduler_args)
+        main_scheduler = get_scheduler(args.scheduler_name, args.scheduler_args)
 
     if args.warmup_scheduler_name is None:
         warmup_scheduler = None
@@ -305,16 +307,15 @@ def main():
     logger = None
     start_epoch = 1
 
+    # Load checkpoint
+    if args.resume is not None:
+        print('==> Resuming from checkpoint..')
+        assert os.path.exists(args.resume), 'Error: no checkpoint file found'
+        checkpoint = torch.load(args.resume)
+        model.load_state_dict(checkpoint['model'])
+        start_epoch = checkpoint['epoch']
+
     if rank == 0:
-        # Load checkpoint
-        if args.resume is not None:
-            print('==> Resuming from checkpoint..')
-            assert os.path.exists(args.resume), 'Error: no checkpoint file found'
-            checkpoint = torch.load(args.resume)
-            model.load_state_dict(checkpoint['model'])
-            start_epoch = checkpoint['epoch']
-        else:
-            start_epoch = 1
 
         # All config
         print('===========================')
@@ -361,9 +362,11 @@ def main():
     # Run training
     for epoch in range(start_epoch, args.epochs + 1):
 
+        scheduler = main_scheduler if epoch > args.warmup_epochs else warmup_scheduler
+
         # train
-        accuracy, loss = train(rank, model, device, train_loader, optimizer, scheduler, warmup_scheduler,
-                               epoch, args, master_mc_group, mc_group_rank, data_group, logger)
+        accuracy, loss = train(rank, epoch, model, device, train_loader, optimizer, scheduler,
+                               args, master_mc_group, mc_group_rank, data_group, logger)
         # val
         val_accuracy, val_loss = validate(rank, model, val_loader, device, optimizer)
 
@@ -373,7 +376,9 @@ def main():
             log = {'epoch': epoch, 'iteration': iteration,
                    'accuracy': accuracy, 'loss': loss,
                    'val_accuracy': val_accuracy, 'val_loss': val_loss,
-                   'lr': optimizer.param_groups[0]['lr']}
+                   'lr': optimizer.param_groups[0]['lr'],
+                   'momentum': optimizer.param_groups[0]['momentum'],
+                   }
             logger.write(log)
 
             # save checkpoint
@@ -387,8 +392,8 @@ def main():
                 torch.save(data, path)
 
 
-def train(rank, model, device, train_loader, optimizer, scheduler, warmup_scheduler,
-          epoch, args, master_mc_group, mc_group_rank=0, data_group=None, logger=None):
+def train(rank, epoch, model, device, train_loader, optimizer, scheduler,
+          args, master_mc_group, mc_group_rank=0, data_group=None, logger=None):
 
     def scheduler_type(_scheduler):
         if _scheduler is None:
@@ -397,9 +402,6 @@ def train(rank, model, device, train_loader, optimizer, scheduler, warmup_schedu
 
     if scheduler_type(scheduler) == 'epoch':
         scheduler.step(epoch - 1)
-
-    if scheduler_type(warmup_scheduler) == 'epoch':
-        warmup_scheduler.step(epoch - 1)
 
     model.train()
 
@@ -415,9 +417,6 @@ def train(rank, model, device, train_loader, optimizer, scheduler, warmup_schedu
 
         if scheduler_type(scheduler) == 'iter':
             scheduler.step()
-
-        if scheduler_type(warmup_scheduler) == 'iter':
-            warmup_scheduler.step()
 
         for i, param_group in enumerate(optimizer.param_groups):
             p = parameters_to_vector(param_group['params'])

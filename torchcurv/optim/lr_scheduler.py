@@ -114,17 +114,17 @@ class MomentumCorrectionLR(object):
             group['init_momentum'] = group['momentum']
 
     def step(self, count=None):
-        for group in self.optimizer.param_groups:
-            group['lr_pre'] = group['lr']
-
         self.scheduler.step(count)
 
         for group in self.optimizer.param_groups:
-            lr, lr_pre = group['lr'], group['lr_pre']
-            if lr == lr_pre:
-                continue
-            m = group.get('init_momentum', 0)
-            group['momentum'] = m * lr / lr_pre
+            lr = group['lr']
+            lr_pre = group.get('lr_pre', None)
+
+            if lr_pre is not None:
+                m = group.get('init_momentum', 0)
+                group['momentum'] = m * lr / lr_pre
+
+            group['lr_pre'] = group['lr']
 
     def __getattr__(self, item):
         return getattr(self.scheduler, item)
