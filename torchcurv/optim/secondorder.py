@@ -13,7 +13,7 @@ from torchcurv.utils.chainer_communicators import _utility
 class SecondOrderOptimizer(Optimizer):
 
     def __init__(self, model, curv_type, curv_shapes,
-                 lr=0.01, momentum=0, momentum_type='preconditioned', adjust_momentum=False,
+                 lr=0.01, momentum=0, momentum_type='preconditioned',
                  grad_ema_decay=1, grad_ema_type='raw', l2_reg=0, weight_decay=0,
                  normalizing_weights=False, weight_scale='auto',
                  acc_steps=1, **curv_kwargs):
@@ -36,8 +36,7 @@ class SecondOrderOptimizer(Optimizer):
                 "Invalid cov_ema_decay value: {}".format(cov_ema_decay))
         """
         self.model = model
-        defaults = {'lr': lr, 'lr_pre': lr,
-                    'momentum': momentum, 'momentum_type': momentum_type, 'adjust_momentum': adjust_momentum,
+        defaults = {'lr': lr, 'momentum': momentum, 'momentum_type': momentum_type,
                     'grad_ema_decay': grad_ema_decay, 'grad_ema_type': grad_ema_type,
                     'l2_reg': l2_reg, 'weight_decay': weight_decay,
                     'normalizing_weights': normalizing_weights, 'weight_scale': weight_scale,
@@ -216,11 +215,7 @@ class SecondOrderOptimizer(Optimizer):
                 grad.add_(group['weight_decay'], p.data)
 
         def apply_momentum(p, grad):
-            if group['adjust_momentum']:
-                lr, lr_pre, m = group['lr'], group['lr_pre'], group['momentum']
-                momentum = m/lr_pre*lr
-            else:
-                momentum = group['momentum']
+            momentum = group['momentum']
 
             if momentum != 0:
                 buf = state[p]['momentum_buffer']
