@@ -261,7 +261,7 @@ def main():
         else:
             if args.non_wd_for_bn:
                 group, group_non_wd = {'params': []}, {'params': [], 'non_wd': True}
-                for m in model.modules():
+                for m in model.children():
                     if isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
                         group_non_wd['params'].extend(m.parameters())
                     else:
