@@ -3,6 +3,7 @@ import inspect
 import numpy as np
 
 import torch
+import torch.nn as nn
 from torch.optim import Optimizer
 import torchcurv
 from torchcurv.utils import TensorAccumulator
@@ -16,7 +17,7 @@ class SecondOrderOptimizer(Optimizer):
                  lr=0.01, momentum=0, momentum_type='preconditioned',
                  grad_ema_decay=1, grad_ema_type='raw', l2_reg=0, weight_decay=0,
                  normalizing_weights=False, weight_scale='auto',
-                 acc_steps=1, **curv_kwargs):
+                 acc_steps=1, non_reg_for_bn=False, **curv_kwargs):
 
         # TODO implement error checker: hoge(optim_kwargs)
         """
@@ -87,6 +88,11 @@ class SecondOrderOptimizer(Optimizer):
 
             self.add_param_group(group)
             self.init_buffer(params)
+
+            if non_reg_for_bn and \
+                    isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
+                group['l2_reg'] = 0
+                group['weight_decay'] = 0
 
     def init_buffer(self, params):
         for p in params:
