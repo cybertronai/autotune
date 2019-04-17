@@ -466,11 +466,11 @@ def train(rank, epoch, model, device, train_loader, optimizer, scheduler,
             if logger is not None and batch_idx % args.log_interval == 0:
                 accuracy = 100. * total_correct / total_data_size
                 elapsed_time = logger.elapsed_time
-                print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}, '
-                      'Accuracy: {:.0f}/{} ({:.2f}%), '
-                      'Elapsed Time: {:.1f}s'.format(
+                print('epoch: {} [{}/{} ({:.0f}%)]\tloss: {:.6f}, '
+                      'accuracy: {:.0f}/{} ({:.2f}%), '
+                      'elapsed: {:.1f}s, iters/sec: {:.2f}'.format(
                         epoch, total_data_size, epoch_size, 100. * (batch_idx + 1) / num_iters_in_epoch,
-                        loss, total_correct, total_data_size, accuracy, elapsed_time))
+                        loss, total_correct, total_data_size, accuracy, elapsed_time, iteration/elapsed_time))
 
                 lr = optimizer.param_groups[0]['lr']
                 m = optimizer.param_groups[0]['momentum']
@@ -519,7 +519,7 @@ def validate(rank, model, val_loader, device, optimizer):
     val_accuracy = 100. * correct.item() / len(val_loader.dataset)
 
     if rank == 0:
-        print('\nEval: Average loss: {:.4f}, Accuracy: {:.0f}/{} ({:.2f}%)\n'.format(
+        print('\nEval: average loss: {:.4f}, accuracy: {:.0f}/{} ({:.2f}%)\n'.format(
             val_loss, correct, len(val_loader.dataset), val_accuracy))
 
     return val_accuracy, val_loss
