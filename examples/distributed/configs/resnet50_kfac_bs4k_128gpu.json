@@ -3,10 +3,15 @@
   "epochs": 36,
   "batch_size": 32,
   "val_batch_size": 32,
-  "random_crop": true,
+  "random_resized_crop": true,
   "random_horizontal_flip": true,
   "normalizing_data": true,
+  "arch_file": "models/resnet_b.py",
   "arch_name": "resnet50",
+  "arch_args": {
+    "zero_init_residual": true,
+    "norm_stat_momentum": 0.9
+  },
   "optim_name": "DistributedSecondOrderOptimizer",
   "optim_args": {
     "curv_type": "Fisher",
@@ -16,9 +21,9 @@
       "BatchNorm1d": "Diag",
       "BatchNorm2d": "Diag"
     },
+    "lr": 8.18e-3,
     "momentum": 0.997,
     "momentum_type": "preconditioned",
-    "adjust_momentum": true,
     "normalizing_weights": true,
     "acc_steps": 1
   },
@@ -27,7 +32,7 @@
     "ema_decay": 1,
     "pi_type": "tracenorm"
   },
-  "lr": 8.18e-3,
+  "momentum_correction": true,
   "scheduler_name": "PolynomialDecayIterLR",
   "scheduler_args": {
     "start_iter": 313,

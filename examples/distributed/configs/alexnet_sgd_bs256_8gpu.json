@@ -1,0 +1,20 @@
+{
+  "dataset": "ImageNet",
+  "epochs": 90,
+  "batch_size": 32,
+  "val_batch_size": 32,
+  "random_crop": true,
+  "random_horizontal_flip": true,
+  "normalizing_data": true,
+  "arch_name": "alexnet",
+  "optim_name": "SGD",
+  "optim_args": {
+    "momentum": 0.9,
+    "weight_decay": 1e-5
+  },
+  "lr": 1e-3,
+  "scheduler_name": "ExponentialLR",
+  "scheduler_args": {
+    "gamma": 0.9
+  }
+}

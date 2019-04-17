@@ -3,13 +3,16 @@ import argparse
 from importlib import import_module
 import shutil
 import json
+import math
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils import parameters_to_vector
 from torchvision import datasets, transforms, models
 import torchcurv
 from torchcurv.optim import DistributedFirstOrderOptimizer, DistributedSecondOrderOptimizer, DistributedVIOptimizer
+from torchcurv.optim.lr_scheduler import MomentumCorrectionLR
 from torchcurv.utils import Logger
 
 from mpi4py import MPI
@@ -33,7 +36,7 @@ def main():
     parser.add_argument('--val_root', type=str, default=None,
                         help='root of validate dataset')
     parser.add_argument('--epochs', type=int, default=10,
-                        help='number of epochs to train)')
+                        help='number of epochs to train')
     parser.add_argument('--batch_size', type=int, default=128,
                         help='input batch size for training')
     parser.add_argument('--val_batch_size', type=int, default=128,
@@ -59,12 +62,20 @@ def main():
                         help='[JSON] arguments for the optimizer')
     parser.add_argument('--curv_args', type=json.loads, default=None,
                         help='[JSON] arguments for the curvature')
-    parser.add_argument('--lr', type=float, default=0.01,
-                        help='initial learning rate')
     parser.add_argument('--scheduler_name', type=str, default=None,
                         help='name of the learning rate scheduler')
     parser.add_argument('--scheduler_args', type=json.loads, default=None,
                         help='[JSON] arguments for the scheduler')
+    parser.add_argument('--warmup_epochs', type=int, default=5,
+                        help='number of epochs for warmup lr')
+    parser.add_argument('--warmup_scheduler_name', type=str, default=None,
+                        help='name of the learning rate scheduler')
+    parser.add_argument('--warmup_scheduler_args', type=json.loads, default=None,
+                        help='[JSON] arguments for the wamup scheduler')
+    parser.add_argument('--momentum_correction', action='store_true',
+                        help='if True, momentum/LR ratio is kept to be constant')
+    parser.add_argument('--non_wd_for_bn', action='store_true',
+                        help='if True, weight decay is not applied for BatchNorm')
     # Options
     parser.add_argument('--download', action='store_true', default=False,
                         help='if True, downloads the dataset (CIFAR-10 or 100) from the internet')
@@ -239,49 +250,84 @@ def main():
 
     # Setup optimizer
     optim_kwargs = {} if args.optim_args is None else args.optim_args
-    optim_kwargs['lr'] = args.lr
 
     # Setup optimizer
-    if args.optim_name == DistributedSecondOrderOptimizer.__name__:
-        optimizer = DistributedSecondOrderOptimizer(model, **optim_kwargs, **args.curv_args)
-    elif args.optim_name == DistributedVIOptimizer.__name__:
+    if args.optim_name == DistributedVIOptimizer.__name__:
         optimizer = DistributedVIOptimizer(model,
                                            mc_sample_group_id=mc_group_id,
                                            dataset_size=len(train_loader.dataset),
                                            **optim_kwargs, **args.curv_args)
     else:
-        optim_class = getattr(torch.optim, args.optim_name)
-        optimizer = optim_class(model.parameters(), **optim_kwargs)
-        optimizer = DistributedFirstOrderOptimizer(optimizer, model, dist)
+        assert args.num_mc_sample_groups == 1, 'You cannot use MC sample groups with non-VI optimizers.'
+        if args.optim_name == DistributedSecondOrderOptimizer.__name__:
+            optimizer = DistributedSecondOrderOptimizer(model, **optim_kwargs, **args.curv_args)
+        else:
+            if args.non_wd_for_bn:
+                group, group_non_wd = {'params': []}, {'params': [], 'non_wd': True}
+                for m in model.children():
+                    if isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
+                        group_non_wd['params'].extend(m.parameters())
+                    else:
+                        group['params'].extend(m.parameters())
+
+                params = [group, group_non_wd]
+            else:
+                params = model.parameters()
+
+            optim_class = getattr(torch.optim, args.optim_name)
+            optimizer = optim_class(params, **optim_kwargs)
+
+            for group in optimizer.param_groups:
+                if group.get('non_wd', False):
+                    group['weight_decay'] = 0
+
+            optimizer = DistributedFirstOrderOptimizer(optimizer, model, dist)
 
     # Setup lr scheduler
-    if args.scheduler_name is None:
-        scheduler = None
-    else:
-        scheduler_class = getattr(torchcurv.optim.lr_scheduler, args.scheduler_name, None)
+    def get_scheduler(name, kwargs):
+        scheduler_class = getattr(torchcurv.optim.lr_scheduler, name, None)
         if scheduler_class is None:
-            scheduler_class = getattr(torch.optim.lr_scheduler, args.scheduler_name)
-        scheduler_kwargs = {} if args.scheduler_args is None else args.scheduler_args
-        scheduler = scheduler_class(optimizer, **scheduler_kwargs)
+            scheduler_class = getattr(torch.optim.lr_scheduler, name)
+        scheduler_kwargs = {} if kwargs is None else kwargs
+        _scheduler = scheduler_class(optimizer, **scheduler_kwargs)
+        if args.momentum_correction:
+            _scheduler = MomentumCorrectionLR(_scheduler)
+        return _scheduler
+
+    if args.scheduler_name is None:
+        main_scheduler = None
+    else:
+        main_scheduler = get_scheduler(args.scheduler_name, args.scheduler_args)
+
+    if args.warmup_scheduler_name is None:
+        warmup_scheduler = None
+    else:
+        warmup_scheduler = get_scheduler(args.warmup_scheduler_name, args.warmup_scheduler_args)
 
     logger = None
     start_epoch = 1
 
+    # Load checkpoint
+    if args.resume is not None:
+        print('==> Resuming from checkpoint..')
+        assert os.path.exists(args.resume), 'Error: no checkpoint file found'
+        checkpoint = torch.load(args.resume)
+        model.load_state_dict(checkpoint['model'])
+        start_epoch = checkpoint['epoch']
+
     if rank == 0:
-        # Load checkpoint
-        if args.resume is not None:
-            print('==> Resuming from checkpoint..')
-            assert os.path.exists(args.resume), 'Error: no checkpoint file found'
-            checkpoint = torch.load(args.resume)
-            model.load_state_dict(checkpoint['model'])
-            start_epoch = checkpoint['epoch']
-        else:
-            start_epoch = 1
 
         # All config
         print('===========================')
+        print('dataset: {}'.format(vars(args)['dataset']))
+        print('train data size: {}'.format(len(train_loader.dataset)))
+        print('val data size: {}'.format(len(val_loader.dataset)))
+
         print('MPI.COMM_WORLD size: {}'.format(size))
-        print('global mini-batch size: {}'.format(mc_group_size * args.batch_size))
+        acc_steps = getattr(optimizer, 'acc_steps', 1)
+        global_batch_size = mc_group_size * args.batch_size * acc_steps
+        print('global mini-batch size: {}'.format(global_batch_size))
+        print('steps/epoch: {}'.format(math.ceil(len(train_loader.dataset) / global_batch_size)))
 
         num_mc_samples = optim_kwargs.get('num_mc_samples', None)
         if num_mc_samples is not None:
@@ -290,20 +336,24 @@ def main():
 
         if hasattr(optimizer, 'indices'):
             print('layer assignment: {}'.format(optimizer.indices))
+
         print('---------------------------')
+
         for key, val in vars(args).items():
             if key == 'dataset':
-                print('{}: {}'.format(key, val))
-                print('train data size: {}'.format(len(train_loader.dataset)))
-                print('val data size: {}'.format(len(val_loader.dataset)))
+                continue
             else:
                 print('{}: {}'.format(key, val))
         print('===========================')
 
-        # Copy this file to args.out
+        # Copy this file & config to args.out
         if not os.path.isdir(args.out):
             os.makedirs(args.out)
         shutil.copy(os.path.realpath(__file__), args.out)
+        if args.config is not None:
+            shutil.copy(args.config, args.out)
+        if args.arch_file is not None:
+            shutil.copy(args.arch_file, args.out)
 
         # Setup logger
         logger = Logger(args.out, args.log_file_name)
@@ -312,9 +362,11 @@ def main():
     # Run training
     for epoch in range(start_epoch, args.epochs + 1):
 
+        scheduler = main_scheduler if epoch > args.warmup_epochs else warmup_scheduler
+
         # train
-        accuracy, loss = train(rank, model, device, train_loader, optimizer, scheduler, epoch, args,
-                               master_mc_group, mc_group_rank, data_group, logger)
+        accuracy, loss = train(rank, epoch, model, device, train_loader, optimizer, scheduler,
+                               args, master_mc_group, mc_group_rank, data_group, logger)
         # val
         val_accuracy, val_loss = validate(rank, model, val_loader, device, optimizer)
 
@@ -324,7 +376,9 @@ def main():
             log = {'epoch': epoch, 'iteration': iteration,
                    'accuracy': accuracy, 'loss': loss,
                    'val_accuracy': val_accuracy, 'val_loss': val_loss,
-                   'lr': optimizer.param_groups[0]['lr']}
+                   'lr': optimizer.param_groups[0]['lr'],
+                   'momentum': optimizer.param_groups[0]['momentum'],
+                   }
             logger.write(log)
 
             # save checkpoint
@@ -338,19 +392,15 @@ def main():
                 torch.save(data, path)
 
 
-def train(rank, model, device, train_loader, optimizer, scheduler, epoch, args,
-          master_mc_group, mc_group_rank=0, data_group=None, logger=None):
+def train(rank, epoch, model, device, train_loader, optimizer, scheduler,
+          args, master_mc_group, mc_group_rank=0, data_group=None, logger=None):
 
-    def scheduler_type():
-        if scheduler is None:
+    def scheduler_type(_scheduler):
+        if _scheduler is None:
             return 'none'
+        return getattr(_scheduler, 'scheduler_type', 'epoch')
 
-        if isinstance(scheduler, torchcurv.optim.lr_scheduler.IterLRScheduler):
-            return 'iter'
-        else:
-            return 'epoch'
-
-    if scheduler_type() == 'epoch':
+    if scheduler_type(scheduler) == 'epoch':
         scheduler.step(epoch - 1)
 
     model.train()
@@ -365,7 +415,7 @@ def train(rank, model, device, train_loader, optimizer, scheduler, epoch, args,
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
 
-        if scheduler_type() == 'iter':
+        if scheduler_type(scheduler) == 'iter':
             scheduler.step()
 
         for i, param_group in enumerate(optimizer.param_groups):
@@ -423,8 +473,9 @@ def train(rank, model, device, train_loader, optimizer, scheduler, epoch, args,
                         loss, total_correct, total_data_size, accuracy, elapsed_time))
 
                 lr = optimizer.param_groups[0]['lr']
+                m = optimizer.param_groups[0]['momentum']
                 log = {'epoch': epoch, 'iteration': iteration, 'elapsed_time': elapsed_time,
-                       'accuracy': accuracy, 'loss': loss, 'lr': lr}
+                       'accuracy': accuracy, 'loss': loss, 'lr': lr, 'momentum': m}
 
                 for i, param_group in enumerate(optimizer.param_groups):
                     p = parameters_to_vector(param_group['params'])

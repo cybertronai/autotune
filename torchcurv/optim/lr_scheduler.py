@@ -1,7 +1,7 @@
 from torch.optim import Optimizer
 
 
-class IterLRScheduler(object):
+class _IterLRScheduler(object):
     def __init__(self, optimizer, last_iter=-1):
         if not isinstance(optimizer, Optimizer):
             raise TypeError('{} is not an Optimizer'.format(
@@ -18,6 +18,7 @@ class IterLRScheduler(object):
         self.base_lrs = list(map(lambda group: group['initial_lr'], optimizer.param_groups))
         self.step(last_iter + 1)
         self.last_iter = last_iter
+        self.scheduler_type = 'iter'
 
     def state_dict(self):
         """Returns the state of the scheduler as a :class:`dict`.
@@ -45,7 +46,7 @@ class IterLRScheduler(object):
             param_group['lr'] = lr
 
 
-class PolynomialDecayIterLR(IterLRScheduler):
+class PolynomialDecayIterLR(_IterLRScheduler):
     """Set the learning rate of each parameter group to the initial lr decayed
     by gamma every iter. When last_iter=-1, sets initial lr as lr.
     Args:
@@ -79,7 +80,7 @@ class PolynomialDecayIterLR(IterLRScheduler):
                 for base_lr in self.base_lrs]
 
 
-class GradualWarmupIterLR(IterLRScheduler):
+class GradualWarmupIterLR(_IterLRScheduler):
     """Set the learning rate of each parameter group to the initial lr decayed
     by gamma every iter. When last_iter=-1, sets initial lr as lr.
     Args:
@@ -101,3 +102,32 @@ class GradualWarmupIterLR(IterLRScheduler):
             alpha = self.last_iter / self.max_count
             return [self.initial_lr*(1-alpha) + base_lr*alpha
                     for base_lr in self.base_lrs]
+
+
+class MomentumCorrectionLR(object):
+
+    def __init__(self, scheduler):
+        super(MomentumCorrectionLR, self).__setattr__(
+            'scheduler', scheduler)
+
+        for group in self.optimizer.param_groups:
+            group['init_momentum'] = group['momentum']
+
+    def step(self, count=None):
+        self.scheduler.step(count)
+
+        for group in self.optimizer.param_groups:
+            lr = group['lr']
+            lr_pre = group.get('lr_pre', None)
+
+            if lr_pre is not None:
+                m = group.get('init_momentum', 0)
+                group['momentum'] = m * lr / lr_pre
+
+            group['lr_pre'] = group['lr']
+
+    def __getattr__(self, item):
+        return getattr(self.scheduler, item)
+
+    def __setattr__(self, key, value):
+        setattr(self.scheduler, key, value)
