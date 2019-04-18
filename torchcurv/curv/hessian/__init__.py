@@ -4,10 +4,6 @@ from torchcurv import KronCurvature
 
 class KronHessian(KronCurvature):
 
-    def __init__(self, module, ema_decay=1., damping=0, post_curv=None, recursive_approx=False):
-        super(KronHessian, self).__init__(module, ema_decay, damping, post_curv=post_curv)
-        self.recursive_approx = recursive_approx
-
     def update_in_forward(self, input_data):
         raise NotImplementedError
 

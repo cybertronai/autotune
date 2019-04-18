@@ -237,16 +237,12 @@ def main():
 
 def train(model, device, train_loader, optimizer, scheduler, epoch, args, logger):
 
-    def scheduler_type():
-        if scheduler is None:
+    def scheduler_type(_scheduler):
+        if _scheduler is None:
             return 'none'
+        return getattr(_scheduler, 'scheduler_type', 'epoch')
 
-        if isinstance(scheduler, torchcurv.optim.lr_scheduler.IterLRScheduler):
-            return 'iter'
-        else:
-            return 'epoch'
-
-    if scheduler_type() == 'epoch':
+    if scheduler_type(scheduler) == 'epoch':
         scheduler.step(epoch - 1)
 
     model.train()
@@ -261,7 +257,7 @@ def train(model, device, train_loader, optimizer, scheduler, epoch, args, logger
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
 
-        if scheduler_type() == 'iter':
+        if scheduler_type(scheduler) == 'iter':
             scheduler.step()
 
         for i, param_group in enumerate(optimizer.param_groups):
