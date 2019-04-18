@@ -8,7 +8,10 @@ PI_TYPE_TRACENORM = 'tracenorm'
 
 class Curvature(object):
 
-    def __init__(self, module, ema_decay=1., damping=1e-7, post_curv=None):
+    def __init__(self, module, ema_decay=1., damping=1e-7, post_curv=None,
+                 use_max_ema=False, use_sqrt_ema=False,
+                 recursive_approx=False, pi_type=PI_TYPE_TRACENORM):
+
         self._module = module
         self.ema_decay = ema_decay
         self._damping = damping
@@ -17,10 +20,18 @@ class Curvature(object):
         self._data = None
         self._acc_data = None
         self.ema = None
+        self.ema_max = None
         self.inv = None
         self.std = None
 
         self.post_curv = post_curv
+
+        self.use_sqrt_ema = use_sqrt_ema
+        self.use_max_ema = use_max_ema
+
+        self.recursive_approx = recursive_approx
+
+        self.pi_type = pi_type
 
         module.register_forward_hook(self.forward_postprocess)
         module.register_backward_hook(self.backward_postprocess)
@@ -119,15 +130,21 @@ class Curvature(object):
     def update_ema(self):
         data = self.data
         ema = self.ema
-        alpha = self.ema_decay
-        if ema is None or alpha == 1:
+        ema_max = self.ema_max
+        beta = self.ema_decay
+        if ema is None or beta == 1:
             self.ema = [d.clone() for d in data]
+            if self.use_max_ema and ema_max is None:
+                self.ema_max = [e.clone() for e in self.ema]
         else:
-            self.ema = [d.mul(alpha).add(1 - alpha, e)
+            self.ema = [d.mul(beta).add(1 - beta, e)
                         for d, e in zip(data, ema)]
+        if self.use_max_ema:
+            for e, e_max in zip(self.ema, self.ema_max):
+                torch.max(e, e_max, out=e_max)
 
     def update_inv(self):
-        ema = self.ema
+        ema = self.ema if not self.use_max_ema else self.ema_max
         self.inv = [self._inv(e) for e in ema]
 
     def _inv(self, X):
@@ -157,6 +174,9 @@ class DiagCurvature(Curvature):
         raise NotImplementedError
 
     def _inv(self, X):
+        if self.use_sqrt_ema:
+            X = X.sqrt()
+
         X_damp = X.add(X.new_ones(X.shape).mul(self.damping))
 
         return 1 / X_damp
@@ -164,6 +184,7 @@ class DiagCurvature(Curvature):
     def precondition_grad(self, params):
         for p, inv in zip(params, self.inv):
             preconditioned_grad = inv.mul(p.grad)
+
             p.grad.copy_(preconditioned_grad)
 
     def update_std(self):
@@ -177,14 +198,11 @@ class DiagCurvature(Curvature):
 
 class KronCurvature(Curvature):
 
-    def __init__(self, module, ema_decay=1., damping=1e-7,
-                 post_curv=None, pi_type=PI_TYPE_TRACENORM):
-        self.pi_type = pi_type
+    def __init__(self, *args, **kwargs):
+        super(KronCurvature, self).__init__(*args, **kwargs)
+
         self._A = None
         self._G = None
-
-        super(KronCurvature, self).__init__(module, ema_decay=ema_decay, damping=damping,
-                                            post_curv=post_curv)
 
     @property
     def data(self):

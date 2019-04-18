@@ -1,5 +1,7 @@
 from collections import defaultdict
 import inspect
+import math
+
 import numpy as np
 
 import torch
@@ -17,7 +19,7 @@ class SecondOrderOptimizer(Optimizer):
                  lr=0.01, momentum=0, momentum_type='preconditioned',
                  grad_ema_decay=1, grad_ema_type='raw', l2_reg=0, weight_decay=0,
                  normalizing_weights=False, weight_scale='auto',
-                 acc_steps=1, non_reg_for_bn=False, **curv_kwargs):
+                 acc_steps=1, non_reg_for_bn=False, bias_correction=False, **curv_kwargs):
 
         # TODO implement error checker: hoge(optim_kwargs)
         """
@@ -41,7 +43,7 @@ class SecondOrderOptimizer(Optimizer):
                     'grad_ema_decay': grad_ema_decay, 'grad_ema_type': grad_ema_type,
                     'l2_reg': l2_reg, 'weight_decay': weight_decay,
                     'normalizing_weights': normalizing_weights, 'weight_scale': weight_scale,
-                    'acc_steps': acc_steps}
+                    'acc_steps': acc_steps, 'bias_correction': bias_correction}
         defaults.update(curv_kwargs)
         self.defaults = defaults
         self.state = defaultdict(dict)
@@ -53,24 +55,12 @@ class SecondOrderOptimizer(Optimizer):
         self.curv_type = curv_type
         self.curv_shapes = {} if curv_shapes is None else curv_shapes
 
-        def extract_kwargs(func, target):
-            if target is None:
-                return {}
-
-            keys = list(inspect.signature(func).parameters.keys())
-            kwargs = {}
-            for key, val in target.items():
-                if key in keys:
-                    kwargs[key] = val
-            return kwargs
-
         post_curvature = None
         for module in self.train_modules[::-1]:
             params = list(module.parameters())
             curv_class = self.get_curv_class(module)
             if curv_class is not None:
-                kwargs = extract_kwargs(curv_class.__init__, curv_kwargs)
-                curvature = curv_class(module, **kwargs, post_curv=post_curvature)
+                curvature = curv_class(module, **curv_kwargs, post_curv=post_curvature)
                 if post_curvature is not None:
                     setattr(post_curvature, 'pre_curv', curvature)
             else:
@@ -189,6 +179,20 @@ class SecondOrderOptimizer(Optimizer):
     def update(self, group, target='params'):
         params = group[target]
 
+        if group['bias_correction']:
+            curv = group['curv']
+            beta1 = 1 - group['grad_ema_decay']
+            beta2 = 1 - curv.ema_decay
+
+            bias_correction1 = 1 - beta1 ** self.optim_state['step']
+            bias_correction2 = 1 - beta2 ** self.optim_state['step']
+            if getattr(curv, 'use_sqrt_ema', False):
+                bias_correction2 = math.sqrt(bias_correction2)
+
+            step_size = group['lr'] * bias_correction2 / bias_correction1
+        else:
+            step_size = group['lr']
+
         for p in params:
 
             grad = p.grad
@@ -196,7 +200,7 @@ class SecondOrderOptimizer(Optimizer):
             if grad is None:
                 continue
 
-            p.data.add_(-group['lr'], grad)
+            p.data.add_(-step_size, grad)
 
     def update_preprocess(self, group, target='params', grad_type='raw'):
         assert grad_type in ['raw', 'preconditioned'], 'Invalid grad type: {}.'.format(grad_type)
