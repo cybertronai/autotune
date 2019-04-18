@@ -77,7 +77,7 @@ def main():
     parser.add_argument('--non_wd_for_bn', action='store_true',
                         help='if True, weight decay is not applied for BatchNorm')
     parser.add_argument('--lars', action='store_true',
-                        help='if True, LARS is applied for first-order optimzation')
+                        help='if True, LARS is applied for first-order optimizer')
     # Options
     parser.add_argument('--download', action='store_true', default=False,
                         help='if True, downloads the dataset (CIFAR-10 or 100) from the internet')
