@@ -22,9 +22,10 @@
       "BatchNorm1d": "Diag",
       "BatchNorm2d": "Diag"
     },
-    "lr": 1.6,
+    "lr": 8e-3,
     "momentum": 0.9,
     "momentum_type": "raw",
+    "weight_decay": 1e-4,
     "non_reg_for_bn": true
   },
   "curv_args": {
@@ -40,7 +41,7 @@
   "warmup_epochs": 5,
   "warmup_scheduler_name": "GradualWarmupIterLR",
   "warmup_scheduler_args": {
-    "initial_lr": 0.0125,
+    "initial_lr": 6.25e-5,
     "max_count": 1565
   }
 }
