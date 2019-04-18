@@ -4,7 +4,7 @@ from torch.nn.utils import parameters_to_vector, vector_to_parameters
 
 class DistributedFirstOrderOptimizer(Optimizer):
 
-    def __init__(self, optimizer, model, dist):
+    def __init__(self, optimizer, model, dist, lars=False):
         super(DistributedFirstOrderOptimizer, self).__setattr__(
            'actual_optimizer', optimizer
         )
@@ -13,6 +13,9 @@ class DistributedFirstOrderOptimizer(Optimizer):
         )
         super(DistributedFirstOrderOptimizer, self).__setattr__(
             'dist', dist
+        )
+        super(DistributedFirstOrderOptimizer, self).__setattr__(
+            'lars', lars
         )
 
     def step(self, closure=None):
@@ -28,7 +31,21 @@ class DistributedFirstOrderOptimizer(Optimizer):
             # unpack
             vector_to_parameters(packed_tensor.div_(world_size), grads)
 
+        if self.lars:
+            for group in self.param_groups:
+                for p in group['params']:
+                    setattr(p, 'data_pre', p.data)
+
         self.actual_optimizer.step(closure=None)
+
+        if self.lars:
+            for group in self.param_groups:
+                for p in group['params']:
+                    upd = p.data - p.data_pre
+                    upd_norm = upd.norm()
+                    d_norm_pre = p.data_pre.norm()
+                    value = group['lr'] * d_norm_pre / upd_norm
+                    p.data = p.data_pre.add(value, upd)
 
         return loss
 

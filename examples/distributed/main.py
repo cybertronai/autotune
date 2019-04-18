@@ -76,6 +76,8 @@ def main():
                         help='if True, momentum/LR ratio is kept to be constant')
     parser.add_argument('--non_wd_for_bn', action='store_true',
                         help='if True, weight decay is not applied for BatchNorm')
+    parser.add_argument('--lars', action='store_true',
+                        help='if True, LARS is applied for first-order optimzation')
     # Options
     parser.add_argument('--download', action='store_true', default=False,
                         help='if True, downloads the dataset (CIFAR-10 or 100) from the internet')
@@ -281,7 +283,7 @@ def main():
                 if group.get('non_wd', False):
                     group['weight_decay'] = 0
 
-            optimizer = DistributedFirstOrderOptimizer(optimizer, model, dist)
+            optimizer = DistributedFirstOrderOptimizer(optimizer, model, dist, lars=args.lars)
 
     # Setup lr scheduler
     def get_scheduler(name, kwargs):

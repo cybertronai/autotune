@@ -18,7 +18,8 @@ class SecondOrderOptimizer(Optimizer):
                  lr=0.01, momentum=0, momentum_type='preconditioned',
                  grad_ema_decay=1, grad_ema_type='raw', l2_reg=0, weight_decay=0,
                  normalizing_weights=False, weight_scale='auto',
-                 acc_steps=1, non_reg_for_bn=False, bias_correction=False, **curv_kwargs):
+                 acc_steps=1, non_reg_for_bn=False, bias_correction=False,
+                 lars=False, lars_type='preconditioned', **curv_kwargs):
 
         # TODO implement error checker: hoge(optim_kwargs)
         """
@@ -42,7 +43,8 @@ class SecondOrderOptimizer(Optimizer):
                     'grad_ema_decay': grad_ema_decay, 'grad_ema_type': grad_ema_type,
                     'l2_reg': l2_reg, 'weight_decay': weight_decay,
                     'normalizing_weights': normalizing_weights, 'weight_scale': weight_scale,
-                    'acc_steps': acc_steps, 'bias_correction': bias_correction}
+                    'acc_steps': acc_steps, 'bias_correction': bias_correction,
+                    'lars': lars, 'lars_type': lars_type}
         defaults.update(curv_kwargs)
         self.defaults = defaults
         self.state = defaultdict(dict)
@@ -178,20 +180,6 @@ class SecondOrderOptimizer(Optimizer):
     def update(self, group, target='params'):
         params = group[target]
 
-        if group['bias_correction']:
-            curv = group['curv']
-            beta1 = 1 - group['grad_ema_decay']
-            beta2 = 1 - curv.ema_decay
-
-            bias_correction1 = 1 - beta1 ** self.optim_state['step']
-            bias_correction2 = 1 - beta2 ** self.optim_state['step']
-            if getattr(curv, 'use_sqrt_ema', False):
-                bias_correction2 = math.sqrt(bias_correction2)
-
-            step_size = group['lr'] * bias_correction2 / bias_correction1
-        else:
-            step_size = group['lr']
-
         for p in params:
 
             grad = p.grad
@@ -199,7 +187,7 @@ class SecondOrderOptimizer(Optimizer):
             if grad is None:
                 continue
 
-            p.data.add_(-step_size, grad)
+            p.data.add_(-group['lr'], grad)
 
     def update_preprocess(self, group, target='params', grad_type='raw'):
         assert grad_type in ['raw', 'preconditioned'], 'Invalid grad type: {}.'.format(grad_type)
@@ -238,6 +226,23 @@ class SecondOrderOptimizer(Optimizer):
                 buf.mul_(1 - grad_ema_decay).add_(grad.mul(grad_ema_decay))
                 grad.copy_(buf)
 
+        def apply_bias_correction(grad):
+            curv = group['curv']
+            beta1 = 1 - group['grad_ema_decay']
+            beta2 = 1 - curv.ema_decay
+
+            bias_correction1 = 1 - beta1 ** self.optim_state['step']
+            bias_correction2 = 1 - beta2 ** self.optim_state['step']
+            if getattr(curv, 'use_sqrt_ema', False):
+                bias_correction2 = math.sqrt(bias_correction2)
+
+            grad.mul_(bias_correction2 / bias_correction1)
+
+        def apply_lars(p, grad, eps=1e-9):
+            d_norm = p.data.norm()
+            g_norm = grad.norm() + eps
+            grad.mul_(d_norm / g_norm)
+
         for p in params:
 
             grad = p.grad
@@ -256,6 +261,12 @@ class SecondOrderOptimizer(Optimizer):
 
             if group['grad_ema_type'] == grad_type:
                 apply_grad_ema_decay(p, grad)
+
+            if grad_type == 'preconditioned' and group['bias_correction']:
+                apply_bias_correction(grad)
+
+            if group['lars_type'] == grad_type and group['lars']:
+                apply_lars(p, grad)
 
     def update_postprocess(self, group, target='params'):
         params = group[target]
