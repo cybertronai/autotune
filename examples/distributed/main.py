@@ -379,7 +379,7 @@ def main():
                    'accuracy': accuracy, 'loss': loss,
                    'val_accuracy': val_accuracy, 'val_loss': val_loss,
                    'lr': optimizer.param_groups[0]['lr'],
-                   'momentum': optimizer.param_groups[0]['momentum'],
+                   'momentum': optimizer.param_groups[0].get('momentum', 0),
                    }
             logger.write(log)
 
@@ -475,7 +475,7 @@ def train(rank, epoch, model, device, train_loader, optimizer, scheduler,
                         loss, total_correct, total_data_size, accuracy, elapsed_time, iteration/elapsed_time))
 
                 lr = optimizer.param_groups[0]['lr']
-                m = optimizer.param_groups[0]['momentum']
+                m = optimizer.param_groups[0].get('momentum', 0)
                 log = {'epoch': epoch, 'iteration': iteration, 'elapsed_time': elapsed_time,
                        'accuracy': accuracy, 'loss': loss, 'lr': lr, 'momentum': m}
 
