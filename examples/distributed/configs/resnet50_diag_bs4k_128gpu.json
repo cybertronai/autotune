@@ -22,15 +22,15 @@
       "BatchNorm1d": "Diag",
       "BatchNorm2d": "Diag"
     },
-    "lr": 8e-3,
-    "momentum": 0.9,
-    "momentum_type": "raw",
+    "lr": 1.6,
+    "grad_ema_decay": 0.1,
+    "grad_ema_type": "raw",
     "weight_decay": 1e-4,
     "non_reg_for_bn": true
   },
   "curv_args": {
-    "damping": 2.5e-4,
-    "ema_decay": 0.999
+    "damping": 1e-8,
+    "ema_decay": 0.001
   },
   "momentum_correction": true,
   "scheduler_name": "MultiStepLR",
@@ -41,7 +41,7 @@
   "warmup_epochs": 5,
   "warmup_scheduler_name": "GradualWarmupIterLR",
   "warmup_scheduler_args": {
-    "initial_lr": 6.25e-5,
+    "initial_lr": 1.25e-2,
     "max_count": 1565
   }
 }

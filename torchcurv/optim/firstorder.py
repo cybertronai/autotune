@@ -18,7 +18,7 @@ class DistributedFirstOrderOptimizer(Optimizer):
             'lars', lars
         )
 
-    def step(self, closure=None):
+    def step(self, closure=None, eps=1e-9):
         loss = None
         if closure is not None:
             loss = closure()
@@ -44,7 +44,7 @@ class DistributedFirstOrderOptimizer(Optimizer):
                     upd = p.data - p.data_pre
                     upd_norm = upd.norm()
                     d_norm_pre = p.data_pre.norm()
-                    value = group['lr'] * d_norm_pre / upd_norm
+                    value = group['lr'] * d_norm_pre / (upd_norm + eps)
                     p.data = p.data_pre.add(value, upd)
 
         return loss
