@@ -100,7 +100,9 @@ def main():
     # [COMM]
     parser.add_argument('--dist_init_method', type=str,
                         help='torch.distributed init_method')
-    parser.add_argument('--num_mc_sample_groups', type=int, default=1,
+    parser.add_argument('--size_data_group', type=int, default=1,
+                        help='size of the process groups in which input data are shared')
+    parser.add_argument('--num_mc_groups', type=int, default=1,
                         help='number of the process groups in which mc sampled params are shared')
 
     args = parser.parse_args()
@@ -127,26 +129,31 @@ def main():
     dist.init_process_group('nccl', init_method=init_method, world_size=size, rank=rank)
 
     # [COMM] Setup process group for MC sample parallel
-    num_mc_groups = args.num_mc_sample_groups
-    if num_mc_groups > 1:
-        assert size % num_mc_groups == 0
-        mc_group_size = int(size / num_mc_groups)
-        mc_group_rank = rank % mc_group_size
-        mc_group_id = int(rank/mc_group_size)
+    size_data_group = args.size_data_group
+    assert size % size_data_group == 0
+    num_mc_groups = args.num_mc_groups
+    assert size % num_mc_groups == 0
 
-        master_mc_group_ranks = ranks[0:mc_group_size]
-        master_mc_group = dist.new_group(master_mc_group_ranks)
-
-        data_group_ranks = ranks[mc_group_rank:size:mc_group_size]
+    if size_data_group > 1:
+        num_data_group = size / size_data_group
+        data_group_id = rank % num_data_group
+        data_group_ranks = ranks[data_group_id:size:num_data_group]
         data_group = dist.new_group(data_group_ranks)
+
+        master_ranks = ranks[0:num_data_group]
+        master_group = dist.new_group(master_ranks)
     else:
-        mc_group_size = size
-        mc_group_rank = rank
-        mc_group_id = 0
-
-        master_mc_group = dist.new_group(ranks)
-
+        num_data_group = size
+        data_group_id = rank
         data_group = None
+        master_group = dist.new_group(ranks)
+
+    if num_mc_groups > 1:
+        size_mc_group = int(size / num_mc_groups)
+        mc_group_id = int(rank/size_mc_group)
+    else:
+        size_mc_group = size
+        mc_group_id = 0
 
     # Setup data augmentation & data pre processing
     train_transforms, val_transforms = [], []
@@ -212,7 +219,7 @@ def main():
 
     # [COMM] Setup distributed sampler for data parallel & MC sample parallel
     train_sampler = torch.utils.data.distributed.DistributedSampler(
-        train_dataset, num_replicas=mc_group_size, rank=mc_group_rank)
+        train_dataset, num_replicas=num_data_group, rank=data_group_id)
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
         pin_memory=True, sampler=train_sampler, num_workers=args.num_workers)
@@ -256,11 +263,11 @@ def main():
     # Setup optimizer
     if args.optim_name == DistributedVIOptimizer.__name__:
         optimizer = DistributedVIOptimizer(model,
-                                           mc_sample_group_id=mc_group_id,
+                                           mc_group_id=mc_group_id,
                                            dataset_size=len(train_loader.dataset),
                                            **optim_kwargs, **args.curv_args)
     else:
-        assert args.num_mc_sample_groups == 1, 'You cannot use MC sample groups with non-VI optimizers.'
+        assert args.num_mc_groups == 1, 'You cannot use MC sample groups with non-VI optimizers.'
         if args.optim_name == DistributedSecondOrderOptimizer.__name__:
             optimizer = DistributedSecondOrderOptimizer(model, **optim_kwargs, **args.curv_args)
         else:
@@ -326,15 +333,16 @@ def main():
         print('val data size: {}'.format(len(val_loader.dataset)))
 
         print('MPI.COMM_WORLD size: {}'.format(size))
-        acc_steps = getattr(optimizer, 'acc_steps', 1)
-        global_batch_size = mc_group_size * args.batch_size * acc_steps
+        acc_steps = optim_kwargs.get('acc_steps', 1)
+        global_batch_size = num_data_group * args.batch_size * acc_steps
         print('global mini-batch size: {}'.format(global_batch_size))
         print('steps/epoch: {}'.format(math.ceil(len(train_loader.dataset) / global_batch_size)))
 
         num_mc_samples = optim_kwargs.get('num_mc_samples', None)
         if num_mc_samples is not None:
             print('global num MC samples: {}'.format(num_mc_groups * num_mc_samples))
-            print('MC sample group: {} processes/group x {} group'.format(mc_group_size, num_mc_groups))
+            print('MC sample group: {} processes/group x {} group'.format(size_mc_group, num_mc_groups))
+            print('data group: {} processes/group x {} group'.format(size_data_group, num_data_group))
 
         if hasattr(optimizer, 'indices'):
             print('layer assignment: {}'.format(optimizer.indices))
@@ -368,7 +376,7 @@ def main():
 
         # train
         accuracy, loss = train(rank, epoch, model, device, train_loader, optimizer, scheduler,
-                               args, master_mc_group, mc_group_rank, data_group, logger)
+                               args, master_group, data_group_id, data_group, logger)
         # val
         val_accuracy, val_loss = validate(rank, model, val_loader, device, optimizer)
 
@@ -395,7 +403,7 @@ def main():
 
 
 def train(rank, epoch, model, device, train_loader, optimizer, scheduler,
-          args, master_mc_group, mc_group_rank=0, data_group=None, logger=None):
+          args, master_group, data_group_id=0, data_group=None, logger=None):
 
     def scheduler_type(_scheduler):
         if _scheduler is None:
@@ -442,15 +450,15 @@ def train(rank, epoch, model, device, train_loader, optimizer, scheduler,
 
         # [COMM] reduce across the processes in a data group
         if data_group is not None:
-            dist.reduce(output, dst=mc_group_rank, group=data_group)
+            dist.reduce(output, dst=data_group_id, group=data_group)
 
         pred = output.argmax(dim=1, keepdim=True)
         correct = pred.eq(target.view_as(pred)).sum().data
 
         # [COMM] reduce across the processes in the master MC sample group
-        if dist.get_world_size(master_mc_group) > 1:
-            dist.reduce(correct, dst=0, group=master_mc_group)
-            dist.reduce(data_size, dst=0, group=master_mc_group)
+        if dist.get_world_size(master_group) > 1:
+            dist.reduce(correct, dst=0, group=master_group)
+            dist.reduce(data_size, dst=0, group=master_group)
 
         # refresh results
         if rank == 0:

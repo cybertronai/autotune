@@ -11,18 +11,26 @@ from torchcurv.utils.chainer_communicators import _utility
 class VIOptimizer(SecondOrderOptimizer):
 
     def __init__(self, model, dataset_size, curv_type='Fisher', curv_shapes=None,
-                 lr=0.01, momentum=0, momentum_type='preconditioned', adjust_momentum=False,
+                 lr=0.01, momentum=0, momentum_type='preconditioned',
                  grad_ema_decay=1, grad_ema_type='raw', weight_decay=0,
+                 normalizing_weights=False, weight_scale='auto',
+                 acc_steps=1, non_reg_for_bn=False, bias_correction=False,
+                 lars=False, lars_type='preconditioned',
                  num_mc_samples=10, val_num_mc_samples=10, kl_weighting=1,
                  prior_variance=1, init_precision=None,
                  seed=1, **curv_kwargs):
 
         l2_reg = kl_weighting / dataset_size / prior_variance if prior_variance != 0 else 0
 
-        super(VIOptimizer, self).__init__(model, curv_type, curv_shapes, lr=lr, momentum=momentum,
-                                          momentum_type=momentum_type, adjust_momentum=adjust_momentum,
+        super(VIOptimizer, self).__init__(model, curv_type, curv_shapes,
+                                          lr=lr, momentum=momentum, momentum_type=momentum_type,
                                           grad_ema_decay=grad_ema_decay, grad_ema_type=grad_ema_type,
-                                          l2_reg=l2_reg, weight_decay=weight_decay, **curv_kwargs)
+                                          l2_reg=l2_reg, weight_decay=weight_decay,
+                                          normalizing_weights=normalizing_weights, weight_scale=weight_scale,
+                                          acc_steps=acc_steps, non_reg_for_bn=non_reg_for_bn,
+                                          bias_correction=bias_correction,
+                                          lars=lars, lars_type=lars_type,
+                                          **curv_kwargs)
 
         self.defaults['num_mc_samples'] = num_mc_samples
         self.defaults['val_num_mc_samples'] = val_num_mc_samples
@@ -176,10 +184,9 @@ class VIOptimizer(SecondOrderOptimizer):
 
 class DistributedVIOptimizer(DistributedSecondOrderOptimizer, VIOptimizer):
 
-    def __init__(self, *args, mc_sample_group_id=0, **kwargs):
+    def __init__(self, *args, mc_group_id=0, **kwargs):
         super(DistributedVIOptimizer, self).__init__(*args, **kwargs)
-        self.defaults['mc_sample_group_id'] = mc_sample_group_id
-        self.defaults['seed_base'] *= (mc_sample_group_id + 1) / self.comm.size
+        self.defaults['seed_base'] *= (mc_group_id + 1) / self.comm.size
 
     @property
     def actual_optimizer(self):
