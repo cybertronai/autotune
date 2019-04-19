@@ -21,6 +21,7 @@
   },
   "momentum_correction": true,
   "non_wd_for_bn": true,
+  "lars": true,
   "scheduler_name": "MultiStepLR",
   "scheduler_args": {
     "milestones": [30, 60, 80],
@@ -29,7 +30,7 @@
   "warmup_epochs": 5,
   "warmup_scheduler_name": "GradualWarmupIterLR",
   "warmup_scheduler_args": {
-    "initial_lr": 0.0125,
+    "initial_lr": 1.25e-2,
     "max_count": 1565
   }
 }
