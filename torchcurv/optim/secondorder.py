@@ -238,7 +238,7 @@ class SecondOrderOptimizer(Optimizer):
 
             grad.mul_(bias_correction2 / bias_correction1)
 
-        def apply_lars(p, grad, eps=1e-9):
+        def apply_lars(p, grad, eps=1e-8):
             d_norm = p.data.norm()
             g_norm = grad.norm() + eps
             grad.mul_(d_norm / g_norm)

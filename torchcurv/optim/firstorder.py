@@ -18,7 +18,7 @@ class DistributedFirstOrderOptimizer(Optimizer):
             'lars', lars
         )
 
-    def step(self, closure=None, eps=1e-9):
+    def step(self, closure=None, eps=1e-8):
         loss = None
         if closure is not None:
             loss = closure()
