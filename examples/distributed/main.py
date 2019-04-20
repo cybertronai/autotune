@@ -66,7 +66,7 @@ def main():
                         help='name of the learning rate scheduler')
     parser.add_argument('--scheduler_args', type=json.loads, default=None,
                         help='[JSON] arguments for the scheduler')
-    parser.add_argument('--warmup_epochs', type=int, default=5,
+    parser.add_argument('--warmup_epochs', type=int, default=0,
                         help='number of epochs for warmup lr')
     parser.add_argument('--warmup_scheduler_name', type=str, default=None,
                         help='name of the learning rate scheduler')
@@ -309,7 +309,7 @@ def main():
         main_scheduler = get_scheduler(args.scheduler_name, args.scheduler_args)
 
     if args.warmup_scheduler_name is None:
-        warmup_scheduler = None
+        warmup_scheduler = main_scheduler
     else:
         warmup_scheduler = get_scheduler(args.warmup_scheduler_name, args.warmup_scheduler_args)
 
