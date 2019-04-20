@@ -238,10 +238,12 @@ class SecondOrderOptimizer(Optimizer):
 
             grad.mul_(bias_correction2 / bias_correction1)
 
-        def apply_lars(p, grad, eps=1e-8):
+        def apply_lars(p, grad, thr=1e-2, eps=1e-9):
             d_norm = p.data.norm()
-            g_norm = grad.norm() + eps
-            grad.mul_(d_norm / g_norm)
+            if d_norm > thr:
+                g_norm = grad.norm()
+                rate = d_norm / (g_norm + eps)
+                grad.mul_(rate)
 
         for p in params:
 

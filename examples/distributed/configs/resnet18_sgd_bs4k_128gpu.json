@@ -15,7 +15,7 @@
   },
   "optim_name": "SGD",
   "optim_args": {
-    "lr": 1.6,
+    "lr": 1.6e-2,
     "momentum": 0.9,
     "weight_decay": 1e-4
   },
@@ -30,7 +30,7 @@
   "warmup_epochs": 5,
   "warmup_scheduler_name": "GradualWarmupIterLR",
   "warmup_scheduler_args": {
-    "initial_lr": 1.25e-2,
+    "initial_lr": 1.25e-4,
     "max_count": 1565
   }
 }

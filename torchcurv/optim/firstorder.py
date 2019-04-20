@@ -18,7 +18,7 @@ class DistributedFirstOrderOptimizer(Optimizer):
             'lars', lars
         )
 
-    def step(self, closure=None, eps=1e-8):
+    def step(self, closure=None, thr=1e-2, eps=1e-9):
         loss = None
         if closure is not None:
             loss = closure()
@@ -34,18 +34,19 @@ class DistributedFirstOrderOptimizer(Optimizer):
         if self.lars:
             for group in self.param_groups:
                 for p in group['params']:
-                    setattr(p, 'data_pre', p.data)
+                    setattr(p, 'data_pre', p.data.detach().clone())
 
         self.actual_optimizer.step(closure=None)
 
         if self.lars:
             for group in self.param_groups:
                 for p in group['params']:
-                    upd = p.data - p.data_pre
-                    upd_norm = upd.norm()
                     d_norm_pre = p.data_pre.norm()
-                    value = group['lr'] * d_norm_pre / (upd_norm + eps)
-                    p.data = p.data_pre.add(value, upd)
+                    if d_norm_pre > thr:
+                        upd = p.data - p.data_pre
+                        upd_norm = upd.norm()
+                        rate = group['lr'] * d_norm_pre / (upd_norm + eps)
+                        p.data = p.data_pre.add(rate, upd)
 
         return loss
 
