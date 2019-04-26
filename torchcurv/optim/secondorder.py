@@ -84,6 +84,7 @@ class SecondOrderOptimizer(Optimizer):
                     isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
                 group['l2_reg'] = 0
                 group['weight_decay'] = 0
+                group['normalizing_weights'] = False
 
     def init_buffer(self, params):
         for p in params:
