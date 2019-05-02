@@ -8,7 +8,6 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.utils import parameters_to_vector
 from torchvision import datasets, transforms, models
 import torchcurv
 from torchcurv.optim import DistributedFirstOrderOptimizer, DistributedSecondOrderOptimizer, DistributedVIOptimizer
@@ -75,7 +74,7 @@ def main():
     parser.add_argument('--momentum_correction', action='store_true',
                         help='if True, momentum/LR ratio is kept to be constant')
     parser.add_argument('--non_wd_for_bn', action='store_true',
-                        help='if True, weight decay is not applied for BatchNorm')
+                        help='(FirstOrderOptimizer only) if True, weight decay is not applied for BatchNorm')
     parser.add_argument('--lars', action='store_true',
                         help='if True, LARS is applied for first-order optimizer')
     # Options
@@ -428,10 +427,9 @@ def train(rank, epoch, model, device, train_loader, optimizer, scheduler,
         if scheduler_type(scheduler) == 'iter':
             scheduler.step()
 
-        for i, param_group in enumerate(optimizer.param_groups):
-            p = parameters_to_vector(param_group['params'])
-            attr = 'p_pre_{}'.format(i)
-            setattr(optimizer, attr, p.clone())
+        for name, param in model.named_parameters():
+            attr = 'p_pre_{}'.format(name)
+            setattr(optimizer, attr, param.detach().clone())
 
         # update params
         def closure():
@@ -472,8 +470,11 @@ def train(rank, epoch, model, device, train_loader, optimizer, scheduler,
             iteration = base_num_iter + batch_idx + 1
             total_data_size += data_size
 
+            is_log_timing = (epoch == 1 and batch_idx == 0) or \
+                            (batch_idx + 1) % args.log_interval == 0
+
             # save log
-            if logger is not None and batch_idx % args.log_interval == 0:
+            if logger is not None and is_log_timing:
                 accuracy = 100. * total_correct / total_data_size
                 elapsed_time = logger.elapsed_time
                 print('epoch: {} [{}/{} ({:.0f}%)]\tloss: {:.6f}, '
@@ -487,16 +488,15 @@ def train(rank, epoch, model, device, train_loader, optimizer, scheduler,
                 log = {'epoch': epoch, 'iteration': iteration, 'elapsed_time': elapsed_time,
                        'accuracy': accuracy, 'loss': loss, 'lr': lr, 'momentum': m}
 
-                for i, param_group in enumerate(optimizer.param_groups):
-                    p = parameters_to_vector(param_group['params'])
-                    attr = 'p_pre_{}'.format(i)
+                for name, param in model.named_parameters():
+                    attr = 'p_pre_{}'.format(name)
                     p_pre = getattr(optimizer, attr)
-                    p_norm = p.norm().item()
-                    upd_norm = p.sub(p_pre).norm().item()
+                    p_norm = param.norm().item()
+                    g_norm = param.grad.norm().item()
+                    upd_norm = param.sub(p_pre).norm().item()
 
-                    name = param_group.get('name', '')
-                    group_log = {'p_norm': p_norm, 'upd_norm': upd_norm, 'name': name}
-                    log[i] = group_log
+                    p_log = {'p_norm': p_norm, 'g_norm': g_norm, 'upd_norm': upd_norm}
+                    log[name] = p_log
 
                 logger.write(log)
 

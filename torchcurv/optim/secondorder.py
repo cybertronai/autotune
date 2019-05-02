@@ -70,7 +70,6 @@ class SecondOrderOptimizer(Optimizer):
             post_curvature = curvature
 
             group = {
-                'name': module.__class__.__name__,
                 'params': params,
                 'curv': curvature,
                 'acc_curv': TensorAccumulator(),
@@ -275,12 +274,13 @@ class SecondOrderOptimizer(Optimizer):
         params = group[target]
         curv = group['curv']
 
-        def apply_normalizing_weights(p, eps=1e-9):
-            scale = group['weight_scale']
-            if scale == 'auto':
-                scale = np.sqrt(2.0 * w.data.shape[0])
-            norm = p.data.norm() + eps
-            p.data.div_(norm).mul_(scale)
+        def apply_normalizing_weights(p, thr=1e-2, eps=1e-9):
+            d_norm = p.data.norm()
+            if d_norm > thr:
+                scale = group['weight_scale']
+                if scale == 'auto':
+                    scale = np.sqrt(2.0 * w.data.shape[0])
+                p.data.div_(d_norm + eps).mul_(scale)
 
         if group['normalizing_weights']:
             for p, _p in zip(params, group['params']):
