@@ -179,14 +179,10 @@ class SecondOrderOptimizer(Optimizer):
 
     def update(self, group, target='params'):
         params = group[target]
-
         for p in params:
-
             grad = p.grad
-
             if grad is None:
                 continue
-
             p.data.add_(-group['lr'], grad)
 
     def update_preprocess(self, group, target='params', grad_type='raw'):

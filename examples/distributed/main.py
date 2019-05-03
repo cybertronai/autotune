@@ -429,7 +429,7 @@ def train(rank, epoch, model, device, train_loader, optimizer, scheduler,
 
         for name, param in model.named_parameters():
             attr = 'p_pre_{}'.format(name)
-            setattr(optimizer, attr, param.detach().clone())
+            setattr(model, attr, param.detach().clone())
 
         # update params
         def closure():
@@ -490,12 +490,15 @@ def train(rank, epoch, model, device, train_loader, optimizer, scheduler,
 
                 for name, param in model.named_parameters():
                     attr = 'p_pre_{}'.format(name)
-                    p_pre = getattr(optimizer, attr)
+                    p_pre = getattr(model, attr)
                     p_norm = param.norm().item()
+                    p_shape = list(param.size())
+                    p_pre_norm = p_pre.norm().item()
                     g_norm = param.grad.norm().item()
                     upd_norm = param.sub(p_pre).norm().item()
 
-                    p_log = {'p_norm': p_norm, 'g_norm': g_norm, 'upd_norm': upd_norm}
+                    p_log = {'p_shape': p_shape, 'p_norm': p_norm, 'p_pre_norm': p_pre_norm,
+                             'g_norm': g_norm, 'upd_norm': upd_norm}
                     log[name] = p_log
 
                 logger.write(log)
