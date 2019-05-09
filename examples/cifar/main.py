@@ -6,7 +6,6 @@ import json
 
 import torch
 import torch.nn.functional as F
-from torch.nn.utils import parameters_to_vector
 from torchvision import datasets, transforms, models
 import torchcurv
 from torchcurv.optim import SecondOrderOptimizer, VIOptimizer
@@ -25,7 +24,7 @@ def main():
     parser.add_argument('--root', type=str, default='./data',
                         help='root of dataset')
     parser.add_argument('--epochs', type=int, default=10,
-                        help='number of epochs to train)')
+                        help='number of epochs to train')
     parser.add_argument('--batch_size', type=int, default=128,
                         help='input batch size for training')
     parser.add_argument('--val_batch_size', type=int, default=128,
@@ -49,13 +48,13 @@ def main():
                         help='[JSON] arguments for the optimizer')
     parser.add_argument('--curv_args', type=json.loads, default=None,
                         help='[JSON] arguments for the curvature')
-    parser.add_argument('--lr', type=float, default=0.01,
-                        help='initial learning rate')
     parser.add_argument('--scheduler_name', type=str, default=None,
                         help='name of the learning rate scheduler')
     parser.add_argument('--scheduler_args', type=json.loads, default=None,
                         help='[JSON] arguments for the scheduler')
     # Options
+    parser.add_argument('--download', action='store_true', default=False,
+                        help='if True, downloads the dataset (CIFAR-10 or 100) from the internet')
     parser.add_argument('--create_graph', action='store_true', default=False,
                         help='create graph of the derivative')
     parser.add_argument('--no_cuda', action='store_true', default=False,
@@ -123,9 +122,9 @@ def main():
         dataset_class = datasets.CIFAR100
 
     train_dataset = dataset_class(
-        root=args.root, train=True, download=True, transform=train_transform)
+        root=args.root, train=True, download=args.download, transform=train_transform)
     val_dataset = dataset_class(
-        root=args.root, train=False, download=True, transform=val_transform)
+        root=args.root, train=False, download=args.download, transform=val_transform)
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
@@ -153,16 +152,17 @@ def main():
     arch_kwargs['num_classes'] = num_classes
 
     model = arch_class(**arch_kwargs)
+    setattr(model, 'num_classes', num_classes)
     model = model.to(device)
 
     optim_kwargs = {} if args.optim_args is None else args.optim_args
-    optim_kwargs['lr'] = args.lr
 
     # Setup optimizer
     if args.optim_name == SecondOrderOptimizer.__name__:
         optimizer = SecondOrderOptimizer(model, **optim_kwargs, **args.curv_args)
     elif args.optim_name == VIOptimizer.__name__:
-        optimizer = VIOptimizer(model, dataset_size=len(train_loader.dataset), **optim_kwargs, **args.curv_args)
+        optimizer = VIOptimizer(model, dataset_size=len(train_loader.dataset), seed=args.seed,
+                                **optim_kwargs, **args.curv_args)
     else:
         optim_class = getattr(torch.optim, args.optim_name)
         optimizer = optim_class(model.parameters(), **optim_kwargs)
@@ -177,6 +177,8 @@ def main():
         scheduler_kwargs = {} if args.scheduler_args is None else args.scheduler_args
         scheduler = scheduler_class(optimizer, **scheduler_kwargs)
 
+    start_epoch = 1
+
     # Load checkpoint
     if args.resume is not None:
         print('==> Resuming from checkpoint..')
@@ -184,8 +186,6 @@ def main():
         checkpoint = torch.load(args.resume)
         model.load_state_dict(checkpoint['model'])
         start_epoch = checkpoint['epoch']
-    else:
-        start_epoch = 1
 
     # All config
     print('===========================')
@@ -198,10 +198,15 @@ def main():
             print('{}: {}'.format(key, val))
     print('===========================')
 
-    # Copy this file to args.out
+    # Copy this file & config to args.out
     if not os.path.isdir(args.out):
         os.makedirs(args.out)
     shutil.copy(os.path.realpath(__file__), args.out)
+
+    if args.config is not None:
+        shutil.copy(args.config, args.out)
+    if args.arch_file is not None:
+        shutil.copy(args.arch_file, args.out)
 
     # Setup logger
     logger = Logger(args.out, args.log_file_name)
@@ -211,7 +216,7 @@ def main():
     for epoch in range(start_epoch, args.epochs + 1):
 
         # train
-        accuracy, loss = train(model, device, train_loader, optimizer, scheduler, epoch, args, logger)
+        accuracy, loss, confidence = train(model, device, train_loader, optimizer, scheduler, epoch, args, logger)
 
         # val
         val_accuracy, val_loss = validate(model, device, val_loader, optimizer)
@@ -219,9 +224,10 @@ def main():
         # save log
         iteration = epoch * len(train_loader)
         log = {'epoch': epoch, 'iteration': iteration,
-               'accuracy': accuracy, 'loss': loss,
+               'accuracy': accuracy, 'loss': loss, 'confidence': confidence,
                'val_accuracy': val_accuracy, 'val_loss': val_loss,
-               'lr': optimizer.param_groups[0]['lr']}
+               'lr': optimizer.param_groups[0]['lr'],
+               'momentum': optimizer.param_groups[0].get('momentum', 0)}
         logger.write(log)
 
         # save checkpoint
@@ -249,6 +255,7 @@ def train(model, device, train_loader, optimizer, scheduler, epoch, args, logger
 
     total_correct = 0
     loss = None
+    confidence = {'top1': 0, 'top1_true': 0, 'top1_false': 0, 'true': 0, 'false': 0}
     total_data_size = 0
     epoch_size = len(train_loader.dataset)
     num_iters_in_epoch = len(train_loader)
@@ -260,10 +267,9 @@ def train(model, device, train_loader, optimizer, scheduler, epoch, args, logger
         if scheduler_type(scheduler) == 'iter':
             scheduler.step()
 
-        for i, param_group in enumerate(optimizer.param_groups):
-            p = parameters_to_vector(param_group['params'])
-            attr = 'p_pre_{}'.format(i)
-            setattr(optimizer, attr, p.clone())
+        for name, param in model.named_parameters():
+            attr = 'p_pre_{}'.format(name)
+            setattr(model, attr, param.detach().clone())
 
         # update params
         def closure():
@@ -282,6 +288,17 @@ def train(model, device, train_loader, optimizer, scheduler, epoch, args, logger
         loss = loss.item()
         total_correct += correct
 
+        prob = F.softmax(output, dim=1)
+        for p, idx in zip(prob, target):
+            confidence['top1'] += torch.max(p).item()
+            top1 = torch.argmax(p).item()
+            if top1 == idx:
+                confidence['top1_true'] += p[top1].item()
+            else:
+                confidence['top1_false'] += p[top1].item()
+            confidence['true'] += p[idx].item()
+            confidence['false'] += (1 - p[idx].item())
+
         iteration = base_num_iter + batch_idx + 1
         total_data_size += len(data)
 
@@ -299,22 +316,30 @@ def train(model, device, train_loader, optimizer, scheduler, epoch, args, logger
             log = {'epoch': epoch, 'iteration': iteration, 'elapsed_time': elapsed_time,
                    'accuracy': accuracy, 'loss': loss, 'lr': lr}
 
-            for i, group in enumerate(optimizer.param_groups):
-                p = parameters_to_vector(group['params'])
-                attr = 'p_pre_{}'.format(i)
-                p_pre = getattr(optimizer, attr)
-                p_norm = p.norm().item()
-                upd_norm = p.sub(p_pre).norm().item()
+            for name, param in model.named_parameters():
+                attr = 'p_pre_{}'.format(name)
+                p_pre = getattr(model, attr)
+                p_norm = param.norm().item()
+                p_shape = list(param.size())
+                p_pre_norm = p_pre.norm().item()
+                g_norm = param.grad.norm().item()
+                upd_norm = param.sub(p_pre).norm().item()
+                noise_scale = getattr(param, 'noise_scale', 0)
 
-                name = group.get('name', '')
-                group_log = {'p_norm': p_norm, 'upd_norm': upd_norm, 'name': name}
-                log[i] = group_log
+                p_log = {'p_shape': p_shape, 'p_norm': p_norm, 'p_pre_norm': p_pre_norm,
+                         'g_norm': g_norm, 'upd_norm': upd_norm, 'noise_scale': noise_scale}
+                log[name] = p_log
 
             logger.write(log)
 
     accuracy = 100. * total_correct / epoch_size
+    confidence['top1'] /= epoch_size
+    confidence['top1_true'] /= total_correct
+    confidence['top1_false'] /= (epoch_size - total_correct)
+    confidence['true'] /= epoch_size
+    confidence['false'] /= (epoch_size * (model.num_classes - 1))
 
-    return accuracy, loss
+    return accuracy, loss, confidence
 
 
 def validate(model, device, val_loader, optimizer):
