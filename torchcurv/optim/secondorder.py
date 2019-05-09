@@ -338,11 +338,11 @@ class DistributedSecondOrderOptimizer(SecondOrderOptimizer):
                 and returns the loss.
         """
 
-        loss = self.actual_optimizer.step(self, closure)
+        ret = self.actual_optimizer.step(self, closure)
 
         if self.is_updated():
             # all_gather_v
             self.comm.allgatherv_data(self.param_groups, self.extractors_for_agv())
 
-        return loss
+        return ret
 
