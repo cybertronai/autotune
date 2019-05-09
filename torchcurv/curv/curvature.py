@@ -161,6 +161,9 @@ class Curvature(object):
     def sample_params(self, params, mean, std_scale):
         raise NotImplementedError
 
+    def std_norm(self):
+        raise NotImplementedError
+
 
 class DiagCurvature(Curvature):
 
@@ -194,6 +197,13 @@ class DiagCurvature(Curvature):
         for p, m, std in zip(params, mean, self.std):
             noise = torch.randn_like(m)
             p.data.copy_(torch.addcmul(m, std_scale, noise, std))
+            setattr(p, 'noise_scale', std_scale * std.norm().item())
+
+    def std_norm(self):
+        if self.std is None:
+            return 0
+
+        return sum(std.norm().item() for std in self.std)
 
 
 class KronCurvature(Curvature):
@@ -266,6 +276,13 @@ class KronCurvature(Curvature):
 
     def sample_params(self, params, mean, std_scale):
         raise NotImplementedError
+
+    def std_norm(self):
+        if self.std is None:
+            return 0
+
+        A_ic, G_ic = self.std
+        return A_ic.norm().item() * G_ic.norm().item()
 
 
 def add_value_to_diagonal(X, value):
