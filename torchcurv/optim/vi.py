@@ -89,7 +89,9 @@ class VIOptimizer(SecondOrderOptimizer):
             params, mean = group['params'], group['mean']
             for p, m in zip(params, mean):
                 p.data.copy_(m.data)
-                p.grad.copy_(m.grad)
+                if getattr(p, 'grad', None) is not None \
+                        and getattr(m, 'grad', None) is not None:
+                    p.grad.copy_(m.grad)
 
     def step(self, closure=None):
         """Performs a single optimization step.
