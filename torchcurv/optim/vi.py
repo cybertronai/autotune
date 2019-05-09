@@ -1,6 +1,4 @@
-import sys
 import math
-import random
 
 import torch
 from torchcurv.optim import SecondOrderOptimizer, DistributedSecondOrderOptimizer
@@ -17,7 +15,7 @@ class VIOptimizer(SecondOrderOptimizer):
                  acc_steps=1, non_reg_for_bn=False, bias_correction=False,
                  lars=False, lars_type='preconditioned',
                  num_mc_samples=10, val_num_mc_samples=10, kl_weighting=1,
-                 prior_variance=1, init_precision=None,
+                 prior_variance=1, init_precision=None, warmup_steps=0,
                  seed=1, **curv_kwargs):
 
         l2_reg = kl_weighting / dataset_size / prior_variance if prior_variance != 0 else 0
@@ -34,19 +32,21 @@ class VIOptimizer(SecondOrderOptimizer):
 
         self.defaults['num_mc_samples'] = num_mc_samples
         self.defaults['val_num_mc_samples'] = val_num_mc_samples
-        self.defaults['std_scale'] = math.sqrt(kl_weighting / dataset_size)
+        self.defaults['warmup_steps'] = warmup_steps
         self.defaults['prior_variance'] = prior_variance
-        random.seed(seed)
-        self.defaults['seed_base'] = random.randint(1, sys.maxsize/2)
+        self.defaults['seed_base'] = seed
+
+        std_scale = math.sqrt(kl_weighting / dataset_size)
 
         for group in self.param_groups:
+            group['std_scale'] = 0 if group['l2_reg'] == 0 else std_scale
             group['mean'] = [p.data.detach().clone() for p in group['params']]
             self.init_buffer(group['mean'])
 
             if init_precision is not None:
                 curv = group['curv']
                 curv.element_wise_init(init_precision)
-                curv.step(update_std=True)
+                curv.step(update_std=(group['std_scale'] > 0))
 
     def zero_grad(self):
         r"""Clears the gradients of all optimized :class:`torch.Tensor` s."""
@@ -69,18 +69,27 @@ class VIOptimizer(SecondOrderOptimizer):
             torch.cuda.manual_seed_all(seed)
 
     def sample_params(self):
+
         for group in self.param_groups:
             params, mean = group['params'], group['mean']
             curv = group['curv']
             if curv is not None and curv.std is not None:
+
+                # noise scaling
+                std_scale = group['std_scale']
+
                 # sample from posterior
-                curv.sample_params(params, mean, self.defaults['std_scale'])
+                curv.sample_params(params, mean, std_scale)
+            else:
+                for p, m in zip(params, mean):
+                    p.data.copy_(m.data)
 
     def copy_mean_to_params(self):
         for group in self.param_groups:
             params, mean = group['params'], group['mean']
             for p, m in zip(params, mean):
                 p.data.copy_(m.data)
+                p.grad.copy_(m.grad)
 
     def step(self, closure=None):
         """Performs a single optimization step.
@@ -94,7 +103,9 @@ class VIOptimizer(SecondOrderOptimizer):
             return loss, output
         """
 
-        m = self.defaults['num_mc_samples']
+        warmup = self.optim_state['step'] < self.defaults['warmup_steps']
+
+        m = 1 if warmup else self.defaults['num_mc_samples']
         n = self.defaults['acc_steps']
 
         acc_loss = TensorAccumulator()
@@ -105,7 +116,10 @@ class VIOptimizer(SecondOrderOptimizer):
         for _ in range(m):
 
             # sampling
-            self.sample_params()
+            if warmup:
+                self.copy_mean_to_params()
+            else:
+                self.sample_params()
 
             # forward and backward
             loss, output = closure()
@@ -144,7 +158,7 @@ class VIOptimizer(SecondOrderOptimizer):
             # update covariance
             mean, curv = group['mean'], group['curv']
             if curv is not None:
-                curv.step(update_std=True)
+                curv.step(update_std=(group['std_scale'] > 0 and not warmup))
                 curv.precondition_grad(mean)
 
             # update mean
@@ -152,7 +166,11 @@ class VIOptimizer(SecondOrderOptimizer):
             self.update(group, target='mean')
             self.update_postprocess(group, target='mean')
 
-        self.copy_mean_to_params()
+            # copy mean to param
+            params = group['params']
+            for p, m in zip(params, mean):
+                p.data.copy_(m.data)
+                p.grad.copy_(m.grad)
 
         return loss, output
 
@@ -166,11 +184,11 @@ class VIOptimizer(SecondOrderOptimizer):
 
         for _ in range(n):
 
-            if not use_mean:
+            if use_mean:
+                self.copy_mean_to_params()
+            else:
                 # sampling
                 self.sample_params()
-            else:
-                self.copy_mean_to_params()
 
             output = self.model(data)
             acc_output.update(output, scale=1/n)
@@ -184,9 +202,9 @@ class VIOptimizer(SecondOrderOptimizer):
 
 class DistributedVIOptimizer(DistributedSecondOrderOptimizer, VIOptimizer):
 
-    def __init__(self, *args, mc_group_id=0, **kwargs):
+    def __init__(self, *args, total_steps=1000, mc_group_id=0, **kwargs):
         super(DistributedVIOptimizer, self).__init__(*args, **kwargs)
-        self.defaults['seed_base'] *= (mc_group_id + 1) / self.comm.size
+        self.defaults['seed_base'] += mc_group_id * total_steps
 
     @property
     def actual_optimizer(self):
@@ -204,4 +222,12 @@ class DistributedVIOptimizer(DistributedSecondOrderOptimizer, VIOptimizer):
         extractors = [_utility.extract_attr_from_params('data', target='mean'),
                       _utility.extract_attr_from_curv('std', True)]
         return extractors
+
+    def step(self, closure=None):
+        ret = super(DistributedVIOptimizer, self).step(closure)
+
+        if self.is_updated():
+            self.copy_mean_to_params()
+
+        return ret
 
