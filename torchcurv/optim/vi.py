@@ -74,12 +74,8 @@ class VIOptimizer(SecondOrderOptimizer):
             params, mean = group['params'], group['mean']
             curv = group['curv']
             if curv is not None and curv.std is not None:
-
-                # noise scaling
-                std_scale = group['std_scale']
-
                 # sample from posterior
-                curv.sample_params(params, mean, std_scale)
+                curv.sample_params(params, mean, group['std_scale'])
             else:
                 for p, m in zip(params, mean):
                     p.data.copy_(m.data)
