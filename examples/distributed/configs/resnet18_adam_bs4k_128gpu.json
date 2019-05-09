@@ -13,13 +13,12 @@
     "zero_init_residual": true,
     "norm_stat_momentum": 0.1
   },
-  "optim_name": "SGD",
+  "optim_name": "Adam",
   "optim_args": {
-    "lr": 8e-2,
-    "momentum": 0.9,
-    "weight_decay": 1e-4
+    "lr": 1.6e-2,
+    "weight_decay": 1e-4,
+    "betas": [0.9, 0.999]
   },
-  "momentum_correction": true,
   "non_wd_for_bn": true,
   "lars": true,
   "scheduler_name": "MultiStepLR",
@@ -30,7 +29,7 @@
   "warmup_epochs": 5,
   "warmup_scheduler_name": "GradualWarmupIterLR",
   "warmup_scheduler_args": {
-    "initial_lr": 6.25e-4,
+    "initial_lr": 1.25e-4,
     "max_count": 1565
   }
 }

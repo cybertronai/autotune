@@ -25,6 +25,7 @@
     "momentum": 0.997,
     "momentum_type": "preconditioned",
     "normalizing_weights": true,
+    "non_reg_for_bn": true,
     "acc_steps": 1
   },
   "curv_args": {

@@ -13,15 +13,32 @@
     "zero_init_residual": true,
     "norm_stat_momentum": 0.1
   },
-  "optim_name": "SGD",
+  "optim_name": "DistributedVIOptimizer",
   "optim_args": {
-    "lr": 8e-2,
-    "momentum": 0.9,
-    "weight_decay": 1e-4
+    "curv_type": "Fisher",
+    "curv_shapes": {
+      "Conv2d": "Diag",
+      "Linear": "Diag",
+      "BatchNorm1d": "Diag",
+      "BatchNorm2d": "Diag"
+    },
+    "lr": 1.6e-2,
+    "grad_ema_decay": 0.1,
+    "grad_ema_type": "raw",
+    "bias_correction": true,
+    "non_reg_for_bn": true,
+    "num_mc_samples": 1,
+    "val_num_mc_samples": 10,
+    "kl_weighting": 1,
+    "prior_variance": 7.5e-4,
+    "weight_decay": 0,
+    "lars": false
+  },
+  "curv_args": {
+    "damping": 1e-4,
+    "ema_decay": 1e-3
   },
   "momentum_correction": true,
-  "non_wd_for_bn": true,
-  "lars": true,
   "scheduler_name": "MultiStepLR",
   "scheduler_args": {
     "milestones": [30, 60, 80],
@@ -30,7 +47,8 @@
   "warmup_epochs": 5,
   "warmup_scheduler_name": "GradualWarmupIterLR",
   "warmup_scheduler_args": {
-    "initial_lr": 6.25e-4,
+    "initial_lr": 1.25e-4,
     "max_count": 1565
-  }
+  },
+  "num_mc_groups": 4
 }

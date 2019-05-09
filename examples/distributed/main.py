@@ -20,13 +20,15 @@ import torch.distributed as dist
 DATASET_CIFAR10 = 'CIFAR-10'
 DATASET_CIFAR100 = 'CIFAR-100'
 DATASET_IMAGENET = 'ImageNet'
+DATASET_IMAGENET10 = 'ImageNet10'
 
 
 def main():
     parser = argparse.ArgumentParser()
     # Data
     parser.add_argument('--dataset', type=str,
-                        choices=[DATASET_CIFAR10, DATASET_CIFAR100, DATASET_IMAGENET], default=DATASET_CIFAR10,
+                        choices=[DATASET_CIFAR10, DATASET_CIFAR100, DATASET_IMAGENET, DATASET_IMAGENET10],
+                        default=DATASET_CIFAR10,
                         help='name of dataset')
     parser.add_argument('--root', type=str, default='./data',
                         help='root of dataset')
@@ -193,9 +195,12 @@ def main():
     val_transform = transforms.Compose(val_transforms)
 
     # Setup data loader
-    if args.dataset == DATASET_IMAGENET:
+    if args.dataset in [DATASET_IMAGENET, DATASET_IMAGENET10]:
         # ImageNet
-        num_classes = 1000
+        if args.dataset == DATASET_IMAGENET:
+            num_classes = 1000
+        else:
+            num_classes = 10
 
         train_root = args.root if args.train_root is None else args.train_root
         val_root = args.root if args.val_root is None else args.val_root
@@ -258,12 +263,17 @@ def main():
 
     # Setup optimizer
     optim_kwargs = {} if args.optim_args is None else args.optim_args
+    acc_steps = optim_kwargs.get('acc_steps', 1)
+    global_batch_size = num_data_group * args.batch_size * acc_steps
+    total_steps = math.ceil(len(train_loader.dataset) / global_batch_size)
 
     # Setup optimizer
     if args.optim_name == DistributedVIOptimizer.__name__:
         optimizer = DistributedVIOptimizer(model,
                                            mc_group_id=mc_group_id,
                                            dataset_size=len(train_loader.dataset),
+                                           total_steps=total_steps,
+                                           seed=args.seed,
                                            **optim_kwargs, **args.curv_args)
     else:
         assert args.num_mc_groups == 1, 'You cannot use MC sample groups with non-VI optimizers.'
@@ -332,8 +342,6 @@ def main():
         print('val data size: {}'.format(len(val_loader.dataset)))
 
         print('MPI.COMM_WORLD size: {}'.format(size))
-        acc_steps = optim_kwargs.get('acc_steps', 1)
-        global_batch_size = num_data_group * args.batch_size * acc_steps
         print('global mini-batch size: {}'.format(global_batch_size))
         print('steps/epoch: {}'.format(math.ceil(len(train_loader.dataset) / global_batch_size)))
 
@@ -496,9 +504,10 @@ def train(rank, epoch, model, device, train_loader, optimizer, scheduler,
                     p_pre_norm = p_pre.norm().item()
                     g_norm = param.grad.norm().item()
                     upd_norm = param.sub(p_pre).norm().item()
+                    noise_scale = getattr(param, 'noise_scale', 0)
 
                     p_log = {'p_shape': p_shape, 'p_norm': p_norm, 'p_pre_norm': p_pre_norm,
-                             'g_norm': g_norm, 'upd_norm': upd_norm}
+                             'g_norm': g_norm, 'upd_norm': upd_norm, 'noise_scale': noise_scale}
                     log[name] = p_log
 
                 logger.write(log)
