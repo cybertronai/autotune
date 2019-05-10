@@ -265,7 +265,7 @@ def main():
     optim_kwargs = {} if args.optim_args is None else args.optim_args
     acc_steps = optim_kwargs.get('acc_steps', 1)
     global_batch_size = num_data_group * args.batch_size * acc_steps
-    total_steps = math.ceil(len(train_loader.dataset) / global_batch_size)
+    total_steps = math.ceil(args.epochs * len(train_loader.dataset) / global_batch_size)
 
     # Setup optimizer
     if args.optim_name == DistributedVIOptimizer.__name__:
@@ -331,6 +331,7 @@ def main():
         assert os.path.exists(args.resume), 'Error: no checkpoint file found'
         checkpoint = torch.load(args.resume)
         model.load_state_dict(checkpoint['model'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
         start_epoch = checkpoint['epoch']
 
     if rank == 0:
@@ -390,7 +391,8 @@ def main():
         if rank == 0:
             # write to log
             iteration = epoch * len(train_loader)
-            log = {'epoch': epoch, 'iteration': iteration,
+            elapsed_time = logger.elapsed_time
+            log = {'epoch': epoch, 'iteration': iteration, 'elapsed_time': elapsed_time,
                    'accuracy': accuracy, 'loss': loss,
                    'val_accuracy': val_accuracy, 'val_loss': val_loss,
                    'lr': optimizer.param_groups[0]['lr'],
@@ -399,11 +401,11 @@ def main():
             logger.write(log)
 
             # save checkpoint
-            if epoch % args.checkpoint_interval == 0 or epoch == args.epochs:
-                path = os.path.join(args.out, '{}_{}_epoch{}.pt'.format(
-                    args.dataset, args.arch_name, epoch))
+            if epoch % args.checkpoint_interval == 0 or epoch > args.epochs - 3:
+                path = os.path.join(args.out, 'epoch{}.ckpt'.format(epoch))
                 data = {
                     'model': model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
                     'epoch': epoch
                 }
                 torch.save(data, path)
@@ -526,6 +528,7 @@ def validate(rank, model, val_loader, device, optimizer):
         for data, target in val_loader:
             data, target = data.to(device), target.to(device)
             if isinstance(optimizer, DistributedVIOptimizer):
+                optimizer.set_random_seed()
                 output = optimizer.prediction(data)
             else:
                 output = model(data)

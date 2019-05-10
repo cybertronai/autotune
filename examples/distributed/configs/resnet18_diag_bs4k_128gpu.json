@@ -10,7 +10,7 @@
   "arch_file": "models/resnet_b.py",
   "arch_name": "resnet18",
   "arch_args": {
-    "zero_init_residual": true,
+    "zero_init_residual": false,
     "norm_stat_momentum": 0.1
   },
   "optim_name": "DistributedSecondOrderOptimizer",
@@ -22,17 +22,15 @@
       "BatchNorm1d": "Diag",
       "BatchNorm2d": "Diag"
     },
-    "lr": 1.6e-2,
-    "grad_ema_decay": 0.1,
-    "grad_ema_type": "raw",
-    "bias_correction": true,
-    "l2_reg": 1e-4,
-    "non_reg_for_bn": true,
-    "lars": false
+    "lr": 1.6e-3,
+    "momentum": 0.9,
+    "momentum_type": "raw",
+    "l2_reg": 1e-5,
+    "non_reg_for_bn": true
   },
   "curv_args": {
     "damping": 1e-4,
-    "ema_decay": 0.001
+    "ema_decay": 0.9
   },
   "momentum_correction": true,
   "scheduler_name": "MultiStepLR",
@@ -43,7 +41,7 @@
   "warmup_epochs": 5,
   "warmup_scheduler_name": "GradualWarmupIterLR",
   "warmup_scheduler_args": {
-    "initial_lr": 1.25e-4,
+    "initial_lr": 1.25e-5,
     "max_count": 1565
   }
 }
