@@ -14,9 +14,10 @@ class VIOptimizer(SecondOrderOptimizer):
                  normalizing_weights=False, weight_scale='auto',
                  acc_steps=1, non_reg_for_bn=False, bias_correction=False,
                  lars=False, lars_type='preconditioned',
-                 num_mc_samples=10, val_num_mc_samples=10, kl_weighting=1,
+                 num_mc_samples=10, val_num_mc_samples=10,
+                 kl_weighting=1, adjust_kl_weighting=False,
                  prior_variance=1, init_precision=None, warmup_steps=0,
-                 seed=1, **curv_kwargs):
+                 seed=1, total_steps=1000, **curv_kwargs):
 
         l2_reg = kl_weighting / dataset_size / prior_variance if prior_variance != 0 else 0
 
@@ -30,13 +31,16 @@ class VIOptimizer(SecondOrderOptimizer):
                                           lars=lars, lars_type=lars_type,
                                           **curv_kwargs)
 
+        std_scale = math.sqrt(kl_weighting / dataset_size)
+
+        self.defaults['std_scale'] = std_scale
+        self.defaults['kl_weighting'] = kl_weighting
+        self.defaults['adjust_kl_weighting'] = adjust_kl_weighting
         self.defaults['num_mc_samples'] = num_mc_samples
         self.defaults['val_num_mc_samples'] = val_num_mc_samples
         self.defaults['warmup_steps'] = warmup_steps
-        self.defaults['prior_variance'] = prior_variance
+        self.defaults['total_steps'] = total_steps
         self.defaults['seed_base'] = seed
-
-        std_scale = math.sqrt(kl_weighting / dataset_size)
 
         for group in self.param_groups:
             group['std_scale'] = 0 if group['l2_reg'] == 0 else std_scale
@@ -88,6 +92,22 @@ class VIOptimizer(SecondOrderOptimizer):
                 if getattr(p, 'grad', None) is not None \
                         and getattr(m, 'grad', None) is not None:
                     p.grad.copy_(m.grad)
+
+    def adjust_kl_weighting(self):
+        init_kl = self.defaults['kl_weighting']
+        assert init_kl <= 1
+
+        rate = self.optim_state['step'] / self.defaults['total_steps']
+        kl_weighting = init_kl + rate * (1 - init_kl)
+
+        rate = kl_weighting / init_kl
+        l2_reg = rate * self.defaults['l2_reg']
+        std_scale = math.sqrt(rate) * self.defaults['std_scale']
+        for group in self.param_groups:
+            if group['l2_reg'] > 0:
+                group['l2_reg'] = l2_reg
+            if group['std_scale'] > 0:
+                group['std_scale'] = std_scale
 
     def step(self, closure=None):
         """Performs a single optimization step.
@@ -170,6 +190,9 @@ class VIOptimizer(SecondOrderOptimizer):
                 p.data.copy_(m.data)
                 p.grad.copy_(m.grad)
 
+        if self.defaults['adjust_kl_weighting']:
+            self.adjust_kl_weighting()
+
         return loss, output
 
     def prediction(self, data):
@@ -200,9 +223,9 @@ class VIOptimizer(SecondOrderOptimizer):
 
 class DistributedVIOptimizer(DistributedSecondOrderOptimizer, VIOptimizer):
 
-    def __init__(self, *args, total_steps=1000, mc_group_id=0, **kwargs):
+    def __init__(self, *args, mc_group_id=0, **kwargs):
         super(DistributedVIOptimizer, self).__init__(*args, **kwargs)
-        self.defaults['seed_base'] += mc_group_id * total_steps
+        self.defaults['seed_base'] += mc_group_id * self.defaults['total_steps']
 
     @property
     def actual_optimizer(self):
