@@ -232,10 +232,10 @@ def main():
 
         # save checkpoint
         if epoch % args.checkpoint_interval == 0 or epoch == args.epochs:
-            path = os.path.join(args.out, '{}_{}_epoch{}.pt'.format(
-                args.dataset, args.arch_name, epoch))
+            path = os.path.join(args.out, 'epoch{}.ckpt'.format(epoch))
             data = {
                 'model': model.state_dict(),
+                'optimizer': optimizer.state_dict(),
                 'epoch': epoch
             }
             torch.save(data, path)
@@ -353,6 +353,7 @@ def validate(model, device, val_loader, optimizer):
             data, target = data.to(device), target.to(device)
 
             if isinstance(optimizer, VIOptimizer):
+                optimizer.set_random_seed()
                 output = optimizer.prediction(data)
             else:
                 output = model(data)
