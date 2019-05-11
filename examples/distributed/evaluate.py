@@ -23,6 +23,8 @@ def main():
                         help='dir to save output files')
     parser.add_argument('--val_num_mc_samples', type=int, default=None,
                         help='number of MC samples for validation')
+    parser.add_argument('--out_file_name', type=str, default='prediction.pickle',
+                        help='name of pickle file to save result')
     # Data
     parser.add_argument('--dataset', type=str,
                         choices=[DATASET_CIFAR10, DATASET_CIFAR100, DATASET_IMAGENET, DATASET_IMAGENET10],
@@ -195,10 +197,10 @@ def main():
 
             data, target = data.to(device), target.to(device)
 
-            print('\revaluate [{}/{}]'.format(i+1, len(val_loader)), end='')
+            if i == 0 or (i+1) % int(len(val_loader)/100) == 0:
+                print('evaluate [{}/{}]'.format(i+1, len(val_loader)))
 
             if isinstance(optimizer, VIOptimizer):
-                optimizer.set_random_seed()
                 output = optimizer.prediction(data)
             else:
                 output = model(data)
@@ -214,10 +216,13 @@ def main():
     val_loss /= len(val_loader.dataset)
     val_accuracy = 100. * correct / len(val_loader.dataset)
 
+    prediction['val_accuracy'] = val_accuracy
+    prediction['val_loss'] = val_loss
+
     print('\nEval: Average loss: {:.4f}, Accuracy: {:.0f}/{} ({:.2f}%)\n'.format(
         val_loss, correct, len(val_loader.dataset), val_accuracy))
 
-    filepath = os.path.join(args.out, 'prediction.pickle')
+    filepath = os.path.join(args.out, args.out_file_name)
     with open(filepath, 'wb') as f:
         pickle.dump(prediction, f)
 

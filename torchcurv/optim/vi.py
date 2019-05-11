@@ -66,8 +66,9 @@ class VIOptimizer(SecondOrderOptimizer):
     def seed(self):
         return self.optim_state['step'] + self.defaults['seed_base']
 
-    def set_random_seed(self):
-        seed = self.seed
+    def set_random_seed(self, seed=None):
+        if seed is None:
+            seed = self.seed
         torch.manual_seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
@@ -196,6 +197,8 @@ class VIOptimizer(SecondOrderOptimizer):
         return loss, output
 
     def prediction(self, data):
+
+        self.set_random_seed(self.optim_state['step'])
 
         acc_output = TensorAccumulator()
         mc_samples = self.defaults['val_num_mc_samples']

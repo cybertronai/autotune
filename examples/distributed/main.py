@@ -528,7 +528,6 @@ def validate(rank, model, val_loader, device, optimizer):
         for data, target in val_loader:
             data, target = data.to(device), target.to(device)
             if isinstance(optimizer, DistributedVIOptimizer):
-                optimizer.set_random_seed()
                 output = optimizer.prediction(data)
             else:
                 output = model(data)

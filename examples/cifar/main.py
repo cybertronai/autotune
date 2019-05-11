@@ -353,7 +353,6 @@ def validate(model, device, val_loader, optimizer):
             data, target = data.to(device), target.to(device)
 
             if isinstance(optimizer, VIOptimizer):
-                optimizer.set_random_seed()
                 output = optimizer.prediction(data)
             else:
                 output = model(data)
