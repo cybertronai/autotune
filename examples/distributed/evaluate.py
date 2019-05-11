@@ -172,7 +172,9 @@ def main():
     assert os.path.exists(args.checkpoint), 'Error: no checkpoint file found'
     checkpoint = torch.load(args.checkpoint)
     model.load_state_dict(checkpoint['model'])
-    optimizer.load_state_dict(checkpoint['optimizer'])
+
+    if isinstance(optimizer, VIOptimizer):
+        optimizer.load_state_dict(checkpoint['optimizer'])
 
     # All config
     print('===========================')
