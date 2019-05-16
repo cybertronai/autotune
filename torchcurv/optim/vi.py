@@ -1,6 +1,7 @@
 import math
 
 import torch
+import torch.nn.functional as F
 from torchcurv.optim import SecondOrderOptimizer, DistributedSecondOrderOptimizer
 from torchcurv.utils import TensorAccumulator
 from torchcurv.utils.chainer_communicators import _utility
@@ -200,7 +201,7 @@ class VIOptimizer(SecondOrderOptimizer):
 
         self.set_random_seed(self.optim_state['step'])
 
-        acc_output = TensorAccumulator()
+        acc_prob = TensorAccumulator()
         mc_samples = self.defaults['val_num_mc_samples']
 
         use_mean = mc_samples == 0
@@ -215,13 +216,14 @@ class VIOptimizer(SecondOrderOptimizer):
                 self.sample_params()
 
             output = self.model(data)
-            acc_output.update(output, scale=1/n)
+            prob = F.softmax(output, dim=1)
+            acc_prob.update(prob, scale=1/n)
 
         self.copy_mean_to_params()
 
-        output = acc_output.get()
+        prob = acc_prob.get()
 
-        return output
+        return prob
 
 
 class DistributedVIOptimizer(DistributedSecondOrderOptimizer, VIOptimizer):
