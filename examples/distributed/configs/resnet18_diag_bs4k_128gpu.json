@@ -1,6 +1,6 @@
 {
   "dataset": "ImageNet",
-  "epochs": 90,
+  "epochs": 91,
   "batch_size": 32,
   "val_batch_size": 32,
   "random_resized_crop": false,

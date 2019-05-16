@@ -1,6 +1,6 @@
 {
   "dataset": "ImageNet",
-  "epochs": 90,
+  "epochs": 91,
   "batch_size": 32,
   "val_batch_size": 32,
   "random_resized_crop": false,
@@ -15,12 +15,11 @@
   },
   "optim_name": "Adam",
   "optim_args": {
-    "lr": 1.6e-2,
+    "lr": 1.6e-3,
     "weight_decay": 1e-4,
     "betas": [0.9, 0.999]
   },
   "non_wd_for_bn": true,
-  "lars": true,
   "scheduler_name": "MultiStepLR",
   "scheduler_args": {
     "milestones": [30, 60, 80],
@@ -29,7 +28,7 @@
   "warmup_epochs": 5,
   "warmup_scheduler_name": "GradualWarmupIterLR",
   "warmup_scheduler_args": {
-    "initial_lr": 1.25e-4,
+    "initial_lr": 1.25e-5,
     "max_count": 1565
   }
 }

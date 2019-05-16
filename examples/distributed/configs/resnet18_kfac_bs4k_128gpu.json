@@ -1,6 +1,6 @@
 {
   "dataset": "ImageNet",
-  "epochs": 60,
+  "epochs": 61,
   "batch_size": 32,
   "val_batch_size": 32,
   "random_resized_crop": false,
@@ -31,7 +31,7 @@
   },
   "curv_args": {
     "damping": 1e-4,
-    "ema_decay": 1,
+    "ema_decay": 0.9,
     "pi_type": "tracenorm"
   },
   "momentum_correction": true,

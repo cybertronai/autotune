@@ -1,6 +1,6 @@
 {
   "dataset": "ImageNet",
-  "epochs": 60,
+  "epochs": 61,
   "batch_size": 32,
   "val_batch_size": 32,
   "random_resized_crop": false,
@@ -27,9 +27,9 @@
     "momentum_type": "raw",
     "num_mc_samples": 1,
     "val_num_mc_samples": 10,
-    "kl_weighting": 1,
+    "kl_weighting": 0.1,
     "warmup_steps": 0,
-    "prior_variance": 7.5e-1,
+    "prior_variance": 7.5e-4,
     "non_reg_for_bn": true,
     "acc_steps": 1
   },
