@@ -15,7 +15,8 @@ class Curvature(object):
         self._module = module
         self.ema_decay = ema_decay
         self._damping = damping
-        self.l2_reg = 0
+        self._l2_reg = 0
+        self._l2_reg_ema = 0
 
         self._data = None
         self._acc_data = None
@@ -82,7 +83,19 @@ class Curvature(object):
 
     @property
     def damping(self):
-        return self._damping + self.l2_reg
+        return self._damping + self._l2_reg_ema
+
+    @property
+    def l2_reg(self):
+        return self._l2_reg
+
+    @l2_reg.setter
+    def l2_reg(self, value):
+        self._l2_reg = value
+
+    @property
+    def l2_reg_ema(self):
+        return self._l2_reg_ema
 
     def forward_postprocess(self, module, input, output):
         assert self._module == module
@@ -136,9 +149,12 @@ class Curvature(object):
             self.ema = [d.clone() for d in data]
             if self.use_max_ema and ema_max is None:
                 self.ema_max = [e.clone() for e in self.ema]
+            self._l2_reg_ema = self._l2_reg
         else:
             self.ema = [d.mul(beta).add(1 - beta, e)
                         for d, e in zip(data, ema)]
+            self._l2_reg_ema = self._l2_reg * beta + self._l2_reg_ema * (1 - beta)
+
         if self.use_max_ema:
             for e, e_max in zip(self.ema, self.ema_max):
                 torch.max(e, e_max, out=e_max)
@@ -197,7 +213,6 @@ class DiagCurvature(Curvature):
         for p, m, std in zip(params, mean, self.std):
             noise = torch.randn_like(m)
             p.data.copy_(torch.addcmul(m, std_scale, noise, std))
-            setattr(p, 'noise_scale', std_scale * std.norm().item())
 
     def std_norm(self):
         if self.std is None:

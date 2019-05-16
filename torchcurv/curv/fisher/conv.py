@@ -101,17 +101,11 @@ class KronFisherConv2d(KronCurvature):
                 torch.randn_like(m)).mm(A_ic))
             params[0].data.copy_(param[:, 0:-1].reshape(oc, ic, h, w))
             params[1].data.copy_(param[:, -1])
-            setattr(params[0], 'noise_scale',
-                    std_scale * G_ic.norm().item() * A_ic[:, 0:-1].norm().item())
-            setattr(params[1], 'noise_scale',
-                    std_scale * G_ic.norm().item())
         else:
             m = mean[0].reshape(oc, -1)
             param = m.add(std_scale, G_ic.mm(
                 torch.randn_like(m)).mm(A_ic))
             params[0].data = param.reshape(oc, ic, h, w)
-            setattr(params[0], 'noise_scale',
-                    std_scale * G_ic.norm().item() * A_ic.norm().item())
 
     def _get_shape(self):
         linear = self._module
