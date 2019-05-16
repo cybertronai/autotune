@@ -528,12 +528,14 @@ def validate(rank, model, val_loader, device, optimizer):
         for data, target in val_loader:
             data, target = data.to(device), target.to(device)
             if isinstance(optimizer, DistributedVIOptimizer):
-                output = optimizer.prediction(data)
+                prob = optimizer.prediction(data)
+                val_loss += F.nll_loss(torch.log(prob), target, reduction='sum')
+                pred = prob.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
             else:
                 output = model(data)
+                val_loss += F.cross_entropy(output, target, reduction='sum')  # sum up batch loss
+                pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
 
-            val_loss += F.cross_entropy(output, target, reduction='sum')  # sum up batch loss
-            pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
             correct += pred.eq(target.view_as(pred)).sum()
 
     dist.reduce(val_loss, dst=0)

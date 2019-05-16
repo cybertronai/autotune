@@ -2,7 +2,6 @@ import os
 import argparse
 from importlib import import_module
 import json
-import pickle
 
 import torch
 import torch.nn.functional as F
@@ -36,7 +35,7 @@ def main():
                         help='root of train dataset')
     parser.add_argument('--val_root', type=str, default=None,
                         help='root of validate dataset')
-    parser.add_argument('--val_batch_size', type=int, default=128,
+    parser.add_argument('--eval_batch_size', type=int, default=128,
                         help='input batch size for validation')
     parser.add_argument('--normalizing_data', action='store_true',
                         help='[data pre processing] normalizing data')
@@ -128,7 +127,7 @@ def main():
             root=args.root, train=False, download=args.download, transform=val_transform)
 
     val_loader = torch.utils.data.DataLoader(
-        val_dataset, batch_size=args.val_batch_size, shuffle=False, num_workers=args.num_workers)
+        val_dataset, batch_size=args.eval_batch_size, shuffle=False, num_workers=args.num_workers)
 
     # Setup model
     if args.arch_file is None:
@@ -191,42 +190,69 @@ def main():
     model.eval()
     val_loss = 0
     correct = 0
+    correct_5 = 0
 
-    prediction = {'correct': [], 'confidence': []}
+#    example_id = 0
+    prediction = {'binary': {'true': [], 'prob': []}}
 
     with torch.no_grad():
         for i, (data, target) in enumerate(val_loader):
 
             data, target = data.to(device), target.to(device)
 
-            if i == 0 or (i+1) % int(len(val_loader)/100) == 0:
+            if i == 0 or (i+1) % 10 == 0:
                 print('evaluate [{}/{}]'.format(i+1, len(val_loader)))
 
             if isinstance(optimizer, VIOptimizer):
-                output = optimizer.prediction(data)
+                prob = optimizer.prediction(data)
+                val_loss += F.nll_loss(torch.log(prob), target, reduction='sum').item()
+                pred = prob.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
+                _, preds = prob.topk(5, 1, True, True)
             else:
                 output = model(data)
+                val_loss += F.cross_entropy(output, target, reduction='sum').item()  # sum up batch loss
+                pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
+                _, preds = output.topk(5, 1, True, True)
+                prob = F.softmax(output, dim=1)
 
-            val_loss += F.cross_entropy(output, target, reduction='sum').item()  # sum up batch loss
-            pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
-            prediction['correct'].extend(target.eq(output.argmax(dim=1)).tolist())
-            prob = F.softmax(output, dim=1)
-            top1_prob, _ = torch.max(prob, dim=1)
-            prediction['confidence'].extend(top1_prob.tolist())
             correct += pred.eq(target.view_as(pred)).sum().item()
+
+            preds = preds.t()
+            corrects = preds.eq(target.view(1, -1).expand_as(preds))
+            correct_5 += corrects[:5].view(-1).float().sum(0, keepdim=True).item()
+
+            for p, class_id in zip(prob, target.tolist()):
+                top1 = torch.argmax(p).item()
+                top1_prob = torch.max(p).item()
+                if prediction.get(class_id, None) is None:
+                    prediction[class_id] = {'true': [], 'prob': []}
+                prediction[class_id]['true'].append(int(top1 == class_id))
+                prediction[class_id]['prob'].append(top1_prob)
+                prediction['binary']['true'].append(int(top1 == class_id))
+                prediction['binary']['prob'].append(top1_prob)
+#                key = 'example_{}'.format(example_id)
+#                prediction[key] = {'label': class_id, 'prob': p.tolist()}
+#                example_id += 1
 
     val_loss /= len(val_loader.dataset)
     val_accuracy = 100. * correct / len(val_loader.dataset)
+    val_top5_accuracy = 100. * correct_5 / len(val_loader.dataset)
 
     prediction['val_accuracy'] = val_accuracy
+    prediction['val_top5_accuracy'] = val_top5_accuracy
     prediction['val_loss'] = val_loss
 
-    print('\nEval: Average loss: {:.4f}, Accuracy: {:.0f}/{} ({:.2f}%)\n'.format(
-        val_loss, correct, len(val_loader.dataset), val_accuracy))
+    print(args.checkpoint)
+    print('Eval: average loss: {:.4f}, '
+          'top-1 accuracy: {:.0f}/{} ({:.2f}%), '
+          'top-5 accuracy: {:.0f}/{} ({:.2f}%)'.format(
+           val_loss,
+           correct, len(val_loader.dataset), val_accuracy,
+           correct_5, len(val_loader.dataset), val_top5_accuracy))
 
     filepath = os.path.join(args.out, args.out_file_name)
-    with open(filepath, 'wb') as f:
-        pickle.dump(prediction, f)
+    with open(filepath, 'w') as f:
+        json.dump(prediction, f, indent=4)
 
 
 if __name__ == '__main__':
