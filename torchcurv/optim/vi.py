@@ -16,11 +16,13 @@ class VIOptimizer(SecondOrderOptimizer):
                  acc_steps=1, non_reg_for_bn=False, bias_correction=False,
                  lars=False, lars_type='preconditioned',
                  num_mc_samples=10, val_num_mc_samples=10,
-                 kl_weighting=1, adjust_kl_weighting=False,
-                 prior_variance=1, init_precision=None, warmup_steps=0,
+                 kl_weighting=1, warmup_kl_weighting_init=0.01, warmup_kl_weighting_steps=None,
+                 prior_variance=1, init_precision=None,
                  seed=1, total_steps=1000, **curv_kwargs):
 
-        l2_reg = kl_weighting / dataset_size / prior_variance if prior_variance != 0 else 0
+        init_kl_weighting = kl_weighting if warmup_kl_weighting_steps is None else warmup_kl_weighting_init
+        l2_reg = init_kl_weighting / dataset_size / prior_variance if prior_variance != 0 else 0
+        std_scale = math.sqrt(init_kl_weighting / dataset_size)
 
         super(VIOptimizer, self).__init__(model, curv_type, curv_shapes,
                                           lr=lr, momentum=momentum, momentum_type=momentum_type,
@@ -32,14 +34,12 @@ class VIOptimizer(SecondOrderOptimizer):
                                           lars=lars, lars_type=lars_type,
                                           **curv_kwargs)
 
-        std_scale = math.sqrt(kl_weighting / dataset_size)
-
         self.defaults['std_scale'] = std_scale
         self.defaults['kl_weighting'] = kl_weighting
-        self.defaults['adjust_kl_weighting'] = adjust_kl_weighting
+        self.defaults['warmup_kl_weighting_init'] = warmup_kl_weighting_init
+        self.defaults['warmup_kl_weighting_steps'] = warmup_kl_weighting_steps
         self.defaults['num_mc_samples'] = num_mc_samples
         self.defaults['val_num_mc_samples'] = val_num_mc_samples
-        self.defaults['warmup_steps'] = warmup_steps
         self.defaults['total_steps'] = total_steps
         self.defaults['seed_base'] = seed
 
@@ -96,11 +96,19 @@ class VIOptimizer(SecondOrderOptimizer):
                     p.grad.copy_(m.grad)
 
     def adjust_kl_weighting(self):
-        init_kl = self.defaults['kl_weighting']
-        assert init_kl <= 1
+        warmup_steps = self.defaults['warmup_kl_weighting_steps']
+        if warmup_steps is None:
+            return
 
-        rate = self.optim_state['step'] / self.defaults['total_steps']
-        kl_weighting = init_kl + rate * (1 - init_kl)
+        current_step = self.optim_state['step']
+        if warmup_steps < current_step:
+            return
+
+        target_kl = self.defaults['kl_weighting']
+        init_kl = self.defaults['warmup_kl_weighting_init']
+
+        rate = current_step / warmup_steps
+        kl_weighting = init_kl + rate * (target_kl - init_kl)
 
         rate = kl_weighting / init_kl
         l2_reg = rate * self.defaults['l2_reg']
@@ -123,29 +131,25 @@ class VIOptimizer(SecondOrderOptimizer):
             return loss, output
         """
 
-        warmup = self.optim_state['step'] < self.defaults['warmup_steps']
-
-        m = 1 if warmup else self.defaults['num_mc_samples']
+        m = self.defaults['num_mc_samples']
         n = self.defaults['acc_steps']
 
         acc_loss = TensorAccumulator()
-        acc_output = TensorAccumulator()
+        acc_prob = TensorAccumulator()
 
         self.set_random_seed()
 
         for _ in range(m):
 
             # sampling
-            if warmup:
-                self.copy_mean_to_params()
-            else:
-                self.sample_params()
+            self.sample_params()
 
             # forward and backward
             loss, output = closure()
 
             acc_loss.update(loss, scale=1/m)
-            acc_output.update(output, scale=1/m)
+            prob = F.softmax(output, dim=1)
+            acc_prob.update(prob, scale=1/n)
 
             # accumulate
             for group in self.param_groups:
@@ -158,12 +162,12 @@ class VIOptimizer(SecondOrderOptimizer):
                 if curv is not None:
                     group['acc_curv'].update(curv.data, scale=1/m/n)
 
-        loss, output = acc_loss.get(), acc_output.get()
+        loss, prob = acc_loss.get(), acc_prob.get()
 
         # update acc step
         self.optim_state['acc_step'] += 1
         if self.optim_state['acc_step'] < n:
-            return loss, output
+            return loss, prob
         else:
             self.optim_state['acc_step'] = 0
 
@@ -178,7 +182,7 @@ class VIOptimizer(SecondOrderOptimizer):
             # update covariance
             mean, curv = group['mean'], group['curv']
             if curv is not None:
-                curv.step(update_std=(group['std_scale'] > 0 and not warmup))
+                curv.step(update_std=(group['std_scale'] > 0))
                 curv.precondition_grad(mean)
 
             # update mean
@@ -192,10 +196,9 @@ class VIOptimizer(SecondOrderOptimizer):
                 p.data.copy_(m.data)
                 p.grad.copy_(m.grad)
 
-        if self.defaults['adjust_kl_weighting']:
-            self.adjust_kl_weighting()
+        self.adjust_kl_weighting()
 
-        return loss, output
+        return loss, prob
 
     def prediction(self, data):
 
