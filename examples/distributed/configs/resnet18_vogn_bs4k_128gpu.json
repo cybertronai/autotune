@@ -4,8 +4,9 @@
   "batch_size": 32,
   "val_batch_size": 32,
   "random_resized_crop": false,
-  "random_crop": true,
-  "random_horizontal_flip": true,
+  "random_crop": false,
+  "random_horizontal_flip": false,
+  "dataset_size_scale": 5,
   "normalizing_data": true,
   "arch_file": "models/resnet_b.py",
   "arch_name": "resnet18",
@@ -28,8 +29,7 @@
     "num_mc_samples": 1,
     "val_num_mc_samples": 10,
     "kl_weighting": 1,
-    "adjust_kl_weighting": false,
-    "prior_variance": 7.5e-2,
+    "prior_variance": 7.5e-3,
     "non_reg_for_bn": true
   },
   "curv_args": {

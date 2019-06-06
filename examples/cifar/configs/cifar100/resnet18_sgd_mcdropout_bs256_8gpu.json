@@ -1,0 +1,30 @@
+{
+    "dataset": "CIFAR-100",
+    "epochs": 161,
+    "batch_size": 32,
+    "val_batch_size": 128,
+    "random_crop": true,
+    "random_horizontal_flip": true,
+    "normalizing_data": true,
+    "arch_file": "models/resnet_b_mcdropout.py",
+    "arch_name": "resnet18",
+    "arch_args": {
+        "zero_init_residual": true,
+        "norm_stat_momentum": 0.1,
+        "dropout_ratio": 0.1,
+        "val_mc": 10
+    },
+    "optim_name": "SGD",
+    "optim_args": {
+        "lr": 0.1,
+        "momentum": 0.9,
+        "weight_decay": 5e-4
+    },
+    "momentum_correction": true,
+    "non_wd_for_bn": true,
+    "scheduler_name": "MultiStepLR",
+    "scheduler_args": {
+        "milestones": [80, 120],
+        "gamma": 0.1
+    }
+}
