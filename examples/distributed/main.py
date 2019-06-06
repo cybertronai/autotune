@@ -50,6 +50,8 @@ def main():
                         help='[data augmentation] random resised crop')
     parser.add_argument('--random_horizontal_flip', action='store_true',
                         help='[data augmentation] random horizontal flip')
+    parser.add_argument('--dataset_size_scale', type=float, default=1.,
+                        help='ratio multiplied to the actual dataset size')
     # Training Settings
     parser.add_argument('--arch_file', type=str, default=None,
                         help='name of file which defines the architecture')
@@ -271,7 +273,7 @@ def main():
     if args.optim_name == DistributedVIOptimizer.__name__:
         optimizer = DistributedVIOptimizer(model,
                                            mc_group_id=mc_group_id,
-                                           dataset_size=len(train_loader.dataset),
+                                           dataset_size=len(train_loader.dataset) * args.dataset_size_scale,
                                            total_steps=total_steps,
                                            seed=args.seed,
                                            **optim_kwargs, **args.curv_args)
@@ -529,6 +531,10 @@ def validate(rank, model, val_loader, device, optimizer):
             data, target = data.to(device), target.to(device)
             if isinstance(optimizer, DistributedVIOptimizer):
                 prob = optimizer.prediction(data)
+                val_loss += F.nll_loss(torch.log(prob), target, reduction='sum')
+                pred = prob.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
+            elif hasattr(model, 'mc_prediction'):
+                prob = model.mc_prediction(data)
                 val_loss += F.nll_loss(torch.log(prob), target, reduction='sum')
                 pred = prob.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
             else:
