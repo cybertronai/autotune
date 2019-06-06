@@ -171,6 +171,8 @@ def main():
     assert os.path.exists(args.checkpoint), 'Error: no checkpoint file found'
     checkpoint = torch.load(args.checkpoint)
     model.load_state_dict(checkpoint['model'])
+    if args.val_num_mc_samples is not None:
+        setattr(model, 'val_mc', args.val_num_mc_samples)
 
     if isinstance(optimizer, VIOptimizer):
         optimizer.load_state_dict(checkpoint['optimizer'])
@@ -208,6 +210,11 @@ def main():
                 val_loss += F.nll_loss(torch.log(prob), target, reduction='sum').item()
                 pred = prob.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
                 _, preds = prob.topk(5, 1, True, True)
+            elif hasattr(model, 'mc_prediction'):
+                prob = model.mc_prediction(data)
+                val_loss += F.nll_loss(torch.log(prob), target, reduction='sum').item()
+                pred = prob.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
+                _, preds = prob.topk(5, 1, True, True)
             else:
                 output = model(data)
                 val_loss += F.cross_entropy(output, target, reduction='sum').item()  # sum up batch loss
@@ -230,9 +237,6 @@ def main():
                 prediction[class_id]['prob'].append(top1_prob)
                 prediction['binary']['true'].append(int(top1 == class_id))
                 prediction['binary']['prob'].append(top1_prob)
-#                key = 'example_{}'.format(example_id)
-#                prediction[key] = {'label': class_id, 'prob': p.tolist()}
-#                example_id += 1
 
     val_loss /= len(val_loader.dataset)
     val_accuracy = 100. * correct / len(val_loader.dataset)
