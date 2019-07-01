@@ -1,7 +1,7 @@
-from torchcurv import KronFisherConv2d, KronHessian
+from torchcurv import KronCovConv2d, KronHessian
 
 
-class KronHessianConv2d(KronFisherConv2d, KronHessian):
+class KronHessianConv2d(KronCovConv2d, KronHessian):
 
     def __init__(self, module, ema_decay=1., damping=0, post_curv=None, recursive_approx=False):
         KronHessian.__init__(self, module, ema_decay, damping, post_curv, recursive_approx)

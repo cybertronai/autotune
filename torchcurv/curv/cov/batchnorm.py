@@ -1,13 +1,13 @@
 from torchcurv import Curvature, DiagCurvature
 
 
-class FisherBatchNorm1d(Curvature):
+class CovBatchNorm1d(Curvature):
 
     def update_in_backward(self, grad_output_data):
         pass
 
 
-class DiagFisherBatchNorm1d(DiagCurvature):
+class DiagCovBatchNorm1d(DiagCurvature):
 
     def update_in_backward(self, grad_output):
         data_input = getattr(self._module, 'data_input', None)  # n x f
@@ -25,13 +25,13 @@ class DiagFisherBatchNorm1d(DiagCurvature):
             self._data.append(data_b)
 
 
-class FisherBatchNorm2d(Curvature):
+class CovBatchNorm2d(Curvature):
 
     def update_in_backward(self, grad_output):
         pass
 
 
-class DiagFisherBatchNorm2d(DiagCurvature):
+class DiagCovBatchNorm2d(DiagCurvature):
 
     def update_in_backward(self, grad_out):
         data_input = getattr(self._module, 'data_input', None)  # n x c x h x w

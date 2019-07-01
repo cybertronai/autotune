@@ -2,7 +2,7 @@ import torch
 from torchcurv import Curvature, DiagCurvature, KronCurvature
 
 
-class FisherLinear(Curvature):
+class CovLinear(Curvature):
 
     def update_in_backward(self, grad_output_data):
         pass
@@ -11,7 +11,7 @@ class FisherLinear(Curvature):
         pass
 
 
-class DiagFisherLinear(DiagCurvature):
+class DiagCovLinear(DiagCurvature):
 
     def update_in_backward(self, grad_output):
         data_input = getattr(self._module, 'data_input', None)  # n x f_in
@@ -31,7 +31,7 @@ class DiagFisherLinear(DiagCurvature):
             self._data.append(data_b)
 
 
-class KronFisherLinear(KronCurvature):
+class KronCovLinear(KronCurvature):
 
     def update_in_forward(self, input_data):
         n = input_data.shape[0]  # n x f_in

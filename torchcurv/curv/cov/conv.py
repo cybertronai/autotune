@@ -3,7 +3,7 @@ import torch
 import torch.nn.functional as F
 
 
-class FisherConv2d(Curvature):
+class CovConv2d(Curvature):
 
     def update_in_backward(self, grad_output):
         pass
@@ -12,7 +12,7 @@ class FisherConv2d(Curvature):
         pass
 
 
-class DiagFisherConv2d(DiagCurvature):
+class DiagCovConv2d(DiagCurvature):
 
     def update_in_backward(self, grad_output):
         conv2d = self._module
@@ -42,7 +42,7 @@ class DiagFisherConv2d(DiagCurvature):
             self._data.append(data_b)
 
 
-class KronFisherConv2d(KronCurvature):
+class KronCovConv2d(KronCurvature):
 
     def update_in_forward(self, data_input):
         conv2d = self._module
