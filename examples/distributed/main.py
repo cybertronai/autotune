@@ -257,6 +257,7 @@ def main():
     arch_kwargs['num_classes'] = num_classes
 
     model = arch_class(**arch_kwargs)
+    setattr(model, 'num_classes', num_classes)
     model = model.to(device)
 
     # [COMM] Broadcast model parameters
@@ -451,6 +452,10 @@ def train(rank, epoch, model, device, train_loader, optimizer, scheduler,
             loss.backward()
 
             return loss, output
+
+        if isinstance(optimizer, DistributedSecondOrderOptimizer) \
+                and optimizer.curv_type == 'Fisher':
+            closure = torchcurv.get_closure_for_fisher(optimizer, model, data, target)
 
         loss, output = optimizer.step(closure=closure)
         data_size = torch.tensor(len(data)).to(device)
