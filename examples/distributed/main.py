@@ -276,11 +276,11 @@ def main():
                                            dataset_size=len(train_loader.dataset) * args.dataset_size_scale,
                                            total_steps=total_steps,
                                            seed=args.seed,
-                                           **optim_kwargs, **args.curv_args)
+                                           **optim_kwargs, curv_kwargs=args.curv_args)
     else:
         assert args.num_mc_groups == 1, 'You cannot use MC sample groups with non-VI optimizers.'
         if args.optim_name == DistributedSecondOrderOptimizer.__name__:
-            optimizer = DistributedSecondOrderOptimizer(model, **optim_kwargs, **args.curv_args)
+            optimizer = DistributedSecondOrderOptimizer(model, **optim_kwargs, curv_kwargs=args.curv_args)
         else:
             if args.non_wd_for_bn:
                 group, group_non_wd = {'params': []}, {'params': [], 'non_wd': True}
