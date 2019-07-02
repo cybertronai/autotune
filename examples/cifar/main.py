@@ -280,6 +280,9 @@ def train(model, device, train_loader, optimizer, scheduler, epoch, args, logger
 
             return loss, output
 
+        if isinstance(optimizer, SecondOrderOptimizer) and optimizer.curv_type == 'Fisher':
+            closure = torchcurv.get_closure_for_fisher(optimizer, model, data, target)
+
         loss, output = optimizer.step(closure=closure)
 
         pred = output.argmax(dim=1, keepdim=True)
