@@ -14,12 +14,12 @@ from torchcurv.utils.chainer_communicators import _utility
 
 class SecondOrderOptimizer(Optimizer):
 
-    def __init__(self, model, curv_type, curv_shapes,
+    def __init__(self, model, curv_type, curv_shapes, curv_kwargs,
                  lr=0.01, momentum=0, momentum_type='preconditioned',
                  grad_ema_decay=1, grad_ema_type='raw', l2_reg=0, weight_decay=0,
                  normalizing_weights=False, weight_scale='auto',
                  acc_steps=1, non_reg_for_bn=False, bias_correction=False,
-                 lars=False, lars_type='preconditioned', **curv_kwargs):
+                 lars=False, lars_type='preconditioned'):
 
         # TODO implement error checker: hoge(optim_kwargs)
         """

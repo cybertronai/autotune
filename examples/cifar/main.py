@@ -159,7 +159,7 @@ def main():
 
     # Setup optimizer
     if args.optim_name == SecondOrderOptimizer.__name__:
-        optimizer = SecondOrderOptimizer(model, **optim_kwargs, **args.curv_args)
+        optimizer = SecondOrderOptimizer(model, **optim_kwargs, curv_kwargs=args.curv_args)
     elif args.optim_name == VIOptimizer.__name__:
         optimizer = VIOptimizer(model, dataset_size=len(train_loader.dataset), seed=args.seed,
                                 **optim_kwargs, **args.curv_args)
