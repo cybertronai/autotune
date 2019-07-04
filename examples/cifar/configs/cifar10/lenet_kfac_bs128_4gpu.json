@@ -1,6 +1,6 @@
 {
   "dataset": "CIFAR-10",
-  "epochs": 150,
+  "epochs": 50,
   "batch_size": 32,
   "val_batch_size": 1250,
   "random_crop": true,
@@ -10,7 +10,7 @@
   "arch_name": "LeNet5",
   "optim_name": "DistributedSecondOrderOptimizer",
   "optim_args": {
-    "lr": 1e-3,
+    "lr": 1e-4,
     "curv_type": "Fisher",
     "curv_shapes": {
       "Conv2d": "Kron",
@@ -24,9 +24,13 @@
     "acc_steps": 1
   },
   "curv_args": {
-    "damping": 1e-4,
+    "damping": 1e-5,
     "ema_decay": 0.999,
     "pi_type": "tracenorm"
+  },
+  "fisher_args": {
+    "sample_type": "topk",
+    "num_samples": 10
   },
   "scheduler_name": "ExponentialLR",
   "scheduler_args": {
