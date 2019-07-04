@@ -65,6 +65,8 @@ def main():
                         help='[JSON] arguments for the optimizer')
     parser.add_argument('--curv_args', type=json.loads, default=None,
                         help='[JSON] arguments for the curvature')
+    parser.add_argument('--fisher_args', type=json.loads, default=dict(),
+                        help='[JSON] arguments for the fisher')
     parser.add_argument('--scheduler_name', type=str, default=None,
                         help='name of the learning rate scheduler')
     parser.add_argument('--scheduler_args', type=json.loads, default=None,
@@ -464,7 +466,7 @@ def train(rank, epoch, model, device, train_loader, optimizer, scheduler,
 
         if isinstance(optimizer, DistributedSecondOrderOptimizer) \
                 and optimizer.curv_type == 'Fisher':
-            closure = torchcurv.get_closure_for_fisher(optimizer, model, data, target)
+            closure = torchcurv.get_closure_for_fisher(optimizer, model, data, target, **args.fisher_args)
 
         loss, output = optimizer.step(closure=closure)
         data_size = torch.tensor(len(data)).to(device)
