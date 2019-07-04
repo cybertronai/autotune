@@ -370,11 +370,20 @@ def main():
         # Copy this file & config to args.out
         if not os.path.isdir(args.out):
             os.makedirs(args.out)
-        shutil.copy(os.path.realpath(__file__), args.out)
+        try:
+            shutil.copy(os.path.realpath(__file__), args.out)
+        except shutil.SameFileError:
+            pass
         if args.config is not None:
-            shutil.copy(args.config, args.out)
+            try:
+                shutil.copy(args.config, args.out)
+            except shutil.SameFileError:
+                pass
         if args.arch_file is not None:
-            shutil.copy(args.arch_file, args.out)
+            try:
+                shutil.copy(args.arch_file, args.out)
+            except shutil.SameFileError:
+                pass
 
         # Setup logger
         logger = Logger(args.out, args.log_file_name)
