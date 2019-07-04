@@ -31,8 +31,12 @@
   },
   "curv_args": {
     "damping": 1e-4,
-    "ema_decay": 0.9,
+    "ema_decay": 1,
     "pi_type": "tracenorm"
+  },
+  "fisher_args": {
+    "sample_type": "topk",
+    "num_samples": 10
   },
   "momentum_correction": true,
   "scheduler_name": "MultiStepLR",
