@@ -63,7 +63,7 @@ def main():
                         help='name of the optimizer')
     parser.add_argument('--optim_args', type=json.loads, default=None,
                         help='[JSON] arguments for the optimizer')
-    parser.add_argument('--curv_args', type=json.loads, default=None,
+    parser.add_argument('--curv_args', type=json.loads, default=dict(),
                         help='[JSON] arguments for the curvature')
     parser.add_argument('--fisher_args', type=json.loads, default=dict(),
                         help='[JSON] arguments for the fisher')
