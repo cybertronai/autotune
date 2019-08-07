@@ -12,3 +12,4 @@ from .preact_resnet import *
 from .mobilenet import *
 from .mobilenetv2 import *
 from .alexnet import *
+from .mlp import *

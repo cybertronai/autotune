@@ -13,13 +13,14 @@ from torchcurv.utils import Logger
 
 DATASET_CIFAR10 = 'CIFAR-10'
 DATASET_CIFAR100 = 'CIFAR-100'
+DATASET_MNIST = 'MNIST'
 
 
 def main():
     parser = argparse.ArgumentParser()
     # Data
     parser.add_argument('--dataset', type=str,
-                        choices=[DATASET_CIFAR10, DATASET_CIFAR100], default=DATASET_CIFAR10,
+                        choices=[DATASET_CIFAR10, DATASET_CIFAR100, DATASET_MNIST], default=DATASET_CIFAR10,
                         help='name of dataset')
     parser.add_argument('--root', type=str, default='./data',
                         help='root of dataset')
@@ -116,10 +117,15 @@ def main():
         # CIFAR-10
         num_classes = 10
         dataset_class = datasets.CIFAR10
-    else:
+    elif args.dataset == DATASET_CIFAR100:
         # CIFAR-100
         num_classes = 100
         dataset_class = datasets.CIFAR100
+    elif args.dataset == DATASET_MNIST:
+        num_classes = 10
+        dataset_class = datasets.MNIST
+    else:
+        assert False, f'unknown dataset {args.dataset}'
 
     train_dataset = dataset_class(
         root=args.root, train=True, download=args.download, transform=train_transform)
