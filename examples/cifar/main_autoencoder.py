@@ -1,12 +1,14 @@
-import os
 import argparse
-from importlib import import_module
-import shutil
 import json
+import os
+import shutil
+from importlib import import_module
 
-import torch
 import torch.nn.functional as F
+import wandb
 from torchvision import datasets, transforms, models
+import torch
+
 import torchcurv
 from torchcurv.optim import SecondOrderOptimizer, VIOptimizer
 from torchcurv.utils import Logger
@@ -14,6 +16,36 @@ from torchcurv.utils import Logger
 DATASET_CIFAR10 = 'CIFAR-10'
 DATASET_CIFAR100 = 'CIFAR-100'
 DATASET_MNIST = 'MNIST'
+
+
+device = torch.device('cuda')
+
+
+class FastMNIST(datasets.MNIST):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # Scale data to [0,1]
+        self.data = self.data.unsqueeze(1).float().div(255)
+
+        # Normalize it with the usual MNIST mean and std
+        self.data = self.data.sub_(0.1307).div_(0.3081)
+
+        # Put both data and targets on GPU in advance
+        self.data, self.targets = self.data.to(device), self.targets.to(device)
+
+    def __getitem__(self, index):
+        """
+        Args:
+            index (int): Index
+
+        Returns:
+            tuple: (image, target) where target is index of the target class.
+        """
+        img, target = self.data[index], self.targets[index]
+
+        return img, target
+
 
 
 def main():
@@ -78,6 +110,12 @@ def main():
                         help='config file path')
 
     args = parser.parse_args()
+
+    wandb.init(project='pytorch-curv', name='autoencoder')
+    wandb.config['config'] = args.config
+    wandb.config['batch'] = args.batch_size
+    wandb.config['optim'] = args.optim_name
+
     dict_args = vars(args)
 
     # Load config file
@@ -123,7 +161,7 @@ def main():
         dataset_class = datasets.CIFAR100
     elif args.dataset == DATASET_MNIST:
         num_classes = 10
-        dataset_class = datasets.MNIST
+        dataset_class = datasets.MNIST  # FastMNIST
     else:
         assert False, f'unknown dataset {args.dataset}'
 
@@ -266,6 +304,8 @@ def train(model, device, train_loader, optimizer, scheduler, epoch, args, logger
     num_iters_in_epoch = len(train_loader)
     base_num_iter = (epoch - 1) * num_iters_in_epoch
 
+    last_elapsed_time = 0
+    interval_ms = 0
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
 
@@ -298,6 +338,9 @@ def train(model, device, train_loader, optimizer, scheduler, epoch, args, logger
 
         if batch_idx % args.log_interval == 0:
             elapsed_time = logger.elapsed_time
+            if last_elapsed_time:
+                interval_ms = 1000*(elapsed_time - last_elapsed_time)
+            last_elapsed_time = elapsed_time
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}, '
                   'Accuracy: {:.0f}/{} ({:.2f}%), '
                   'Elapsed Time: {:.1f}s'.format(
@@ -307,7 +350,8 @@ def train(model, device, train_loader, optimizer, scheduler, epoch, args, logger
             # save log
             lr = optimizer.param_groups[0]['lr']
             log = {'epoch': epoch, 'iteration': iteration, 'elapsed_time': elapsed_time,
-                   'accuracy': 0, 'loss': loss, 'lr': lr}
+                   'accuracy': 0, 'loss': loss, 'lr': lr, 'step_ms': interval_ms}
+            wandb.log(log, step=iteration*args.batch_size)
 
             for name, param in model.named_parameters():
                 attr = 'p_pre_{}'.format(name)

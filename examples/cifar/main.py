@@ -6,6 +6,7 @@ import json
 
 import torch
 import torch.nn.functional as F
+import wandb
 from torchvision import datasets, transforms, models
 import torchcurv
 from torchcurv.optim import SecondOrderOptimizer, VIOptimizer
@@ -123,7 +124,8 @@ def main():
         dataset_class = datasets.CIFAR100
     elif args.dataset == DATASET_MNIST:
         num_classes = 10
-        dataset_class = datasets.MNIST
+        #dataset_class = datasets.MNIST
+        dataset_class = FastMNIST
     else:
         assert False, f'unknown dataset {args.dataset}'
 
@@ -314,6 +316,7 @@ def train(model, device, train_loader, optimizer, scheduler, epoch, args, logger
         if batch_idx % args.log_interval == 0:
             accuracy = 100. * total_correct / total_data_size
             elapsed_time = logger.elapsed_time
+            wandb.log({'loss': loss.item(), 'lr': optimizer.param_groups[0]['lr']}, step=batch_idx)
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}, '
                   'Accuracy: {:.0f}/{} ({:.2f}%), '
                   'Elapsed Time: {:.1f}s'.format(

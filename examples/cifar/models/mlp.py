@@ -16,7 +16,7 @@ class MLP(nn.Module):
         self.l3 = nn.Linear(n_hid, n_out)
 
     def forward(self, x: torch.Tensor):
-        x = x.reshape([-1, 28*28])
+        x = x.view([-1, 28*28])
         x = F.relu(self.l1(x))
         x = F.relu(self.l2(x))
         x = self.l3(x)
