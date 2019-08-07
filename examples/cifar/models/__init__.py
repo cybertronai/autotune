@@ -13,3 +13,4 @@ from .mobilenet import *
 from .mobilenetv2 import *
 from .alexnet import *
 from .mlp import *
+from .mlp_autoencoder import *
