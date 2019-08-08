@@ -149,6 +149,10 @@ def main():
                         help='dir to save output files')
     parser.add_argument('--config', default='configs/cifar10/mlp_autoencoder.json',
                         help='config file path')
+    parser.add_argument('--fisher_mc_approx', action='store_true', default=False,
+                        help='if True, Fisher is estimated by MC sampling')
+    parser.add_argument('--fisher_num_mc', type=int, default=1,
+                        help='number of MC samples for estimating Fisher')
 
     args = parser.parse_args()
 
@@ -378,7 +382,8 @@ def train(model, device, train_loader, optimizer, scheduler, epoch, args, logger
             return loss, output
 
         if isinstance(optimizer, SecondOrderOptimizer) and optimizer.curv_type == 'Fisher':
-            closure = torchcurv.get_closure_for_fisher(optimizer, model, data, target)
+            closure = torchcurv.get_closure_for_fisher(optimizer, model, data, target,
+                                                       mc_approx=args.fisher_mc_approx, num_mc=args.fisher_num_mc)
 
         loss, output = optimizer.step(closure=closure)
         loss = loss.item()
