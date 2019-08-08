@@ -19,15 +19,14 @@
     },
     "momentum": 0.9,
     "momentum_type": "preconditioned",
-    "weight_decay": 0.05,
-    "acc_steps": 4
+    "weight_decay": 0
   },
   "curv_args": {
-    "damping": 1e-4,
-    "ema_decay": 0.333
+    "damping": 3e-3,
+    "ema_decay": 1
   },
 
-  "lr": 1e-6,
+  "lr": 0.02,
   "scheduler_name": "ExponentialLR",
   "scheduler_args": {
     "gamma": 1.0
