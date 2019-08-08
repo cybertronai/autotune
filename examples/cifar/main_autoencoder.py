@@ -2,10 +2,16 @@ import argparse
 import json
 import os
 import shutil
+import sys
 from importlib import import_module
 
 import torch.nn.functional as F
-import wandb
+try:
+    import wandb
+except Exception as e:
+    print(f"wandb crash with {e}")
+
+
 from torchvision import datasets, transforms, models
 import torch
 
@@ -19,6 +25,42 @@ DATASET_MNIST = 'MNIST'
 
 
 device = torch.device('cuda')
+
+
+def install_pdb_handler():
+    """Automatically start pdb:
+      1. CTRL+\\ breaks into pdb.
+      2. pdb gets launched on exception.
+  """
+
+    import signal
+    import pdb
+
+    def handler(_signum, _frame):
+        pdb.set_trace()
+
+    signal.signal(signal.SIGQUIT, handler)
+
+    # Drop into PDB on exception
+    # from https://stackoverflow.com/questions/13174412
+    def info(type_, value, tb):
+        if hasattr(sys, 'ps1') or not sys.stderr.isatty():
+            # we are in interactive mode or we don't have a tty-like
+            # device, so we call the default hook
+            sys.__excepthook__(type_, value, tb)
+        else:
+            import traceback
+            import pdb
+            # we are NOT in interactive mode, print the exception...
+            traceback.print_exception(type_, value, tb)
+            print()
+            # ...then start the debugger in post-mortem mode.
+            pdb.pm()
+
+    sys.excepthook = info
+
+
+install_pdb_handler()
 
 
 class FastMNIST(datasets.MNIST):
@@ -45,7 +87,6 @@ class FastMNIST(datasets.MNIST):
         img, target = self.data[index], self.targets[index]
 
         return img, target
-
 
 
 def main():
@@ -111,10 +152,19 @@ def main():
 
     args = parser.parse_args()
 
-    wandb.init(project='pytorch-curv', name='autoencoder')
-    wandb.config['config'] = args.config
-    wandb.config['batch'] = args.batch_size
-    wandb.config['optim'] = args.optim_name
+    run_name = args.config
+    run_name = os.path.basename(run_name)
+    run_name = run_name.rsplit('.', 1)[0]  # extract filename without .json suffix
+
+    try:
+        # os.environ['WANDB_SILENT'] = 'true'
+        wandb.init(project='pytorch-curv', name=run_name)
+        wandb.config['config'] = args.config
+        wandb.config['batch'] = args.batch_size
+        wandb.config['optim'] = args.optim_name
+    except Exception as e:
+        print(f"wandb crash with {e}")
+        pass
 
     dict_args = vars(args)
 
@@ -161,7 +211,7 @@ def main():
         dataset_class = datasets.CIFAR100
     elif args.dataset == DATASET_MNIST:
         num_classes = 10
-        dataset_class = datasets.MNIST  # FastMNIST
+        dataset_class = FastMNIST
     else:
         assert False, f'unknown dataset {args.dataset}'
 
@@ -351,7 +401,10 @@ def train(model, device, train_loader, optimizer, scheduler, epoch, args, logger
             lr = optimizer.param_groups[0]['lr']
             log = {'epoch': epoch, 'iteration': iteration, 'elapsed_time': elapsed_time,
                    'accuracy': 0, 'loss': loss, 'lr': lr, 'step_ms': interval_ms}
-            wandb.log(log, step=iteration*args.batch_size)
+            try:
+                wandb.log(log, step=iteration*args.batch_size)
+            except Exception as e:
+                print(f"wandb crash with {e}")
 
             for name, param in model.named_parameters():
                 attr = 'p_pre_{}'.format(name)

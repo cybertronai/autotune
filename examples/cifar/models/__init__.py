@@ -14,3 +14,4 @@ from .mobilenetv2 import *
 from .alexnet import *
 from .mlp import *
 from .mlp_autoencoder import *
+from .mlp_autoencoder_deep import *
