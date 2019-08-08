@@ -1,6 +1,6 @@
 {
   "dataset": "MNIST",
-  "epochs": 1500,
+  "epochs": 150000,
   "batch_size": 60000,
   "test_batch_size": 128,
   "random_crop": false,
@@ -27,7 +27,7 @@
     "ema_decay": 0.333
   },
 
-  "lr": 1e-4,
+  "lr": 1e-6,
   "scheduler_name": "ExponentialLR",
   "scheduler_args": {
     "gamma": 1.0

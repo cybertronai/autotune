@@ -1,6 +1,6 @@
 {
   "dataset": "MNIST",
-  "epochs": 1500,
+  "epochs": 150000,
   "batch_size": 60000,
   "test_batch_size": 128,
   "random_crop": false,
