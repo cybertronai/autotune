@@ -28,11 +28,19 @@ class Fisher(object):
         return self._acc_cov.get()
 
 
-def get_closure_for_fisher(optimizer, model, data, target, mc_approx=False, num_mc=1):
+def get_closure_for_fisher(optimizer, model, data, target, approx_type=None, num_mc=1):
+
+    for group in optimizer.param_groups:
+        assert isinstance(group['curv'], Fisher)
+
+    _APPROX_TYPE_MC = 'mc'
+    _APPROX_TYPE_RECURSIVE = 'recursive'
+
+    seen_funcs = set()
+    all_curvs = [group['curv'] for group in optimizer.param_groups]
 
     def turn_off_param_grad():
         for group in optimizer.param_groups:
-            assert isinstance(group['curv'], Fisher)
             group['curv'].turn_on_backward()
             for param in group['params']:
                 param.requires_grad = False
@@ -42,6 +50,39 @@ def get_closure_for_fisher(optimizer, model, data, target, mc_approx=False, num_
             group['curv'].turn_off_backward()
             for param in group['params']:
                 param.requires_grad = True
+
+    def get_curvature(variable):
+        for curv in all_curvs:
+            module = curv.module
+            for m in module.parameters(recurse=False):
+                if m is variable:
+                    return curv
+        return None
+
+    def set_pre_curvatures(func, curv=None):
+        if hasattr(func, 'next_functions'):
+            next_funcs = set([f[0] for f in func.next_functions])
+            next_curv = None
+            for _func in next_funcs:
+                if hasattr(_func, 'variable'):
+                    _curv = get_curvature(_func.variable)
+                    next_curv = _curv
+                    break
+
+            if next_curv is None:
+                next_curv = curv
+            else:
+                seen_funcs.add(func)
+                next_funcs -= seen_funcs
+
+                if curv is not None:
+                    _pre_curvs = getattr(curv, 'pre_curvs', set())
+                    _pre_curvs.add(next_curv)
+                    setattr(curv, 'pre_curvs', _pre_curvs)
+                    curv.pre_curvs.discard(curv)
+
+            for _func in next_funcs:
+                set_pre_curvatures(_func, next_curv)
 
     def closure():
 
