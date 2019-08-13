@@ -19,7 +19,6 @@
     },
     "momentum": 0.9,
     "momentum_type": "preconditioned",
-    "adjust_momentum": true,
     "weight_decay": 0.05,
     "acc_steps": 4
   },
