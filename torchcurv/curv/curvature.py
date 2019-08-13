@@ -301,6 +301,9 @@ class KronCurvature(Curvature):
 
 
 def add_value_to_diagonal(X, value):
-    indices = torch.LongTensor([[i, i] for i in range(X.shape[0])])
+    if torch.cuda.is_available():
+        indices = torch.cuda.LongTensor([[i, i] for i in range(X.shape[0])])
+    else:
+        indices = torch.LongTensor([[i, i] for i in range(X.shape[0])])
     values = X.new_ones(X.shape[0]).mul(value)
     return X.index_put(tuple(indices.t()), values, accumulate=True)
