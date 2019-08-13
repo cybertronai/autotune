@@ -59,7 +59,7 @@ def get_closure_for_fisher(optimizer, model, data, target, approx_type=None, num
                     return curv
         return None
 
-    def set_pre_curvatures(func, curv=None):
+    def trace_pre_curvatures(func, curv=None):
         if hasattr(func, 'next_functions'):
             next_funcs = set([f[0] for f in func.next_functions])
             next_curv = None
@@ -82,7 +82,7 @@ def get_closure_for_fisher(optimizer, model, data, target, approx_type=None, num
                     curv.pre_curvs.discard(curv)
 
             for _func in next_funcs:
-                set_pre_curvatures(_func, next_curv)
+                trace_pre_curvatures(_func, next_curv)
 
     def closure():
 
