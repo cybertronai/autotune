@@ -80,6 +80,10 @@ def get_closure_for_fisher(optimizer, model, data, target, approx_type=None, num
                     _pre_curvs.add(next_curv)
                     setattr(curv, 'pre_curvs', _pre_curvs)
                     curv.pre_curvs.discard(curv)
+                    _post_curvs = getattr(next_curv, 'post_curvs', set())
+                    _post_curvs.add(curv)
+                    setattr(next_curv, 'post_curvs', _post_curvs)
+                    next_curv.post_curvs.discard(next_curv)
 
             for _func in next_funcs:
                 trace_pre_curvatures(_func, next_curv)
