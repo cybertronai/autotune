@@ -10,7 +10,7 @@
   "arch_name": "MLP_AUTOENCODER_DEEP",
   "optim_name": "SecondOrderOptimizer",
   "optim_args": {
-    "lr": 0.01,
+    "lr": 0.001,
     "curv_type":"Fisher",
     "curv_shapes": {
       "Conv2d": "Kron",
