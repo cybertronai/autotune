@@ -1,17 +1,20 @@
 import numpy
 
-import cupy
-from cupy import cuda
-from cupy.cuda import cublas
-from cupy.cuda import device
-from cupy.linalg import util
+try:
+    import cupy
+    from cupy import cuda
+    from cupy.cuda import cublas
+    from cupy.cuda import device
+    from cupy.linalg import util
+    if cuda.cusolver_enabled:
+        from cupy.cuda import cusolver
+    from torchcurv.utils.cupy import to_cupy, from_cupy
+except:
+    print("No cupy detected")
 
-from torchcurv.utils.cupy import to_cupy, from_cupy
 
 import warnings
 
-if cuda.cusolver_enabled:
-    from cupy.cuda import cusolver
 
 use_cholesky = True
 

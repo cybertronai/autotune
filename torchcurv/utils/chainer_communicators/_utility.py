@@ -1,12 +1,15 @@
 import warnings
 
 import numpy
-import cupy
+try:
+    import cupy
+    from torchcurv.utils.cupy import to_cupy
+except:
+    print("No cupy detected")
 
 from chainer.backends import cuda
 
 import torch
-from torchcurv.utils.cupy import to_cupy
 
 
 class Packer(object):

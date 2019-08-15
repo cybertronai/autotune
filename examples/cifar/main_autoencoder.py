@@ -24,7 +24,10 @@ DATASET_CIFAR100 = 'CIFAR-100'
 DATASET_MNIST = 'MNIST'
 
 
-device = torch.device('cuda')
+if torch.cuda.is_available():
+    device = torch.device('cuda')
+else:
+    device = torch.device('cpu')
 
 
 def install_pdb_handler():

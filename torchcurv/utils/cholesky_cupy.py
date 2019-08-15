@@ -1,6 +1,8 @@
-import cupy
-
-from torchcurv.utils.cupy import to_cupy, from_cupy
+try:
+    import cupy
+    from torchcurv.utils.cupy import to_cupy, from_cupy
+except:
+    print("No cupy detected")
 
 
 def cholesky(m, upper=True):

@@ -1,4 +1,8 @@
-import cupy
+try:
+    import cupy
+except:
+    print("No cupy detected")
+
 from torch.utils.dlpack import to_dlpack, from_dlpack
 
 
