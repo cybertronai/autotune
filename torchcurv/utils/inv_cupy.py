@@ -1,4 +1,6 @@
 import numpy
+import scipy
+import torch
 
 try:
     import cupy
@@ -22,9 +24,13 @@ use_cholesky = True
 
 
 def inv(m):
-    m_cp = to_cupy(m)
-    m_inv_cp = inv_core(m_cp, use_cholesky)
-    return from_cupy(m_inv_cp)
+    if torch.cuda.is_available():
+        m_cp = to_cupy(m)
+        m_inv_cp = inv_core(m_cp, use_cholesky)
+        return from_cupy(m_inv_cp)
+    else:
+        result = torch.from_numpy(scipy.linalg.inv(m.cpu().numpy()))
+        return result
 
 
 def inv_core(a, cholesky=False):
