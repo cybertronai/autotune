@@ -19,7 +19,7 @@ class SecondOrderOptimizer(Optimizer):
                  grad_ema_decay=1, grad_ema_type='raw', l2_reg=0, weight_decay=0,
                  normalizing_weights=False, weight_scale='auto',
                  acc_steps=1, non_reg_for_bn=False, bias_correction=False,
-                 lars=False, lars_type='preconditioned'):
+                 lars=False, lars_type='preconditioned', update_inv=True, precondition_grad=True):
 
         # TODO implement error checker: hoge(optim_kwargs)
         """
@@ -55,6 +55,8 @@ class SecondOrderOptimizer(Optimizer):
         self.param_groups = []
         self.curv_type = curv_type
         self.curv_shapes = {} if curv_shapes is None else curv_shapes
+        self.update_inv = update_inv  # whether to update covariance inverses at each step
+        self.precondition_grad = precondition_grad  # whether to apply preconditioning
 
         post_curvature = None
         for module in self.train_modules[::-1]:
@@ -157,8 +159,9 @@ class SecondOrderOptimizer(Optimizer):
             # update curvature
             params, curv = group['params'], group['curv']
             if curv is not None:
-                curv.step()
-                curv.precondition_grad(params)
+                curv.step(update_inv=self.update_inv)
+                if self.precondition_grad:
+                    curv.precondition_grad(params)
 
             # update params
             self.update_preprocess(group, grad_type='preconditioned')
