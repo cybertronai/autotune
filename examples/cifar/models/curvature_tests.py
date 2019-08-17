@@ -122,8 +122,13 @@ def test_loss():
     sigma_norm = torch.norm(sigma)
     g_norm = torch.norm(g)
 
-    ### OpenAI quantities
     g_ = g.unsqueeze(0)   # turn g into row matrix
+
+    # predicted drop in loss if we take a Newton step
+    excess = to_scalar(g_ @ H.inverse() @ g_.t() / 2)
+    check_close(excess, 8.83333)
+
+    ### OpenAI quantities
     grad_curvature = to_scalar(g_ @ H @ g_.t())   # curvature in direction of g
     stepOpenAI = to_scalar(g.norm()**2/grad_curvature) if g_norm else 999
     check_close(stepOpenAI, 0.170157)
