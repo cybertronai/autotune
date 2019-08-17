@@ -105,3 +105,6 @@ venv.bak/
 .idea/
 /.DS_Store
 .DS_Store
+/examples/cifar/data
+/examples/cifar/result
+/examples/cifar/wandb
