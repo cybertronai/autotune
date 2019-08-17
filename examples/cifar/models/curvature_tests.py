@@ -9,6 +9,7 @@ from torchcurv.optim import SecondOrderOptimizer
 
 import numpy as np
 
+
 class Net(nn.Module):
     def __init__(self, d):
         super().__init__()
@@ -17,6 +18,7 @@ class Net(nn.Module):
     def forward(self, x: torch.Tensor):
         result = self.w(x)
         return result
+
 
 def test_loss():
     # Reproduce Linear Regression example
@@ -37,7 +39,7 @@ def test_loss():
     Y = torch.tensor([[0, 1, 2]]).float()
     assert Y.shape[1] == X.shape[1]
 
-    data = X.t()       # PyTorch expects batch dimension first
+    data = X.t()  # PyTorch expects batch dimension first
     target = Y.t()
     assert data.shape[0] == n
 
@@ -51,11 +53,11 @@ def test_loss():
     loss = compute_loss(residuals)
 
     print(repr(loss.detach().numpy()))
-    assert loss-8.83333 < 1e-5, torch.norm(loss)-8.83333
+    assert loss - 8.83333 < 1e-5, torch.norm(loss) - 8.83333
     print(loss)
 
     # use learning rate 0 to avoid changing parameter vector
-    optim_kwargs = dict(lr=0,  momentum=0, weight_decay=0, l2_reg=0,
+    optim_kwargs = dict(lr=0, momentum=0, weight_decay=0, l2_reg=0,
                         bias_correction=False, acc_steps=1,
                         curv_type="Cov", curv_shapes={"Linear": "Kron"},
                         momentum_type="preconditioned", )
@@ -68,6 +70,7 @@ def test_loss():
     #
     def backward(last_layer: str) -> Callable:
         """Creates closure that backpropagates either from output layer or from loss layer"""
+
         def closure() -> Tuple[Optional[torch.Tensor], torch.Tensor]:
             optimizer.zero_grad()
             output = model(data)
@@ -80,6 +83,7 @@ def test_loss():
                 return loss, output
             else:
                 assert False, 'last layer must be "output" or "loss"'
+
         return closure
 
     #    loss = compute_loss(output - Y.t())
@@ -98,16 +102,12 @@ def test_loss():
     H = J.t() @ J / n
     check_close(H, [[2.66667, 2.66667], [2.66667, 3.66667]])
 
-    # loss
-    loss2 = (residuals * residuals).sum()/(2*n)
-    check_close(to_scalar(loss2), 8.83333)
-
     # gradients, n,d
     G = residuals.repeat(1, d) * J
     check_close(G, [[8., 4.], [0., 1.], [12., 18.]])
 
     # mean gradient
-    g = G.sum(dim=0)/n
+    g = G.sum(dim=0) / n
     check_close(g, [6.66667, 7.66667])
 
     # empirical Fisher
@@ -118,29 +118,47 @@ def test_loss():
     sigma = efisher - outer(g, g)
     check_close(sigma, [[24.8889, 31.5556], [31.5556, 54.8889]])
 
+    # loss
+    loss2 = (residuals * residuals).sum() / (2 * n)
+    check_close(toscalar(loss2), 8.83333)
+
     # TODO: get A's and B's, compute Sigma, Sigma_c, gradient diversity,
     sigma_norm = torch.norm(sigma)
     g_norm = torch.norm(g)
 
-    g_ = g.unsqueeze(0)   # turn g into row matrix
+    g_ = g.unsqueeze(0)  # turn g into row matrix
 
     # predicted drop in loss if we take a Newton step
-    excess = to_scalar(g_ @ H.inverse() @ g_.t() / 2)
+    excess = toscalar(g_ @ H.inverse() @ g_.t() / 2)
     check_close(excess, 8.83333)
 
-    ### OpenAI quantities
-    grad_curvature = to_scalar(g_ @ H @ g_.t())   # curvature in direction of g
-    stepOpenAI = to_scalar(g.norm()**2/grad_curvature) if g_norm else 999
+    def loss_direction(direction, eps):
+        """loss improvement if we take step eps in direction dir"""
+        return toscalar(eps * (direction @ g.t()) - 0.5 * eps ** 2 * direction @ H @ direction.t())
+
+    newtonImprovement = loss_direction(g_ @ H.inverse(), 1)
+    check_close(newtonImprovement, 8.83333)
+
+    ############################
+    # OpenAI quantities
+    grad_curvature = toscalar(g_ @ H @ g_.t())  # curvature in direction of g
+    stepOpenAI = toscalar(g.norm() ** 2 / grad_curvature) if g_norm else 999
     check_close(stepOpenAI, 0.170157)
-    batchOpenAI = to_scalar(torch.trace(H@sigma)/grad_curvature) if g_norm else 999
+    batchOpenAI = toscalar(torch.trace(H @ sigma) / grad_curvature) if g_norm else 999
     check_close(batchOpenAI, 0.718603)
 
-    ### Gradient diversity  quantities
-    # gradient diversity
-    diversity = torch.norm(G, "fro")**2 / torch.norm(g)**2
+    # improvement in loss when we take gradient step with optimal learning rate
+    gradientImprovement = loss_direction(g_, stepOpenAI)
+    assert newtonImprovement > gradientImprovement
+    check_close(gradientImprovement, 8.78199)
+
+    ############################
+    # Gradient diversity  quantities
+    diversity = torch.norm(G, "fro") ** 2 / torch.norm(g) ** 2
     check_close(diversity, 5.31862)
 
-    ### Jain/Kakade quantities
+    ############################
+    # Jain/Kakade quantities
 
     # noise scale (Jain, minimax rate of estimator)
     noise_variance = torch.trace(H.inverse() @ sigma)
@@ -149,34 +167,57 @@ def test_loss():
     isqrtH = inv_square_root(to_numpy(H))
     isqrtH = torch.tensor(isqrtH)
     # measure of misspecification between model and actual noise (Jain, \rho)
-    rho = (d/rank(isqrtH @ sigma @ isqrtH)) if sigma_norm > 0 else 1
-    check_close(rho, 1.4221)
-    assert rho >= 1, rho
-    assert rho <= d, rho
+    # formula (3) of "Parallelizing Stochastic Gradient Descent"
+    p_sigma = (kron(H, torch.eye(d)) + kron(torch.eye(d), H)).inverse() @ vec(sigma)
+    p_sigma = unvec(p_sigma, d)
+    rho = d / rank(p_sigma) if sigma_norm > 0 else 1
+    check_close(rho, 1.21987)
+
+    rhoSimple = (d / rank(isqrtH @ sigma @ isqrtH)) if sigma_norm > 0 else 1
+    check_close(rhoSimple, 1.4221)
+    assert 1 <= rho <= d, rho
 
     # divergent learning rate for batch-size 1 (Jain)
-    stepMin = 2/torch.trace(H)
+    stepMin = 2 / torch.trace(H)
     check_close(stepMin, 0.315789)
 
     # divergent learning rate for batch-size infinity
-    stepMax = 2/l2_norm(H)
+    stepMax = 2 / l2_norm(H)
     check_close(stepMax, 0.340147)
 
     # divergent learning rate for batch-size 1, adjusted for misspecification
-    stepMinAdjusted = stepMin/rho
-    check_close(stepMinAdjusted, 0.222058)
+    check_close(stepMin / rhoSimple, 0.222058)
+    check_close(stepMin / rho, 0.258871)
 
     # batch size that gives provides lr halfway between stepMin and stepMax
     batchJain = 1 + rank(H)
     check_close(batchJain, 2.07713)
 
     # batch size that provides halfway point after adjusting for misspecification
-    batchJainAdjusted = 1+rank(H)*rho
-    check_close(batchJainAdjusted, 2.5318)
+    check_close(1 + rank(H) * rhoSimple, 2.5318)
+    check_close(1 + rank(H) * rho, 2.31397)
 
     loss, output = optimizer.step(closure=backward('output'))
     # TODO: get A's and B's, compute H, rho, Newton decrement, all learning rate + batch size stats
     #    print(loss.item())
+
+
+def vec(a):
+    """vec operator, stack columns of the matrix into single column matrix."""
+    assert len(a.shape) == 2
+    return a.t().reshape(-1, 1)
+
+
+def unvec(a, rows):
+    """reverse of vec, rows specifies number of rows in the final matrix."""
+    assert len(a.shape) == 2
+    assert a.shape[0] % rows == 0
+    cols = a.shape[0] // rows
+    return a.reshape(cols, -1).t()
+
+
+def kron(a, b):
+    return torch.einsum("ab,cd->acbd", a, b).view(a.size(0) * b.size(0), a.size(1) * b.size(1))
 
 
 def l2_norm(mat):
@@ -187,19 +228,23 @@ def inv_square_root(mat):
     assert type(mat) == np.ndarray
     return scipy.linalg.inv(scipy.linalg.sqrtm(mat))
 
+
 def rank(mat):
     """Effective rank of matrix."""
-    return torch.trace(mat)/l2_norm(mat)
+    return torch.trace(mat) / l2_norm(mat)
+
 
 def outer(x, y):
     return x.unsqueeze(1) @ y.unsqueeze(0)
 
-def to_scalar(x):
+
+def toscalar(x):
     if hasattr(x, 'item'):
         return x.item()
     x = to_numpy(x).flatten()
     assert len(x) == 1
     return x[0]
+
 
 def to_numpy(x, dtype=np.float32):
     """Utility function to convert object to numpy array."""
@@ -207,7 +252,7 @@ def to_numpy(x, dtype=np.float32):
         return x.detach().numpy().astype(dtype)
     elif type(x) == np.ndarray:
         return x.astype(dtype)
-    else:                    # Some Python type
+    else:  # Some Python type
         return np.array(x).astype(dtype)
 
 
