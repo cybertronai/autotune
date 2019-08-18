@@ -289,7 +289,7 @@ def test_multilayer():
     optim_kwargs = dict(lr=0, momentum=0, weight_decay=0, l2_reg=0,
                         bias_correction=False, acc_steps=1,
                         curv_type="Cov", curv_shapes={"Linear": "Kron"},
-                        momentum_type="preconditioned", )
+                        momentum_type="preconditioned")
     curv_args = dict(damping=1, ema_decay=1)  # todo: damping
     optimizer = SecondOrderOptimizer(model, **optim_kwargs, curv_kwargs=curv_args)
 
