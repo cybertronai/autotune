@@ -98,13 +98,29 @@ def test_loss():
     J = X.t()
     check_close(J, [[-2, -1], [0, 1], [2, 3]])
 
+    # matrix of activations, (n, d)
+    A = model.w.data_input
+    check_close(A, J)
+
+    # matrix of backprops, add factor n to remove dependence on batch-size
+    B = model.w.grad_output * n
+    check_close(B, residuals)
+
+    # gradients, n,d
+    # method 1, manual computation
+    G = residuals.repeat(1, d) * J
+    check_close(G, [[8., 4.], [0., 1.], [12., 18.]])
+
+    # method 2, get them of activation, backprop values
+    check_close(G, khatri_rao_t(A, B))
+
+    # method 3, PyTorch
+
     # Hessian
     H = J.t() @ J / n
     check_close(H, [[2.66667, 2.66667], [2.66667, 3.66667]])
 
-    # gradients, n,d
-    G = residuals.repeat(1, d) * J
-    check_close(G, [[8., 4.], [0., 1.], [12., 18.]])
+
 
     # mean gradient
     g = G.sum(dim=0) / n
@@ -177,7 +193,8 @@ def test_loss():
     check_close(rhoSimple, 1.4221)
     assert 1 <= rho <= d, rho
 
-    # divergent learning rate for batch-size 1 (Jain)
+    # divergent learning rate for batch-size 1 (Jain). Approximates max||x_i|| with avg.
+    # For more accurate results may want to add stddev of ||x_i||
     stepMin = 2 / torch.trace(H)
     check_close(stepMin, 0.315789)
 
@@ -256,6 +273,39 @@ def to_numpy(x, dtype=np.float32):
         return np.array(x).astype(dtype)
 
 
+def khatri_rao(A, B):
+    """Khatri-Rao product, see
+    Section 2.6 of Kolda, Tamara G., and Brett W. Bader. "Tensor decompositions and applications." SIAM review 51.3 (2009): 455-500"""
+    assert A.shape[1] == B.shape[1]
+    return torch.einsum("ik,jk->ijk", A, B).reshape(A.shape[0] * B.shape[0], A.shape[1])
+
+
+def test_khatri_rao():
+    A = torch.tensor([[1, 2], [3, 4]])
+    B = torch.tensor([[5, 6], [7, 8]])
+    C = torch.tensor([[5, 12], [7, 16], [15, 24], [21, 32]])
+    check_close(khatri_rao(A, B), C)
+
+
+def khatri_rao_t(A, B):
+    """Like Khatri-Rao, but iterators over rows of matrices instead of cols"""
+    assert A.shape[0] == B.shape[0]
+    return torch.einsum("ki,kj->kij", A, B).reshape(A.shape[0], A.shape[1] * B.shape[1])
+
+
+def test_khatri_rao_t():
+    A = torch.tensor([[-2., -1.],
+                      [0., 1.],
+                      [2., 3.]])
+    B = torch.tensor([[-4.],
+                      [1.],
+                      [6.]])
+    C = torch.tensor([[8., 4.],
+                      [0., 1.],
+                      [12., 18.]])
+    check_close(khatri_rao_t(A, B), C)
+
+
 def check_close(observed, truth):
     truth = to_numpy(truth)
     observed = to_numpy(observed)
@@ -264,4 +314,6 @@ def check_close(observed, truth):
 
 
 if __name__ == '__main__':
+    test_khatri_rao()
+    test_khatri_rao_t()
     test_loss()
