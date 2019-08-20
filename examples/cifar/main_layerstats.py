@@ -289,7 +289,22 @@ def main():
 
         # gradients, n,d
         G = khatri_rao_t(At, Bt)
-        assert False, "Implement Hessian here"
+
+        def hess_closure():
+            optimizer.zero_grad()
+            output = model(global_data)  # use last saved data batch for backprop
+            output.backward(gradient=torch.ones_like(output), create_graph=args.create_graph)
+
+            return 0, output
+
+        _loss, _output = optimizer.step(closure=hess_closure)
+        B2t = model.W3.grad_output
+        J = khatri_rao_t(At, B2t)
+        H = J.t() @ J / n
+        print("Hessian l2 norm: ", l2_norm(H))
+        g = G.sum(dim=0) / n
+        diversity = torch.norm(G, "fro") ** 2 / torch.norm(g) ** 2
+        print("Gradient diversity: ", diversity)
 
         # save log
         iteration = epoch * len(train_loader)
@@ -312,6 +327,7 @@ def main():
 
 
 def train(model, device, train_loader, optimizer, epoch, args, logger):
+    global global_data, global_target
     model.train()
 
     loss = None
@@ -325,6 +341,8 @@ def train(model, device, train_loader, optimizer, epoch, args, logger):
     interval_ms = 0
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
+        global_data = data
+        global_target = target
 
         for name, param in model.named_parameters():
             attr = 'p_pre_{}'.format(name)
