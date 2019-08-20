@@ -196,8 +196,7 @@ def test_loss():
     noise_variance = torch.trace(H.inverse() @ sigma)
     check_close(noise_variance, 26.)
 
-    isqrtH = inv_square_root(to_numpy(H))
-    isqrtH = torch.tensor(isqrtH)
+    isqrtH = pinv_square_root(H)
     # measure of misspecification between model and actual noise (Jain, \rho)
     # formula (3) of "Parallelizing Stochastic Gradient Descent"
     p_sigma = (kron(H, torch.eye(d)) + kron(torch.eye(d), H)).inverse() @ vec(sigma)
@@ -211,6 +210,7 @@ def test_loss():
 
     # divergent learning rate for batch-size 1 (Jain). Approximates max||x_i|| with avg.
     # For more accurate results may want to add stddev of ||x_i||
+    # noinspection PyTypeChecker
     stepMin = 2 / torch.trace(H)
     check_close(stepMin, 0.315789)
 
@@ -230,7 +230,7 @@ def test_loss():
     check_close(1 + rank(H) * rhoSimple, 2.5318)
     check_close(1 + rank(H) * rho, 2.31397)
 
-    loss, output = optimizer.step(closure=backward('output'))
+    # loss, output = optimizer.step(closure=backward('output'))
     # TODO: get A's and B's, compute H, rho, Newton decrement, all learning rate + batch size stats
     #    print(loss.item())
 
@@ -367,15 +367,25 @@ def test_multilayer():
                     [5.66667, -11.3333, -5.66667, 17., -6.33333, 12.6667, 6.33333, -19.],
                     [-17., 34., 17., -51., 19., -38., -19., 57.]])
 
-    # method 2, using activation + backprop values
+    # method 2, using activation + upstream matrices
     check_close(kron(A @ A.t(), X2 @ X2.t()) / n, H)
 
-    # method 3, PyTorch backprop
+    # method 3, PyTorch autograd
     hess = hessian(compute_loss(residuals), model.W.weight)
     hess = hess.squeeze(2)
     hess = hess.squeeze(0)
     hess = hess.transpose(2, 3).transpose(0, 1).reshape(d1 * d2, d1 * d2)
     check_close(hess, H)
+
+    # method 4, get Jacobian + Hessian using backprop
+    _loss, _output = optimizer.step(closure=backward('output'))
+    B2t = model.W.grad_output
+
+    # alternative way of getting batch Jacobian
+    J2 = khatri_rao_t(At, B2t)
+    check_close(J2, J)
+    H2 = J2.t() @ J2 / n
+    check_close(H2, H)
 
     # mean gradient
     g = G.sum(dim=0) / n
@@ -448,7 +458,7 @@ def test_multilayer():
     check_close(noise_variance, 333.706)
 
     isqrtH = pinv_square_root(H)
-    isqrtH = torch.tensor(isqrtH)
+    #    isqrtH = torch.tensor(isqrtH)
     # measure of misspecification between model and actual noise (Jain, \rho)
     # formula (3) of "Parallelizing Stochastic Gradient Descent"
     p_sigma = pinv(kron(H, torch.eye(d1*d2)) + kron(torch.eye(d1*d2), H)) @ vec(sigma)
@@ -461,6 +471,7 @@ def test_multilayer():
 
     # divergent learning rate for batch-size 1 (Jain). Approximates max||x_i|| with avg.
     # For more accurate results may want to add stddev of ||x_i||
+    # noinspection PyTypeChecker
     stepMin = 2 / torch.trace(H)
     check_close(stepMin, 0.0111111)
 
@@ -480,7 +491,7 @@ def test_multilayer():
     check_close(1 + rank(H) * rhoSimple, 7.73829)
     check_close(1 + rank(H) * rho, 7.66365)
 
-    loss, output = optimizer.step(closure=backward('output'))
+    # loss, output = optimizer.step(closure=backward('output'))
     # TODO: get A's and B's, compute H, rho, Newton decrement, all learning rate + batch size stats
     #    print(loss.item())
 
@@ -507,14 +518,15 @@ def l2_norm(mat):
     return max(torch.eig(mat).eigenvalues.flatten())
 
 
-def inv_square_root(mat):
+def inv_square_root_numpy(mat):
     assert type(mat) == np.ndarray
     return scipy.linalg.inv(scipy.linalg.sqrtm(mat))
 
 
-def pinv_square_root(mat):
+def pinv_square_root_numpy(mat):
     assert type(mat) == np.ndarray
-    return scipy.linalg.inv(scipy.linalg.sqrtm(mat))
+    result = scipy.linalg.inv(scipy.linalg.sqrtm(mat))
+    return result
 
 
 def rank(mat):
@@ -594,18 +606,22 @@ def test_khatri_rao_t():
     check_close(khatri_rao_t(A, B), C)
 
 
-def pinv(mat, eps=1e-4):
+def pinv(mat, eps=1e-4) -> torch.Tensor:
     """Computes pseudo-inverse of mat, treating eigenvalues below eps as 0."""
 
     # TODO(y): make eps scale invariant by diving by norm first
     u, s, v = torch.svd(mat)
-    si = torch.where(s > eps, 1/s, s)
+    one = torch.from_numpy(np.array(1))
+    ivals: torch.Tensor = one / s
+    si = torch.where(s > eps, ivals, s)
     return u @ torch.diag(si) @ v.t()
 
 
-def pinv_square_root(mat, eps=1e-4):
+def pinv_square_root(mat, eps=1e-4) -> torch.Tensor:
     u, s, v = torch.svd(mat)
-    si = torch.where(s > eps, 1/torch.sqrt(s), s)
+    one = torch.from_numpy(np.array(1))
+    ivals: torch.Tensor = one / torch.sqrt(s)
+    si = torch.where(s > eps, ivals, s)
     return u @ torch.diag(si) @ v.t()
 
 
