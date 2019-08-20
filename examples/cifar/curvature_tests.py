@@ -289,8 +289,8 @@ def test_multilayer():
     optim_kwargs = dict(lr=0, momentum=0, weight_decay=0, l2_reg=0,
                         bias_correction=False, acc_steps=1,
                         curv_type="Cov", curv_shapes={"Linear": "Kron"},
-                        momentum_type="preconditioned")
-    curv_args = dict(damping=1, ema_decay=1)  # todo: damping
+                        momentum_type="preconditioned", update_inv=False, precondition_grad=False)
+    curv_args = dict(damping=0, ema_decay=1)  # todo: damping
     optimizer = SecondOrderOptimizer(model, **optim_kwargs, curv_kwargs=curv_args)
 
     # def set_requires_grad(v):
@@ -338,13 +338,18 @@ def test_multilayer():
     check_close(Bt, [[-15, 30, 15, -45], [18, -36, -18, 54], [-24, 48, 24, -72]])
 
     # gradients, n,d
+    # mean gradient, 1, d
     # method 1, manual computation
     G = khatri_rao_t(At, Bt)
     assert G.shape == (n, d1 * d2)
     check_close(G, [[-30, 60, 30, -90, 45, -90, -45, 135], [-36, 72, 36, -108, 18, -36, -18, 54],
                     [-72, 144, 72, -216, 72, -144, -72, 216]])
 
-    # method 2, PyTorch autograd
+    g = G.sum(dim=0, keepdim=True) / n
+    check_close(g, [[-46, 92, 46, -138, 45, -90, -45, 135]])
+    check_close(g, vec(get_param(model.W).grad).t())
+
+    # method 2, explicit PyTorch autograd
     # (n,) losses vector
     losses = torch.stack([compute_loss(r) for r in residuals])
     # batch-loss jacobian
@@ -355,7 +360,6 @@ def test_multilayer():
     check_close(G2, G)
 
     # Hessian
-
     # method 1, manual computation
     H = J.t() @ J / n
     check_close(H, [[5.66667, -11.3333, -5.66667, 17., -5.66667, 11.3333, 5.66667, -17.],
@@ -387,10 +391,6 @@ def test_multilayer():
     H2 = J2.t() @ J2 / n
     check_close(H2, H)
 
-    # mean gradient
-    g = G.sum(dim=0) / n
-    check_close(g, [-46, 92, 46, -138, 45, -90, -45, 135])
-
     # empirical Fisher
     efisher = G.t() @ G / n
     check_close(efisher, [[2460, -4920, -2460, 7380, -2394, 4788, 2394, -7182],
@@ -403,7 +403,7 @@ def test_multilayer():
                           [-7182, 14364, 7182, -21546, 7533, -15066, -7533, 22599]])
 
     # centered empirical Fisher (Sigma in OpenAI paper, estimate of Sigma in Jain paper)
-    sigma = efisher - outer(g, g)
+    sigma = efisher - g.t() @ g
     check_close(sigma, [[344, -688, -344, 1032, -324, 648, 324, -972], [-688, 1376, 688, -2064, 648, -1296, -648, 1944],
                         [-344, 688, 344, -1032, 324, -648, -324, 972],
                         [1032, -2064, -1032, 3096, -972, 1944, 972, -2916],
@@ -419,29 +419,27 @@ def test_multilayer():
     sigma_norm = torch.norm(sigma)
     g_norm = torch.norm(g)
 
-    g_ = g.unsqueeze(0)  # turn g into row matrix
-
     # predicted drop in loss if we take a Newton step
-    excess = toscalar(g_ @ pinv(H) @ g_.t() / 2)
+    excess = toscalar(g @ pinv(H) @ g.t() / 2)
     check_close(excess, 187.456)
 
     def loss_direction(direction, eps):
         """loss improvement if we take step eps in direction dir"""
         return toscalar(eps * (direction @ g.t()) - 0.5 * eps ** 2 * direction @ H @ direction.t())
 
-    newtonImprovement = loss_direction(g_ @ pinv(H), 1)
+    newtonImprovement = loss_direction(g @ pinv(H), 1)
     check_close(newtonImprovement, 187.456)
 
     ############################
     # OpenAI quantities
-    grad_curvature = toscalar(g_ @ H @ g_.t())  # curvature in direction of g
-    stepOpenAI = toscalar(g.norm() ** 2 / grad_curvature) if g_norm else 999
+    grad_curvature = toscalar(g @ H @ g.t())  # curvature in direction of g
+    stepOpenAI = toscalar(g.flatten().norm() ** 2 / grad_curvature) if g_norm else 999
     check_close(stepOpenAI, 0.00571855)
     batchOpenAI = toscalar(torch.trace(H @ sigma) / grad_curvature) if g_norm else 999
     check_close(batchOpenAI, 0.180201)
 
     # improvement in loss when we take gradient step with optimal learning rate
-    gradientImprovement = loss_direction(g_, stepOpenAI)
+    gradientImprovement = loss_direction(g, stepOpenAI)
     assert newtonImprovement > gradientImprovement
     check_close(gradientImprovement, 177.604)
 
@@ -630,6 +628,13 @@ def check_close(observed, truth):
     observed = to_numpy(observed)
     assert truth.shape == observed.shape, f"Observed shape {observed.shape}, expected shape {truth.shape}"
     np.testing.assert_allclose(truth, observed, atol=1e-5, rtol=1e-5)
+
+
+def get_param(layer):
+    """Extract parameter out of layer, assumes there's just one parameter"""
+    named_params = [(name, param) for (name, param) in layer.named_parameters()]
+    assert len(named_params) == 1, named_params
+    return named_params[0][1]
 
 
 if __name__ == '__main__':
