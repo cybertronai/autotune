@@ -1,13 +1,16 @@
 # Prototype batch-size quantities from
 # Batch size formulas (https://docs.google.com/document/d/19Jmh4spbSAnAGX_eq7WSFPgLzrpJEhiZRpjX1jSYObo/edit)
+import os
+import sys
 from typing import Optional, Tuple, Callable
 
-import scipy
-import torch
+# import torch
 import torch.nn as nn
 from torchcurv.optim import SecondOrderOptimizer
 
-import numpy as np
+module_path = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, module_path)
+from util import *
 
 
 class Net(nn.Module):
@@ -20,7 +23,7 @@ class Net(nn.Module):
         return result
 
 
-def test_loss():
+def singlelayer_test():
     # Reproduce Linear Regression example
     # https://www.wolframcloud.com/obj/yaroslavvb/newton/curvature-unit-tests.nb
 
@@ -52,9 +55,7 @@ def test_loss():
 
     loss = compute_loss(residuals)
 
-    print(repr(loss.detach().numpy()))
     assert loss - 8.83333 < 1e-5, torch.norm(loss) - 8.83333
-    print(loss)
 
     # use learning rate 0 to avoid changing parameter vector
     optim_kwargs = dict(lr=0, momentum=0, weight_decay=0, l2_reg=0,
@@ -64,10 +65,6 @@ def test_loss():
     curv_args = dict(damping=1, ema_decay=1)  # todo: damping
     optimizer = SecondOrderOptimizer(model, **optim_kwargs, curv_kwargs=curv_args)
 
-    # def set_requires_grad(v):
-    #     for p in model.parameters():
-    #         p.requires_grad = False
-    #
     def backward(last_layer: str) -> Callable:
         """Creates closure that backpropagates either from output layer or from loss layer"""
 
@@ -90,9 +87,9 @@ def test_loss():
     #    loss.backward()
 
     loss, output = optimizer.step(closure=backward('loss'))
-    check_close(output.t(), [[-4, 2, 8]])
-    check_close(residuals.t(), [[-4, 1, 6]])
-    check_close(loss, 8.833333)
+    check_equal(output.t(), [[-4, 2, 8]])
+    check_equal(residuals.t(), [[-4, 1, 6]])
+    check_equal(loss, 8.833333)
 
     # batch output Jacobian
     J = X.t()
@@ -123,21 +120,6 @@ def test_loss():
     G2 = G2.squeeze(1)
     check_close(G2, G)
 
-    # Hessian
-
-    # method 1, manual computation
-    H = J.t() @ J / n
-    check_close(H, [[2.66667, 2.66667], [2.66667, 3.66667]])
-
-    # method 2, using activation + backprop values
-    check_close(A.t() @ torch.eye(n) @ A / n, H)
-
-    # method 3, PyTorch backprop
-    hess = hessian(compute_loss(residuals), model.w.weight)
-    hess = hess.squeeze(2)
-    hess = hess.squeeze(0)
-    check_close(hess, H)
-
     # mean gradient
     g = G.sum(dim=0) / n
     check_close(g, [6.66667, 7.66667])
@@ -154,7 +136,23 @@ def test_loss():
     loss2 = (residuals * residuals).sum() / (2 * n)
     check_close(toscalar(loss2), 8.83333)
 
-    # TODO: get A's and B's, compute Sigma, Sigma_c, gradient diversity,
+    ####################################################################
+    # Hessian
+    ####################################################################
+
+    # method 1, manual computation
+    H = J.t() @ J / n
+    check_close(H, [[2.66667, 2.66667], [2.66667, 3.66667]])
+
+    # method 2, using activation + backprop values
+    check_close(A.t() @ torch.eye(n) @ A / n, H)
+
+    # method 3, PyTorch backprop
+    hess = hessian(compute_loss(residuals), model.w.weight)
+    hess = hess.squeeze(2)
+    hess = hess.squeeze(0)
+    check_close(hess, H)
+
     sigma_norm = torch.norm(sigma)
     g_norm = torch.norm(g)
 
@@ -201,10 +199,10 @@ def test_loss():
     # formula (3) of "Parallelizing Stochastic Gradient Descent"
     p_sigma = (kron(H, torch.eye(d)) + kron(torch.eye(d), H)).inverse() @ vec(sigma)
     p_sigma = unvec(p_sigma, d)
-    rho = d / rank(p_sigma) if sigma_norm > 0 else 1
+    rho = d / erank(p_sigma) if sigma_norm > 0 else 1
     check_close(rho, 1.21987)
 
-    rhoSimple = (d / rank(isqrtH @ sigma @ isqrtH)) if sigma_norm > 0 else 1
+    rhoSimple = (d / erank(isqrtH @ sigma @ isqrtH)) if sigma_norm > 0 else 1
     check_close(rhoSimple, 1.4221)
     assert 1 <= rho <= d, rho
 
@@ -223,16 +221,12 @@ def test_loss():
     check_close(stepMin / rho, 0.258871)
 
     # batch size that gives provides lr halfway between stepMin and stepMax
-    batchJain = 1 + rank(H)
+    batchJain = 1 + erank(H)
     check_close(batchJain, 2.07713)
 
     # batch size that provides halfway point after adjusting for misspecification
-    check_close(1 + rank(H) * rhoSimple, 2.5318)
-    check_close(1 + rank(H) * rho, 2.31397)
-
-    # loss, output = optimizer.step(closure=backward('output'))
-    # TODO: get A's and B's, compute H, rho, Newton decrement, all learning rate + batch size stats
-    #    print(loss.item())
+    check_close(1 + erank(H) * rhoSimple, 2.5318)
+    check_close(1 + erank(H) * rho, 2.31397)
 
 
 class Net2(nn.Module):
@@ -247,7 +241,7 @@ class Net2(nn.Module):
         return result
 
 
-def test_multilayer():
+def multilayer_test():
     # Reproduce multilayer example
     # https://www.wolframcloud.com/obj/yaroslavvb/newton/curvature-unit-tests.nb
 
@@ -280,17 +274,14 @@ def test_multilayer():
         return torch.sum(residuals_ * residuals_) / (2 * n)
 
     loss = compute_loss(residuals)
-
-    print(repr(loss.detach().numpy()))
     assert loss - 187.5 < 1e-5, torch.norm(loss) - 8.83333
-    print(loss)
 
     # use learning rate 0 to avoid changing parameter vector
     optim_kwargs = dict(lr=0, momentum=0, weight_decay=0, l2_reg=0,
                         bias_correction=False, acc_steps=1,
                         curv_type="Cov", curv_shapes={"Linear": "Kron"},
                         momentum_type="preconditioned", update_inv=False, precondition_grad=False)
-    curv_args = dict(damping=0, ema_decay=1)  # todo: damping
+    curv_args = dict(damping=0, ema_decay=1)
     optimizer = SecondOrderOptimizer(model, **optim_kwargs, curv_kwargs=curv_args)
 
     # def set_requires_grad(v):
@@ -362,23 +353,25 @@ def test_multilayer():
     # Hessian
     # method 1, manual computation
     H = J.t() @ J / n
-    check_close(H, [[5.66667, -11.3333, -5.66667, 17., -5.66667, 11.3333, 5.66667, -17.],
-                    [-11.3333, 22.6667, 11.3333, -34., 11.3333, -22.6667, -11.3333, 34.],
-                    [-5.66667, 11.3333, 5.66667, -17., 5.66667, -11.3333, -5.66667, 17.],
-                    [17., -34., -17., 51., -17., 34., 17., -51.],
-                    [-5.66667, 11.3333, 5.66667, -17., 6.33333, -12.6667, -6.33333, 19.],
-                    [11.3333, -22.6667, -11.3333, 34., -12.6667, 25.3333, 12.6667, -38.],
-                    [5.66667, -11.3333, -5.66667, 17., -6.33333, 12.6667, 6.33333, -19.],
-                    [-17., 34., 17., -51., 19., -38., -19., 57.]])
+    check_close(H * n,
+                [[17, -34, -17, 51, -17, 34, 17, -51],
+                 [-34, 68, 34, -102, 34, -68, -34, 102],
+                 [-17, 34, 17, -51, 17, -34, -17, 51],
+                 [51, -102, -51, 153, -51, 102, 51, -153],
+                 [-17, 34, 17, -51, 19, -38, -19, 57],
+                 [34, -68, -34, 102, -38, 76, 38, -114],
+                 [17, -34, -17, 51, -19, 38, 19, -57],
+                 [-51, 102, 51, -153, 57, -114, -57, 171]])
 
     # method 2, using activation + upstream matrices
     check_close(kron(A @ A.t(), X2 @ X2.t()) / n, H)
 
     # method 3, PyTorch autograd
     hess = hessian(compute_loss(residuals), model.W.weight)
-    hess = hess.squeeze(2)
-    hess = hess.squeeze(0)
-    hess = hess.transpose(2, 3).transpose(0, 1).reshape(d1 * d2, d1 * d2)
+    # Fix shape: vectorization flattens in column-major order, but PyTorch is row-major order
+    # for reshape to flatten things correctly, transpose H_{ijkl} -> H_{jilk}
+    hess = hess.transpose(2, 3).transpose(0, 1)
+    hess = hess.reshape(d1 * d2, d1 * d2)
     check_close(hess, H)
 
     # method 4, get Jacobian + Hessian using backprop
@@ -415,23 +408,23 @@ def test_multilayer():
     loss2 = (residuals * residuals).sum() / (2 * n)
     check_close(toscalar(loss2), 187.5)
 
-    # TODO: get A's and B's, compute Sigma, Sigma_c, gradient diversity,
     sigma_norm = torch.norm(sigma)
     g_norm = torch.norm(g)
 
     # predicted drop in loss if we take a Newton step
     excess = toscalar(g @ pinv(H) @ g.t() / 2)
-    check_close(excess, 187.456)
+    check_close(excess, 12747 / 68)
 
     def loss_direction(direction, eps):
         """loss improvement if we take step eps in direction dir"""
         return toscalar(eps * (direction @ g.t()) - 0.5 * eps ** 2 * direction @ H @ direction.t())
 
     newtonImprovement = loss_direction(g @ pinv(H), 1)
-    check_close(newtonImprovement, 187.456)
+    check_close(newtonImprovement, 12747/68)
 
     ############################
     # OpenAI quantities
+    ############################
     grad_curvature = toscalar(g @ H @ g.t())  # curvature in direction of g
     stepOpenAI = toscalar(g.flatten().norm() ** 2 / grad_curvature) if g_norm else 999
     check_close(stepOpenAI, 0.00571855)
@@ -445,11 +438,13 @@ def test_multilayer():
 
     ############################
     # Gradient diversity  quantities
+    ############################
     diversity = torch.norm(G, "fro") ** 2 / torch.norm(g) ** 2
     check_close(diversity, 3.6013)
 
     ############################
     # Jain/Kakade quantities
+    ############################
 
     # noise scale (Jain, minimax rate of estimator)
     noise_variance = torch.trace(pinv(H) @ sigma)
@@ -459,12 +454,12 @@ def test_multilayer():
     #    isqrtH = torch.tensor(isqrtH)
     # measure of misspecification between model and actual noise (Jain, \rho)
     # formula (3) of "Parallelizing Stochastic Gradient Descent"
-    p_sigma = pinv(kron(H, torch.eye(d1*d2)) + kron(torch.eye(d1*d2), H)) @ vec(sigma)
-    p_sigma = unvec(p_sigma, d1*d2)
-    rho = d1*d2 / rank(p_sigma) if sigma_norm > 0 else 1
+    p_sigma = pinv(kron(H, torch.eye(d1 * d2)) + kron(torch.eye(d1 * d2), H)) @ vec(sigma)
+    p_sigma = unvec(p_sigma, d1 * d2)
+    rho = d1 * d2 / erank(p_sigma) if sigma_norm > 0 else 1
     check_close(rho, 6.48399)
 
-    rhoSimple = (d1*d2 / rank(isqrtH @ sigma @ isqrtH)) if sigma_norm > 0 else 1
+    rhoSimple = (d1 * d2 / erank(isqrtH @ sigma @ isqrtH)) if sigma_norm > 0 else 1
     check_close(rhoSimple, 6.55661)
 
     # divergent learning rate for batch-size 1 (Jain). Approximates max||x_i|| with avg.
@@ -482,163 +477,15 @@ def test_multilayer():
     check_close(stepMin / rho, 0.00171362)
 
     # batch size that gives provides lr halfway between stepMin and stepMax
-    batchJain = 1 + rank(H)
+    batchJain = 1 + erank(H)
     check_close(batchJain, 2.02771)
 
     # batch size that provides halfway point after adjusting for misspecification
-    check_close(1 + rank(H) * rhoSimple, 7.73829)
-    check_close(1 + rank(H) * rho, 7.66365)
-
-    # loss, output = optimizer.step(closure=backward('output'))
-    # TODO: get A's and B's, compute H, rho, Newton decrement, all learning rate + batch size stats
-    #    print(loss.item())
-
-
-def vec(a):
-    """vec operator, stack columns of the matrix into single column matrix."""
-    assert len(a.shape) == 2
-    return a.t().reshape(-1, 1)
-
-
-def unvec(a, rows):
-    """reverse of vec, rows specifies number of rows in the final matrix."""
-    assert len(a.shape) == 2
-    assert a.shape[0] % rows == 0
-    cols = a.shape[0] // rows
-    return a.reshape(cols, -1).t()
-
-
-def kron(a, b):
-    return torch.einsum("ab,cd->acbd", a, b).view(a.size(0) * b.size(0), a.size(1) * b.size(1))
-
-
-def l2_norm(mat):
-    return max(torch.eig(mat).eigenvalues.flatten())
-
-
-def inv_square_root_numpy(mat):
-    assert type(mat) == np.ndarray
-    return scipy.linalg.inv(scipy.linalg.sqrtm(mat))
-
-
-def pinv_square_root_numpy(mat):
-    assert type(mat) == np.ndarray
-    result = scipy.linalg.inv(scipy.linalg.sqrtm(mat))
-    return result
-
-
-def rank(mat):
-    """Effective rank of matrix."""
-    return torch.trace(mat) / l2_norm(mat)
-
-
-def outer(x, y):
-    return x.unsqueeze(1) @ y.unsqueeze(0)
-
-
-def toscalar(x):
-    if hasattr(x, 'item'):
-        return x.item()
-    x = to_numpy(x).flatten()
-    assert len(x) == 1
-    return x[0]
-
-
-def to_numpy(x, dtype=np.float32):
-    """Utility function to convert object to numpy array."""
-    if hasattr(x, 'numpy'):  # PyTorch tensor
-        return x.detach().numpy().astype(dtype)
-    elif type(x) == np.ndarray:
-        return x.astype(dtype)
-    else:  # Some Python type
-        return np.array(x).astype(dtype)
-
-
-def khatri_rao(A, B):
-    """Khatri-Rao product, see
-    Section 2.6 of Kolda, Tamara G., and Brett W. Bader. "Tensor decompositions and applications." SIAM review 51.3 (2009): 455-500"""
-    assert A.shape[1] == B.shape[1]
-    return torch.einsum("ik,jk->ijk", A, B).reshape(A.shape[0] * B.shape[0], A.shape[1])
-
-
-# Autograd functions, from https://gist.github.com/apaszke/226abdf867c4e9d6698bd198f3b45fb7
-def jacobian(y, x, create_graph=False):
-    jac = []
-    flat_y = y.reshape(-1)
-    grad_y = torch.zeros_like(flat_y)
-    for i in range(len(flat_y)):
-        grad_y[i] = 1.
-        grad_x, = torch.autograd.grad(flat_y, x, grad_y, retain_graph=True, create_graph=create_graph)
-        jac.append(grad_x.reshape(x.shape))
-        grad_y[i] = 0.
-    return torch.stack(jac).reshape(y.shape + x.shape)
-
-
-def hessian(y, x):
-    return jacobian(jacobian(y, x, create_graph=True), x)
-
-
-def test_khatri_rao():
-    A = torch.tensor([[1, 2], [3, 4]])
-    B = torch.tensor([[5, 6], [7, 8]])
-    C = torch.tensor([[5, 12], [7, 16], [15, 24], [21, 32]])
-    check_close(khatri_rao(A, B), C)
-
-
-def khatri_rao_t(A, B):
-    """Like Khatri-Rao, but iterators over rows of matrices instead of cols"""
-    assert A.shape[0] == B.shape[0]
-    return torch.einsum("ki,kj->kij", A, B).reshape(A.shape[0], A.shape[1] * B.shape[1])
-
-
-def test_khatri_rao_t():
-    A = torch.tensor([[-2., -1.],
-                      [0., 1.],
-                      [2., 3.]])
-    B = torch.tensor([[-4.],
-                      [1.],
-                      [6.]])
-    C = torch.tensor([[8., 4.],
-                      [0., 1.],
-                      [12., 18.]])
-    check_close(khatri_rao_t(A, B), C)
-
-
-def pinv(mat, eps=1e-4) -> torch.Tensor:
-    """Computes pseudo-inverse of mat, treating eigenvalues below eps as 0."""
-
-    # TODO(y): make eps scale invariant by diving by norm first
-    u, s, v = torch.svd(mat)
-    one = torch.from_numpy(np.array(1))
-    ivals: torch.Tensor = one / s
-    si = torch.where(s > eps, ivals, s)
-    return u @ torch.diag(si) @ v.t()
-
-
-def pinv_square_root(mat, eps=1e-4) -> torch.Tensor:
-    u, s, v = torch.svd(mat)
-    one = torch.from_numpy(np.array(1))
-    ivals: torch.Tensor = one / torch.sqrt(s)
-    si = torch.where(s > eps, ivals, s)
-    return u @ torch.diag(si) @ v.t()
-
-
-def check_close(observed, truth):
-    truth = to_numpy(truth)
-    observed = to_numpy(observed)
-    assert truth.shape == observed.shape, f"Observed shape {observed.shape}, expected shape {truth.shape}"
-    np.testing.assert_allclose(truth, observed, atol=1e-5, rtol=1e-5)
-
-
-def get_param(layer):
-    """Extract parameter out of layer, assumes there's just one parameter"""
-    named_params = [(name, param) for (name, param) in layer.named_parameters()]
-    assert len(named_params) == 1, named_params
-    return named_params[0][1]
+    check_close(1 + erank(H) * rhoSimple, 7.73829)
+    check_close(1 + erank(H) * rho, 7.66365)
 
 
 if __name__ == '__main__':
-    test_multilayer()
-    test_khatri_rao()
-    test_khatri_rao_t()
-    test_loss()
+    #    singlelayer_test()
+    #    multilayer_test()
+    run_all_tests(sys.modules[__name__])
