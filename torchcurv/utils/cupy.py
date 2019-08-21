@@ -1,7 +1,8 @@
 try:
     import cupy
 except:
-    print("No cupy detected")
+    # print("No cupy detected")
+    pass
 
 from torch.utils.dlpack import to_dlpack, from_dlpack
 

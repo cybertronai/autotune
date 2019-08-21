@@ -5,7 +5,8 @@ try:
     import cupy
     from torchcurv.utils.cupy import to_cupy
 except:
-    print("No cupy detected")
+    pass
+    # print("No cupy detected")
 
 from chainer.backends import cuda
 

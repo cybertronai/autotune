@@ -12,7 +12,8 @@ try:
         from cupy.cuda import cusolver
     from torchcurv.utils.cupy import to_cupy, from_cupy
 except:
-    print("No cupy detected")
+    pass
+    #  print("No cupy detected")
 
 
 import warnings

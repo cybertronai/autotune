@@ -2,7 +2,8 @@ try:
     import cupy
     from torchcurv.utils.cupy import to_cupy, from_cupy
 except:
-    print("No cupy detected")
+    # print("No cupy detected")
+    pass
 
 
 def cholesky(m, upper=True):
