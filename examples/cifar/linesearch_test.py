@@ -1,4 +1,5 @@
-# Take simple example, plot per-layer stats over time
+# Take simple MNIST model, test that line-search in Newton direction finds optimum
+
 import argparse
 import json
 import os
