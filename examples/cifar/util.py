@@ -3,6 +3,7 @@ import inspect
 import math
 import sys
 import time
+from typing import Dict
 
 import numpy as np
 import scipy
@@ -25,13 +26,13 @@ def v2c_np(vec):
     return np.expand_dims(vec, 1)
 
 
-def v2r(vec):
-    """Convert vector into row matrix."""
+def v2r(vec: torch.Tensor) -> torch.Tensor:
+    """Converts rank-1 tensor to row matrix"""
     assert len(vec.shape) == 1
-    return torch.unsqueeze(vec, 0)
+    return vec.unsqueeze(0)
 
 
-def c2v(col):
+def c2v(col: torch.Tensor) -> torch.Tensor:
     """Convert vector into row matrix."""
     assert len(col.shape) == 2
     assert col.shape[1] == 1
@@ -61,6 +62,10 @@ def kron(a, b):
     """Kronecker product."""
     return torch.einsum("ab,cd->acbd", a, b).view(a.size(0) * b.size(0), a.size(1) * b.size(1))
 
+
+def slow_kron(a, b):
+    """Slower version which is required when dimensions are not contiguous."""
+    return torch.einsum("ab,cd->acbd", a, b).contiguous().view(a.size(0) * b.size(0), a.size(1) * b.size(1))
 
 def kron_test():
     A = torch.tensor([[1, 2], [3, 4]])
@@ -103,7 +108,7 @@ def outer(x, y):
     return x.unsqueeze(1) @ y.unsqueeze(0)
 
 
-def toscalar(x):
+def to_scalar(x):
     if hasattr(x, 'item'):
         return x.item()
     x = to_numpy(x).flatten()
@@ -187,7 +192,7 @@ def pinv(mat: torch.Tensor, cond=None) -> torch.Tensor:
         ``eps`` is the machine precision.
         """
 
-    # Follow cut-off from scipy
+    # Take cut-off logic from scipy
     # https://github.com/ilayn/scipy/blob/0f4c793601ecdd74fc9826ac02c9b953de99403a/scipy/linalg/basic.py#L1307
     u, s, v = torch.svd(mat)
     if cond in [None, -1]:
@@ -270,15 +275,25 @@ def run_all_tests(module: nn.Module):
     print(module.__name__+" tests passed.")
 
 
-def freeze_layer(layer: nn.Module):
+def freeze(layer: nn.Module):
     for param in layer.parameters():
         param.requires_grad = False
+    setattr(layer, "frozen", True)
 
 
-def unfreeze_layer(layer: nn.Module):
+def unfreeze(layer: nn.Module):
     for param in layer.parameters():
         param.requires_grad = True
+    setattr(layer, "frozen", False)
 
 
 if __name__ == '__main__':
     run_all_tests(sys.modules[__name__])
+
+
+def nest_stats(tag: str, stats) -> Dict:
+    """Nest given dict of stats under tag using TensorBoard syntax /nest1/tag"""
+    result = {}
+    for key, value in stats.items():
+        result[f"{tag}/{key}"] = value
+    return result

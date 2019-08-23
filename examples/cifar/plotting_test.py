@@ -1,5 +1,4 @@
-# Take simple MNIST model, test that line-search in Newton direction finds optimum
-# Additionally test Hessian manual vs autograd computation
+# Plot simple minimization problem in wandb
 
 import argparse
 import json
@@ -7,11 +6,24 @@ import os
 import random
 import shutil
 import sys
+from typing import Any, Dict
 
+import globals as g
 import numpy as np
 import torch.nn as nn
+import torch.nn.functional as F
 from attrdict import AttrDefault
+#  from tensorboardX import SummaryWriter
+from torch.utils.tensorboard import SummaryWriter
+
 from torch import optim
+
+
+#def log_tb(tag, val):
+#    """Log value to tensorboard (relies on g.token_count rather than step count to give comparable graphs across
+#    batch sizes)"""
+#    g.event_writer.add_scalar(tag, val, g.token_count)
+
 
 module_path = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, module_path)
@@ -27,7 +39,7 @@ except Exception as e:
 from torchvision import datasets, transforms
 import torch
 
-from torchcurv.optim import SecondOrderOptimizer
+from torchcurv.optim import SecondOrderOptimizer, VIOptimizer
 from torchcurv.utils import Logger
 
 DATASET_MNIST = 'MNIST'
@@ -144,8 +156,7 @@ class SimpleMNIST(datasets.MNIST):
 
         # Put both data and targets on GPU in advance
         self.data, self.targets = self.data.to(device), self.targets.to(device)
-        self.target = self.data.sum(dim=(2, 3)).squeeze(1)
-        self.targets = self.targets.unsqueeze(1)
+        self.targets = self.data.sum(dim=(2, 3))
         assert len(self.targets.shape) == 2
 
     def __getitem__(self, index):
@@ -169,18 +180,14 @@ def compute_loss(output, target):
 logger = None
 
 
-def log(metrics, step):
-    global logger
-    # print(metrics)
-    try:
-        logger.write(metrics)
-    except:  # crashes with JSON conversion error sometimes
-        pass
-
-    try:
-        wandb.log(metrics, step=step)
-    except:
-        pass
+def log_scalars(metrics: Dict[str, Any], parent_tag: str = '') -> None:
+    for tag in metrics:
+        g.event_writer.add_scalar(tag=tag, scalar_value=metrics[tag], global_step=g.token_count)
+    #    g.event_writer.add_scalars(main_tag=tag, tag_scalar_dict=metrics, global_step=g.token_count)
+    #    try:
+    #        wandb.log(metrics, step=step)
+    #    except:
+    #        pass
 
 
 def main():
@@ -239,7 +246,9 @@ def main():
                         help='how many epochs to wait before logging training status')
     parser.add_argument('--resume', type=str, default=None,
                         help='checkpoint path for resume training')
-    parser.add_argument('--out', type=str, default='result',
+    parser.add_argument('--logdir', type=str, default='/temp/graph_test/run',
+                        help='dir to save output files')
+    parser.add_argument('--out', type=str, default=None,
                         help='dir to save output files')
     parser.add_argument('--config', default=None,
                         help='config file path')
@@ -247,11 +256,22 @@ def main():
                         help='if True, Fisher is estimated by MC sampling')
     parser.add_argument('--fisher_num_mc', type=int, default=1,
                         help='number of MC samples for estimating Fisher')
-    parser.add_argument('--log_wandb', type=int, default=0,
+    parser.add_argument('--log_wandb', type=int, default=1,
                         help='log to wandb')
 
     args = parser.parse_args()
-    run_name = 'default'  # name of run in
+
+    # get run name from logdir
+    root_logdir=args.logdir
+    count = 0
+    while os.path.exists(f"{root_logdir}{count:02d}"):
+        count += 1
+    args.logdir = f"{root_logdir}{count:02d}"
+
+    run_name = os.path.basename(args.logdir)
+
+    assert args.out is None, "Use args.logdir instead of args.out"
+    args.out = args.logdir
 
     # Copy this file & config to args.out
     if not os.path.isdir(args.out):
@@ -260,9 +280,6 @@ def main():
 
     # Load config file
     if args.config:
-        run_name = args.config
-        run_name = os.path.basename(run_name)
-        run_name = run_name.rsplit('.', 1)[0]  # extract filename without .json suffix
         with open(args.config) as f:
             config = json.load(f)
         dict_args = vars(args)
@@ -277,10 +294,13 @@ def main():
     logger = Logger(args.out, args.log_file_name)
     logger.start()
 
+    g.event_writer = SummaryWriter(args.logdir)
+
     try:
         # os.environ['WANDB_SILENT'] = 'true'
         if args.log_wandb:
-            wandb.init(project='pytorch-curv', name=run_name)
+            wandb.init(project='test-graphs_test', name=run_name)
+            wandb.tensorboard.patch(tensorboardX=False)
         wandb.config['config'] = args.config
         wandb.config['batch'] = args.batch_size
         wandb.config['optim'] = args.optim_name
@@ -341,11 +361,17 @@ def main():
             return self.predict(x)
 
     def compute_layer_stats(layer):
-        stats = AttrDefault(str, {})
+        refreeze = False
+        if hasattr(layer, 'frozen') and layer.frozen:
+            u.unfreeze(layer)
+            refreeze = True
+
+        s = AttrDefault(str, {})
         n = args.stats_batch_size
         param = u.get_param(layer)
-        d = len(param.flatten())
+        _d = len(param.flatten())   # dimensionality of parameters
         layer_idx = model.layers.index(layer)
+        # TODO: get layer type, include it in name
         assert layer_idx >= 0
         assert stats_data.shape[0] == n
 
@@ -363,77 +389,50 @@ def main():
             return output
 
         # per-example gradients, n, d
-        loss, output = backprop_loss()
+        _loss, _output = backprop_loss()
         At = layer.data_input
         Bt = layer.grad_output * n
         G = u.khatri_rao_t(At, Bt)
         g = G.sum(dim=0, keepdim=True) / n
         u.check_close(g, u.vec(param.grad).t())
 
-        stats.diversity = torch.norm(G, "fro") ** 2 / g.flatten().norm() ** 2
-
-        stats.gradient_norm = g.flatten().norm()
-        stats.parameter_norm = param.data.flatten().norm()
+        s.diversity = torch.norm(G, "fro") ** 2 / g.flatten().norm() ** 2
+        s.grad_fro = g.flatten().norm()
+        s.param_fro = param.data.flatten().norm()
         pos_activations = torch.sum(layer.data_output > 0)
         neg_activations = torch.sum(layer.data_output <= 0)
-        stats.sparsity = pos_activations.float()/(pos_activations+neg_activations)
+        s.a_sparsity = neg_activations.float()/(pos_activations+neg_activations)  # 1 sparsity means all 0's
+        activation_size = len(layer.data_output.flatten())
+        s.a_magnitude = torch.sum(layer.data_output)/activation_size
 
-        output = backprop_output()
-        At2 = layer.data_input
-        u.check_close(At, At2)
+        _output = backprop_output()
         B2t = layer.grad_output
-        J = u.khatri_rao_t(At, B2t)
+        J = u.khatri_rao_t(At, B2t)  # batch output Jacobian
         H = J.t() @ J / n
 
-        model.zero_grad()
-        output = model(stats_data)  # use last saved data batch for backprop
-        loss = compute_loss(output, stats_targets)
-        hess = u.hessian(loss, param)
-
-        hess = hess.transpose(2, 3).transpose(0, 1).reshape(d, d)
-        u.check_close(hess, H)
-        u.check_close(hess, H)
-
-        stats.hessian_norm = u.l2_norm(H)
-        stats.jacobian_norm = u.l2_norm(J)
-        Joutput = J.sum(dim=0) / n
-        stats.jacobian_sensitivity = Joutput.norm()
+        s.hessian_l2 = u.l2_norm(H)
+        s.jacobian_l2 = u.l2_norm(J)
+        J1 = J.sum(dim=0) / n        # single output Jacobian
+        s.J1_l2 = J1.norm()
 
         # newton decrement
-        stats.loss_newton = u.to_scalar(g @ u.pinv(H) @ g.t() / 2)
-        u.check_close(stats.loss_newton, loss)
+        def loss_direction(direction, eps):
+            """loss improvement if we take step eps in direction dir"""
+            return u.to_scalar(eps * (direction @ g.t()) - 0.5 * eps ** 2 * direction @ H @ direction.t())
 
-        # do line-search to find optimal step
-        def line_search(directionv, start, end, steps=10):
-            """Takes steps between start and end, returns steps+1 loss entries"""
-            param0 = param.data.clone()
-            param0v = u.vec(param0).t()
-            losses = []
-            for i in range(steps+1):
-                output = model(stats_data)  # use last saved data batch for backprop
-                loss = compute_loss(output, stats_targets)
-                losses.append(loss)
-                offset = start+i*((end-start)/steps)
-                param1v = param0v + offset*directionv
+        s.regret_newton = u.to_scalar(g @ u.pinv(H) @ g.t() / 2)
 
-                param1 = u.unvec(param1v.t(), param.data.shape[0])
-                param.data.copy_(param1)
+        # TODO: gradient diversity is stuck at 1
+        # TODO: newton/gradient angle
+        # TODO: newton step magnitude
+        s.grad_curvature = u.to_scalar(g @ H @ g.t())  # curvature in direction of g
+        s.step_openai = u.to_scalar(s.grad_fro**2 / s.grad_curvature) if s.grad_curvature else 999
 
-            output = model(stats_data)  # use last saved data batch for backprop
-            loss = compute_loss(output, stats_targets)
-            losses.append(loss)
+        s.regret_gradient = loss_direction(g, s.step_openai)
 
-            param.data.copy_(param0)
-            return losses
-
-        # try to take a newton step
-        gradv = g
-        line_losses = line_search(-gradv @ u.pinv(H), 0, 2, steps=10)
-        u.check_equal(line_losses[0], loss)
-        u.check_equal(line_losses[6], 0)
-        assert line_losses[5] > line_losses[6]
-        assert line_losses[7] > line_losses[6]
-        return stats
+        if refreeze:
+            u.freeze(layer)
+        return s
 
     train_dataset = dataset_class(
         root=args.root, train=True, download=args.download, transform=train_transform)
@@ -449,11 +448,15 @@ def main():
     arch_kwargs = {} if args.arch_args is None else args.arch_args
     arch_kwargs['num_classes'] = num_classes
 
-    model = Net([NUM_CHANNELS * IMAGE_SIZE ** 2, 8, 8, 1],  nonlin=False)
+    model = Net([NUM_CHANNELS * IMAGE_SIZE ** 2, 8, 1],  nonlin=False)
     setattr(model, 'num_classes', num_classes)
     model = model.to(device)
+    param = u.get_param(model.layers[0])
+    param.data.copy_(torch.ones_like(param)/len(param.data.flatten()))
+    param = u.get_param(model.layers[1])
+    param.data.copy_(torch.ones_like(param)/len(param.data.flatten()))
+
     u.freeze(model.layers[0])
-    u.freeze(model.layers[2])
 
     # use learning rate 0 to avoid changing parameter vector
     optim_kwargs = dict(lr=0.001, momentum=0.9, weight_decay=0, l2_reg=0,
@@ -469,7 +472,37 @@ def main():
     # Run training
     for epoch in range(start_epoch, args.epochs + 1):
         num_examples_processed = epoch * len(train_loader) * train_loader.batch_size
-        layer_stats = compute_layer_stats(model.layers[1])
+        g.token_count = num_examples_processed
+        for i in range(len(model.layers)):
+            if i == 0:
+                continue    # skip initial expensive layer
+
+            layer = model.layers[i]
+            layer_stats = compute_layer_stats(layer)
+            layer_name = f"{i:02d}-{layer.__class__.__name__.lower()}"
+            log_scalars(u.nest_stats(f'stats/{layer_name}', layer_stats))
+
+        # train
+        accuracy, loss, confidence = train(model, device, train_loader, optimizer, epoch, args, logger)
+
+        # save log
+        iteration = epoch * len(train_loader)
+        metrics = {'epoch': epoch, 'iteration': iteration,
+                   'accuracy': accuracy, 'loss': loss,
+                   'val_accuracy': 0, 'val_loss': 0,
+                   'lr': optimizer.param_groups[0]['lr'],
+                   'momentum': optimizer.param_groups[0].get('momentum', 0)}
+        log_scalars(metrics)
+
+        # save checkpoint
+        if epoch % args.checkpoint_interval == 0 or epoch == args.epochs:
+            path = os.path.join(args.out, 'epoch{}.ckpt'.format(epoch))
+            data = {
+                'model': model.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'epoch': epoch
+            }
+            torch.save(data, path)
 
 
 def train(model, device, train_loader, optimizer, epoch, args, logger):
@@ -502,7 +535,6 @@ def train(model, device, train_loader, optimizer, epoch, args, logger):
             loss.backward(create_graph=args.create_graph)
             return loss, output
 
-        #loss, output = optimizer.step(closure=closure)
         loss, output = closure()
         optimizer.step()
         loss = loss.item()
@@ -524,6 +556,7 @@ def train(model, device, train_loader, optimizer, epoch, args, logger):
             metrics = {'epoch': epoch, 'iteration': iteration, 'elapsed_time': elapsed_time,
                        'accuracy': 0, 'loss': loss, 'lr': lr, 'step_ms': interval_ms}
 
+            log_scalars(metrics)
             for name, param in model.named_parameters():
                 attr = 'p_pre_{}'.format(name)
                 p_pre = getattr(model, attr)
@@ -537,14 +570,41 @@ def train(model, device, train_loader, optimizer, epoch, args, logger):
                 upd_norm = param.sub(p_pre).norm().item()
                 noise_scale = getattr(param, 'noise_scale', 0)
 
-                p_log = {'p_shape': p_shape, 'p_norm': p_norm, 'p_pre_norm': p_pre_norm,
+                p_log = {'p_shape': p_shape[0], 'p_norm': p_norm, 'p_pre_norm': p_pre_norm,
                          'g_norm': g_norm, 'upd_norm': upd_norm, 'noise_scale': noise_scale}
                 #  print(p_log)
                 metrics[name] = p_log
-
-            log(metrics, step=iteration * args.batch_size)
+                log_scalars(u.nest_stats(f'kazuki/{name}', p_log))
 
     return 0, loss, confidence
+
+
+def validate(model, device, val_loader, optimizer):
+    model.eval()
+    val_loss = 0
+    correct = 0
+
+    with torch.no_grad():
+        for data, target in val_loader:
+
+            data, target = data.to(device), target.to(device)
+
+            if isinstance(optimizer, VIOptimizer):
+                output = optimizer.prediction(data)
+            else:
+                output = model(data)
+
+            val_loss += F.cross_entropy(output, target, reduction='sum').item()  # sum up batch loss
+            pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
+            correct += pred.eq(target.view_as(pred)).sum().item()
+
+    val_loss /= len(val_loader.dataset)
+    val_accuracy = 100. * correct / len(val_loader.dataset)
+
+    print('\nEval: Average loss: {:.4f}, Accuracy: {:.0f}/{} ({:.2f}%)\n'.format(
+        val_loss, correct, len(val_loader.dataset), val_accuracy))
+
+    return val_accuracy, val_loss
 
 
 if __name__ == '__main__':
