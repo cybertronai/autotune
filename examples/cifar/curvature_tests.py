@@ -134,7 +134,7 @@ def singlelayer_test():
 
     # loss
     loss2 = (residuals * residuals).sum() / (2 * n)
-    check_close(toscalar(loss2), 8.83333)
+    check_close(to_scalar(loss2), 8.83333)
 
     ####################################################################
     # Hessian
@@ -149,7 +149,7 @@ def singlelayer_test():
 
     # method 3, PyTorch backprop
     hess = hessian(compute_loss(residuals), model.w.weight)
-    hess = hess.squeeze(2)
+    hess = hess.squeeze(2)   # TODO(y): replace with transpose like in multilayer test
     hess = hess.squeeze(0)
     check_close(hess, H)
 
@@ -159,22 +159,22 @@ def singlelayer_test():
     g_ = g.unsqueeze(0)  # turn g into row matrix
 
     # predicted drop in loss if we take a Newton step
-    excess = toscalar(g_ @ H.inverse() @ g_.t() / 2)
+    excess = to_scalar(g_ @ H.inverse() @ g_.t() / 2)
     check_close(excess, 8.83333)
 
     def loss_direction(direction, eps):
         """loss improvement if we take step eps in direction dir"""
-        return toscalar(eps * (direction @ g.t()) - 0.5 * eps ** 2 * direction @ H @ direction.t())
+        return to_scalar(eps * (direction @ g.t()) - 0.5 * eps ** 2 * direction @ H @ direction.t())
 
     newtonImprovement = loss_direction(g_ @ H.inverse(), 1)
     check_close(newtonImprovement, 8.83333)
 
     ############################
     # OpenAI quantities
-    grad_curvature = toscalar(g_ @ H @ g_.t())  # curvature in direction of g
-    stepOpenAI = toscalar(g.norm() ** 2 / grad_curvature) if g_norm else 999
+    grad_curvature = to_scalar(g_ @ H @ g_.t())  # curvature in direction of g
+    stepOpenAI = to_scalar(g.norm() ** 2 / grad_curvature) if g_norm else 999
     check_close(stepOpenAI, 0.170157)
-    batchOpenAI = toscalar(torch.trace(H @ sigma) / grad_curvature) if g_norm else 999
+    batchOpenAI = to_scalar(torch.trace(H @ sigma) / grad_curvature) if g_norm else 999
     check_close(batchOpenAI, 0.718603)
 
     # improvement in loss when we take gradient step with optimal learning rate
@@ -406,18 +406,18 @@ def multilayer_test():
 
     # loss
     loss2 = (residuals * residuals).sum() / (2 * n)
-    check_close(toscalar(loss2), 187.5)
+    check_close(to_scalar(loss2), 187.5)
 
     sigma_norm = torch.norm(sigma)
     g_norm = torch.norm(g)
 
     # predicted drop in loss if we take a Newton step
-    excess = toscalar(g @ pinv(H) @ g.t() / 2)
+    excess = to_scalar(g @ pinv(H) @ g.t() / 2)
     check_close(excess, 12747 / 68)
 
     def loss_direction(direction, eps):
         """loss improvement if we take step eps in direction dir"""
-        return toscalar(eps * (direction @ g.t()) - 0.5 * eps ** 2 * direction @ H @ direction.t())
+        return to_scalar(eps * (direction @ g.t()) - 0.5 * eps ** 2 * direction @ H @ direction.t())
 
     newtonImprovement = loss_direction(g @ pinv(H), 1)
     check_close(newtonImprovement, 12747/68)
@@ -425,10 +425,10 @@ def multilayer_test():
     ############################
     # OpenAI quantities
     ############################
-    grad_curvature = toscalar(g @ H @ g.t())  # curvature in direction of g
-    stepOpenAI = toscalar(g.flatten().norm() ** 2 / grad_curvature) if g_norm else 999
+    grad_curvature = to_scalar(g @ H @ g.t())  # curvature in direction of g
+    stepOpenAI = to_scalar(g.flatten().norm() ** 2 / grad_curvature) if g_norm else 999
     check_close(stepOpenAI, 0.00571855)
-    batchOpenAI = toscalar(torch.trace(H @ sigma) / grad_curvature) if g_norm else 999
+    batchOpenAI = to_scalar(torch.trace(H @ sigma) / grad_curvature) if g_norm else 999
     check_close(batchOpenAI, 0.180201)
 
     # improvement in loss when we take gradient step with optimal learning rate

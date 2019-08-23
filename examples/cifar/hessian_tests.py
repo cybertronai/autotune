@@ -6,6 +6,7 @@ import sys
 # import torch
 import torch
 import torch.nn as nn
+from torchcurv.optim import SecondOrderOptimizer
 
 module_path = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, module_path)
@@ -84,6 +85,14 @@ def simple_hessian_test():
     layer.weight.data.copy_(torch.ones((d[2], d[1])))
     Blayer.weight.data.copy_(Bs[0].t())
     u.check_close(model(As[0]), [-18., -3.])
+
+    # Run optimizer to capture A's and B's
+    optim_kwargs = dict(lr=0, momentum=0, weight_decay=0, l2_reg=0,
+                        bias_correction=False, acc_steps=1,
+                        curv_type="Cov", curv_shapes={"Linear": "Kron"},
+                        momentum_type="preconditioned", )
+    curv_args = dict(damping=1, ema_decay=1)  # todo: damping
+    _optimizer = SecondOrderOptimizer(model, **optim_kwargs, curv_kwargs=curv_args)
 
 
 if __name__ == '__main__':
