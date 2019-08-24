@@ -1,6 +1,7 @@
 # Take simple example, plot per-layer stats over time
 import inspect
 import math
+import random
 import sys
 import time
 from typing import Dict
@@ -50,12 +51,32 @@ def vec_test():
     check_equal(c2v(vec(mat)), [1, 2, 3, 4, 5, 6])
 
 
+def tvec(mat):
+    """transposed vec operator concatenates rows into single row matrix"""
+    assert len(mat.shape) == 2
+    return mat.reshape(1, -1)
+
+
+def tvec_test():
+    mat = torch.tensor([[1, 3, 5], [2, 4, 6]])
+    check_equal(tvec(mat), [[1, 3, 5, 2, 4, 6]])
+
+
 def unvec(a, rows):
     """reverse of vec, rows specifies number of rows in the final matrix."""
     assert len(a.shape) == 2
+    assert a.shape[1] == 1
     assert a.shape[0] % rows == 0
     cols = a.shape[0] // rows
     return a.reshape(cols, -1).t()
+
+
+def untvec(a, rows):
+    """reverse of tvec, rows specifies number of rows in the final matrix."""
+    assert len(a.shape) == 2
+    assert a.shape[0] == 1
+    assert a.shape[1] % rows == 0
+    return a.reshape(rows, -1)
 
 
 def kron(a, b):
@@ -297,3 +318,21 @@ def nest_stats(tag: str, stats) -> Dict:
     for key, value in stats.items():
         result[f"{tag}/{key}"] = value
     return result
+
+
+def seed_random(seed):
+    torch.manual_seed(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+def zero_grad(model: nn.Module):
+    """Deletes gradients as well as saved backprops/activations on a model."""
+    model.zero_grad()
+    for m in model.modules():
+        if hasattr(m, 'backprops'):
+            del m.backprops
+        if hasattr(m, 'activations'):
+            del m.activations
+
