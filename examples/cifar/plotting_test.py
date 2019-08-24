@@ -436,7 +436,7 @@ def main():
 
     train_dataset = dataset_class(
         root=args.root, train=True, download=args.download, transform=train_transform)
-    # val_dataset = dataset_class(root=args.root, train=False, download=args.download, transform=val_transform)
+    # val_dataset = t(root=args.root, train=False, download=args.download, transform=val_transform)
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
