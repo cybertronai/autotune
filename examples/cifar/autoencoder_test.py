@@ -1,16 +1,13 @@
 import os
 import sys
-from typing import Any, Dict
+from typing import Any, Dict, Callable
 from typing import List
 
 import globals as gl
-import numpy as np
 # import torch
 import torch
 import torch.nn as nn
-import torchvision.datasets as datasets
 import wandb
-from PIL import Image
 from attrdict import AttrDefault
 from torch import optim
 from torch.utils.tensorboard import SummaryWriter
@@ -22,82 +19,17 @@ sys.path.insert(0, module_path)
 import util as u
 
 
-if torch.cuda.is_available():
-    device = torch.device('cuda')
-else:
-    device = torch.device('cpu')
-
-
-class TinyMNIST(datasets.MNIST):
-    """Dataset for autoencoder task."""
-
-    # 60k,1,new_dim,new_dim
-    def __init__(self, root, data_width=4, targets_width=4, dataset_size=60000, download=True):
-        super().__init__(root, download)
-
-        # Put both data and targets on GPU in advance
-        self.data = self.data[:dataset_size, :, :]
-        new_data = np.zeros((self.data.shape[0], data_width, data_width))
-        new_targets = np.zeros((self.data.shape[0], targets_width, targets_width))
-        for i in range(self.data.shape[0]):
-            arr = self.data[i, :].numpy().astype(np.uint8)
-            im = Image.fromarray(arr)
-            im.thumbnail((data_width, data_width), Image.ANTIALIAS)
-            new_data[i, :, :] = np.array(im) / 255
-            im = Image.fromarray(arr)
-            im.thumbnail((targets_width, targets_width), Image.ANTIALIAS)
-            new_targets[i, :, :] = np.array(im) / 255
-
-        self.data = torch.from_numpy(new_data).float()
-        self.data = self.data.unsqueeze(1)
-        self.targets = torch.from_numpy(new_targets).float()
-        self.targets = self.targets.unsqueeze(1)
-        self.data, self.targets = self.data.to(device), self.targets.to(device)
-
-    def __getitem__(self, index):
-        """
-        Args:
-            index (int): Index
-
-        Returns:
-            tuple: (image, target) where target is index of the target class.
-        """
-        img, target = self.data[index], self.targets[index]
-
-        return img, target
-
-
-class Net(nn.Module):
-    def __init__(self, d: List[int], nonlin=False):
-        super().__init__()
-        self.layers: List[nn.Module] = []
-        self.all_layers: List[nn.Module] = []
-        self.d: List[int] = d
-        for i in range(len(d) - 1):
-            linear = nn.Linear(d[i], d[i + 1], bias=False)
-            setattr(linear, 'name', f'{i:02d}-linear')
-            self.layers.append(linear)
-            self.all_layers.append(linear)
-            if nonlin:
-                self.all_layers.append(nn.ReLU())
-        self.predict = torch.nn.Sequential(*self.all_layers)
-
-    def forward(self, x: torch.Tensor):
-        x = x.reshape((-1, self.d[0]))
-        return self.predict(x)
-
-
 def autoencoder_minimize_test():
     """Minimize autoencoder for a few steps."""
     data_width = 4
     targets_width = 2
     batch_size = 64
-    dataset = TinyMNIST('/tmp', download=True, data_width=data_width, targets_width=targets_width, dataset_size=batch_size)
+    dataset = u.TinyMNIST('/tmp', download=True, data_width=data_width, targets_width=targets_width, dataset_size=batch_size)
     trainloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
     u.seed_random(1)
     d = data_width ** 2
-    model = Net([d, targets_width**2])
+    model = u.SimpleNet([d, targets_width ** 2])
 
     optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
 
@@ -126,14 +58,14 @@ def autoencoder2_minimize_test():
     targets_width = 2
 
     batch_size = 64
-    dataset = TinyMNIST('/tmp', download=True, data_width=data_width, targets_width=targets_width, dataset_size=batch_size)
+    dataset = u.TinyMNIST('/tmp', download=True, data_width=data_width, targets_width=targets_width, dataset_size=batch_size)
     trainloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
     u.seed_random(1)
     d1 = data_width ** 2
     d2 = 10
     d3 = targets_width ** 2
-    model = Net([d1, d2, d3], nonlin=True)
+    model = u.SimpleNet([d1, d2, d3], nonlin=True)
 
     optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
 
@@ -162,12 +94,12 @@ def autoencoder_newton_test():
 
     image_size = 3
     batch_size = 64
-    dataset = TinyMNIST('/tmp', download=True, data_width=image_size, targets_width=image_size, dataset_size=batch_size)
+    dataset = u.TinyMNIST('/tmp', download=True, data_width=image_size, targets_width=image_size, dataset_size=batch_size)
     trainloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
     d = image_size ** 2   # hidden layer size
     u.seed_random(1)
-    model = Net([d, d])
+    model = u.SimpleNet([d, d])
 
     optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
 
@@ -204,12 +136,12 @@ def autoencoder_newton_transposed_test():
 
     image_size = 3
     batch_size = 64
-    dataset = TinyMNIST('/tmp', download=True, data_width=image_size, targets_width=image_size, dataset_size=batch_size)
+    dataset = u.TinyMNIST('/tmp', download=True, data_width=image_size, targets_width=image_size, dataset_size=batch_size)
     trainloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
     d = image_size ** 2   # hidden layer size
     u.seed_random(1)
-    model = Net([d, d])
+    model = u.SimpleNet([d, d])
 
     optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
 
@@ -225,7 +157,7 @@ def autoencoder_newton_transposed_test():
         data, targets = next(iter(trainloader))
         optimizer.zero_grad()
         loss = loss_fn(model(data), targets)
-        print(loss)
+        print(loss.item())
         if i > 0:
             assert loss < 1e-9
 
@@ -247,13 +179,13 @@ def manual_linear_hessian_test():
     data_width = 3
     targets_width = 2
     batch_size = 3
-    dataset = TinyMNIST('/tmp', download=True, data_width=data_width, targets_width=targets_width, dataset_size=batch_size)
+    dataset = u.TinyMNIST('/tmp', download=True, data_width=data_width, targets_width=targets_width, dataset_size=batch_size)
     trainloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
     d1 = data_width ** 2   # hidden layer size, visible size, output size
     d2 = targets_width ** 2   # hidden layer size, visible size, output size
     n = batch_size
-    model = Net([d1, d2])
+    model = u.SimpleNet([d1, d2])
     layer = model.layers[0]
     W = model.layers[0].weight
 
@@ -334,7 +266,7 @@ def manual_nonlinear_hessian_test():
     targets_width = 2
 
     batch_size = 5
-    dataset = TinyMNIST('/tmp', download=True, data_width=data_width, targets_width=targets_width, dataset_size=batch_size)
+    dataset = u.TinyMNIST('/tmp', download=True, data_width=data_width, targets_width=targets_width, dataset_size=batch_size)
     trainloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
     u.seed_random(1)
@@ -343,7 +275,7 @@ def manual_nonlinear_hessian_test():
     d3 = targets_width ** 2
     o = d3
     n = batch_size
-    model = Net([d1, d2, d3], nonlin=True)
+    model = u.SimpleNet([d1, d2, d3], nonlin=True)
     layer = model.layers[0]
     W = model.layers[0].weight
 
@@ -397,7 +329,7 @@ def manual_nonlinear_hessian_test():
     skip_hooks = False
     id_mat = torch.eye(o)
     for out_idx in range(o):
-        # u.zero_grad(model)
+        u.zero_grad(model)
         output = model(data)
         _loss = loss_fn(output, targets)
 
@@ -463,10 +395,10 @@ def autoencoder_training_test():
     o = d3
     n = batch_size
     d = [d1, d2, d3]
-    model = Net(d, nonlin=True)
+    model = u.SimpleNet(d, nonlin=True)
     train_steps = 3
 
-    dataset = TinyMNIST('/tmp', download=True, data_width=data_width, targets_width=targets_width, dataset_size=batch_size*train_steps)
+    dataset = u.TinyMNIST('/tmp', download=True, data_width=data_width, targets_width=targets_width, dataset_size=batch_size*train_steps)
     trainloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
     train_iter = iter(trainloader)
 
@@ -488,9 +420,18 @@ def autoencoder_training_test():
         assert gl.backward_idx == len(module.backprops)
         module.backprops.append(output[0])
 
+    def save_grad(param: nn.Parameter) -> Callable[[torch.Tensor], None]:
+        """Hook to save gradient into 'param.saved_grad', so it can be accessed after model.zero_grad(). Only stores gradient
+        if the value has not been set, call util.zero_grad to clear it."""
+        def save_grad_fn(grad):
+            if not hasattr(param, 'saved_grad'):
+                setattr(param, 'saved_grad', grad)
+        return save_grad_fn
+
     for layer in model.layers:
         layer.register_forward_hook(capture_activations)
         layer.register_backward_hook(capture_backprops)
+        layer.weight.register_hook(save_grad(layer.weight))
 
     def loss_fn(data, targets):
         err = data - targets.view(-1, data.shape[1])
@@ -502,20 +443,21 @@ def autoencoder_training_test():
         data, targets = next(train_iter)
         skip_forward_hooks = False
         skip_backward_hooks = False
-        gl.backward_idx = 0
 
         # get gradient values
+        gl.backward_idx = 0
         u.zero_grad(model)
         output = model(data)
         loss = loss_fn(output, targets)
         loss.backward(retain_graph=True)
-        skip_forward_hooks = True
 
         # get Hessian values
+        skip_forward_hooks = True
         id_mat = torch.eye(o)
         s = AttrDefault(str, {})
+        # o = 0
         for out_idx in range(o):
-            model.zero_grad()   # TODO: remove strict checking in capture_backprops/activations
+            model.zero_grad()
             # backprop to get section of batch output jacobian for output at position out_idx
             output = model(data)  # opt: using autograd.grad means I don't have to zero_grad
             ei = id_mat[out_idx]
@@ -532,12 +474,11 @@ def autoencoder_training_test():
             A_t = layer.activations
             assert A_t.shape == (n, d[i])
 
-            # add factor of n because backprop are for loss averaged over batch, while we need per-example loss
+            # add factor of n because backprop takes loss averaged over batch, while we need per-example loss
             B_t = layer.backprops[0] * n
             assert B_t.shape == (n, d[i+1])
 
-            # batch loss Jacobian
-            G = u.khatri_rao_t(A_t, B_t)
+            G = u.khatri_rao_t(B_t, A_t)
             assert G.shape == (n, d[i]*d[i+1])
 
             # average gradient
@@ -545,12 +486,8 @@ def autoencoder_training_test():
             assert g.shape == (1, d[i]*d[i+1])
 
             if autograd_check:
-                model.zero_grad()
-                output = model(data)  # opt: using autograd.grad means I don't have to zero_grad
-                loss = loss_fn(output, targets)
-                loss.backward()
-                # TODO(y): fix this check, currently fails
-                #                u.check_close(g.reshape(d[i+1], d[i]), layer.weight.grad)
+                u.check_close(B_t.t() @ A_t / n, layer.weight.saved_grad)
+                u.check_close(g.reshape(d[i+1], d[i]), layer.weight.saved_grad)
 
             # empirical Fisher
             efisher = G.t() @ G / n
@@ -568,7 +505,7 @@ def autoencoder_training_test():
             assert Bmat_t.shape == (n*o, d[i+1])
 
             # hessian in in row-vectorized layout instead of usual column vectorized, for easy comparison with PyTorch autograd
-            Jb = u.khatri_rao_t(Bmat_t, Amat_t)
+            Jb = u.khatri_rao_t(Bmat_t, Amat_t)   # batch Jacobian
             H = Jb.t() @ Jb / n
 
             if autograd_check:
@@ -589,5 +526,5 @@ if __name__ == '__main__':
     #    autoencoder_newton_transposed_test()
     #    manual_linear_hessian_test()
     #    manual_nonlinear_hessian_test()
-    autoencoder_training_test()
-    #    u.run_all_tests(sys.modules[__name__])
+    #    autoencoder_training_test()
+    u.run_all_tests(sys.modules[__name__])

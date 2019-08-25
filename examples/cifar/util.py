@@ -12,7 +12,26 @@ import torch
 
 
 import torch.nn as nn
-import torch.nn.functional as F
+
+import torchvision.datasets as datasets
+from PIL import Image
+
+import globals as gl
+
+import os
+import sys
+from typing import Any, Dict, Callable
+from typing import List
+
+import globals as gl
+# import torch
+import torch
+import torch.nn as nn
+import wandb
+from attrdict import AttrDefault
+from torch import optim
+from torch.utils.tensorboard import SummaryWriter
+
 
 
 def v2c(vec):
@@ -87,6 +106,7 @@ def kron(a, b):
 def slow_kron(a, b):
     """Slower version which is required when dimensions are not contiguous."""
     return torch.einsum("ab,cd->acbd", a, b).contiguous().view(a.size(0) * b.size(0), a.size(1) * b.size(1))
+
 
 def kron_test():
     A = torch.tensor([[1, 2], [3, 4]])
@@ -327,12 +347,89 @@ def seed_random(seed):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
-def zero_grad(model: nn.Module):
-    """Deletes gradients as well as saved backprops/activations on a model."""
+
+def zero_grad(model: nn.Module) -> None:
+    """model.zero_grad + delete all backprops/activations/saved_grad values"""
     model.zero_grad()
     for m in model.modules():
         if hasattr(m, 'backprops'):
             del m.backprops
         if hasattr(m, 'activations'):
             del m.activations
+    for p in model.parameters():
+        if hasattr(p, 'saved_grad'):
+            del p.saved_grad
 
+
+class TinyMNIST(datasets.MNIST):
+    """Custom-size MNIST autoencoder dataset for debugging."""
+
+    def __init__(self, root, data_width=4, targets_width=4, dataset_size=60000, download=True):
+        """
+
+        Args:
+            root: dataset root
+            data_width: dimension of input images
+            targets_width: dimension of target images
+            dataset_size: number of examples
+        """
+        super().__init__(root, download)
+
+        self.data = self.data[:dataset_size, :, :]
+        new_data = np.zeros((self.data.shape[0], data_width, data_width))
+        new_targets = np.zeros((self.data.shape[0], targets_width, targets_width))
+        for i in range(self.data.shape[0]):
+            arr = self.data[i, :].numpy().astype(np.uint8)
+            im = Image.fromarray(arr)
+            im.thumbnail((data_width, data_width), Image.ANTIALIAS)
+            new_data[i, :, :] = np.array(im) / 255
+            im = Image.fromarray(arr)
+            im.thumbnail((targets_width, targets_width), Image.ANTIALIAS)
+            new_targets[i, :, :] = np.array(im) / 255
+
+        self.data = torch.from_numpy(new_data).float()
+        self.data = self.data.unsqueeze(1)
+        self.targets = torch.from_numpy(new_targets).float()
+        self.targets = self.targets.unsqueeze(1)
+        self.data, self.targets = self.data.to(gl.device), self.targets.to(gl.device)
+
+    def __getitem__(self, index):
+        """
+        Args:
+            index (int): Index
+
+        Returns:
+            tuple: (image, target) where target is index of the target class.
+        """
+        img, target = self.data[index], self.targets[index]
+
+        return img, target
+
+
+class SimpleNet(nn.Module):
+    """Simple feedforward network that works on images."""
+    def __init__(self, d: List[int], nonlin=False):
+        """
+        Feedfoward network of linear layers with optional ReLU nonlinearity. Stores layers in "layers" attr, ie
+        model.layers[0] refers to first linear layer.
+
+        Args:
+            d: list of layer dimensions, ie [768, 20, 10] for MNIST 10-output with hidden layer of 20
+            nonlin: whether to include ReLU nonlinearity
+        """
+        super().__init__()
+        self.layers: List[nn.Module] = []
+        self.all_layers: List[nn.Module] = []
+        self.d: List[int] = d
+        for i in range(len(d) - 1):
+            linear = nn.Linear(d[i], d[i + 1], bias=False)
+            setattr(linear, 'name', f'{i:02d}-linear')
+            self.layers.append(linear)
+            self.all_layers.append(linear)
+            if nonlin:
+                self.all_layers.append(nn.ReLU())
+        self.predict = torch.nn.Sequential(*self.all_layers)
+
+    def forward(self, x: torch.Tensor):
+        x = x.reshape((-1, self.d[0]))
+        return self.predict(x)
