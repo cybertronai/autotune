@@ -464,7 +464,7 @@ def autoencoder_training_test():
             bval = torch.stack([ei] * batch_size)
             gl.backward_idx = out_idx+1
             output.backward(bval)
-        skip_backward_hooks = True  # TODO: use callback to remove the hooks?
+        skip_backward_hooks = True
 
         for (i, layer) in enumerate(model.layers):
 
@@ -482,7 +482,7 @@ def autoencoder_training_test():
             assert G.shape == (n, d[i]*d[i+1])
 
             # average gradient
-            g = G.sum(dim=0, keepdim=True) / n  # TODO(y): add test above to figure out shape, check_equal(B @ A.t() / n, W.grad)
+            g = G.sum(dim=0, keepdim=True) / n
             assert g.shape == (1, d[i]*d[i+1])
 
             if autograd_check:

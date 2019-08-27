@@ -202,6 +202,11 @@ def singlelayer_test():
     rho = d / erank(p_sigma) if sigma_norm > 0 else 1
     check_close(rho, 1.21987)
 
+    # use new method with Lyapunov factoring
+    p_sigma2 = lyapunov_svd(H, sigma)
+    rho2 = d / erank(p_sigma2)
+    check_close(rho2, 1.21987)
+
     rhoSimple = (d / erank(isqrtH @ sigma @ isqrtH)) if sigma_norm > 0 else 1
     check_close(rhoSimple, 1.4221)
     assert 1 <= rho <= d, rho
