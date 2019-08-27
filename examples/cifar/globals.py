@@ -1,8 +1,10 @@
-# module to hold global variables
+# Module to hold global variables for curvature computation functions.
+# This is needed sincne functionality may be split over several modules, while global variables
+# simplify code significantly
+
 from typing import Optional
 
 import torch
-# from tensorboardX import SummaryWriter
 from torch.utils.tensorboard import SummaryWriter
 
 event_writer: Optional[SummaryWriter] = None
@@ -13,3 +15,7 @@ if torch.cuda.is_available():
     device = torch.device('cuda')
 else:
     device = torch.device('cpu')
+
+
+skip_forward_hooks: Optional[bool] = None
+skip_backward_hooks: Optional[bool] = None

@@ -1,3 +1,5 @@
+# Tests that compare manual computation of quantities against PyTorch autograd
+
 import os
 import sys
 from typing import Any, Dict, Callable
@@ -45,7 +47,6 @@ def autoencoder_minimize_test():
         loss = loss_fn(model(data), targets)
         if i == 0:
             assert loss > 0.03
-        print(loss)
         loss.backward()
         optimizer.step()
 
@@ -82,7 +83,6 @@ def autoencoder2_minimize_test():
         if i == 0:
             assert loss > 0.055
             pass
-        print(loss)
         loss.backward()
         optimizer.step()
 
@@ -115,7 +115,6 @@ def autoencoder_newton_test():
         data, targets = next(iter(trainloader))
         optimizer.zero_grad()
         loss = loss_fn(model(data), targets)
-        print(loss)
         if i > 0:
             assert loss < 1e-9
 
@@ -157,7 +156,6 @@ def autoencoder_newton_transposed_test():
         data, targets = next(iter(trainloader))
         optimizer.zero_grad()
         loss = loss_fn(model(data), targets)
-        print(loss.item())
         if i > 0:
             assert loss < 1e-9
 
@@ -232,7 +230,6 @@ def manual_linear_hessian_test():
     loss = loss_fn(model(data), targets)
     H = u.hessian(loss, W)
     H = H.transpose(0, 1).transpose(2, 3).reshape(d1 * d2, d1 * d2)
-    print(H)
 
     # compute B matrices
     Bs_t = []   # one matrix per class, storing backprops for current layer
@@ -322,7 +319,6 @@ def manual_nonlinear_hessian_test():
     loss = loss_fn(model(data), targets)
     H_autograd = u.hessian(loss, W)
     H_autograd_t = H_autograd.transpose(0, 1).transpose(2, 3).reshape(d1 * d2, d1 * d2)
-    print(H_autograd_t)
 
     # compute B matrices
     Bs_t = []   # one matrix per class, storing backprops for current layer
@@ -519,7 +515,116 @@ def autoencoder_training_test():
             log_scalars(u.nest_stats(layer.name, s))
 
 
+def cross_entropy_test():
+    data_width = 4
+    targets_width = 2
+    batch_size = 5
+
+    d1 = data_width ** 2
+    d2 = 10
+    d3 = targets_width ** 2
+    o = d3
+    n = batch_size
+    d = [d1, d2, d3]
+    model: u.SimpleNet = u.SimpleNet(d, nonlin=True)
+    train_steps = 3
+
+    dataset = u.TinyMNIST('/tmp', download=True, data_width=data_width, targets_width=targets_width,
+                          dataset_size=batch_size * train_steps)
+    train_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
+    train_iter = iter(train_loader)
+
+    for layer in model.layers:
+        layer.register_forward_hook(u.capture_activations)
+        layer.register_backward_hook(u.capture_backprops)
+        layer.weight.register_hook(u.save_grad(layer.weight))
+
+    def loss_fn(data, targets):
+        err = data - targets.view(-1, data.shape[1])
+        assert len(data) == batch_size
+        return torch.sum(err * err) / 2 / len(data)
+
+    gl.token_count = 0
+    for train_step in range(train_steps):
+        data, targets = next(train_iter)
+        gl.skip_forward_hooks = False
+        gl.skip_backward_hooks = False
+
+        # get gradient values
+        gl.backward_idx = 0
+        u.zero_grad(model)
+        output = model(data)
+        loss = loss_fn(output, targets)
+        loss.backward(retain_graph=True)
+
+        # get Hessian values
+        gl.skip_forward_hooks = True
+        id_mat = torch.eye(o)
+        s = AttrDefault(str, {})
+        # o = 0
+        for out_idx in range(o):
+            model.zero_grad()
+            # backprop to get section of batch output jacobian for output at position out_idx
+            output = model(data)
+            ei = id_mat[out_idx]
+            bval = torch.stack([ei] * batch_size)
+            gl.backward_idx = out_idx + 1
+            output.backward(bval)
+
+        gl.skip_backward_hooks = True
+
+        for (i, layer) in enumerate(model.layers):
+
+            #############################
+            # Gradient stats
+            #############################
+            A_t = layer.activations
+            assert A_t.shape == (n, d[i])
+
+            # add factor of n because backprop takes loss averaged over batch, while we need per-example loss
+            B_t = layer.backprops[0] * n
+            assert B_t.shape == (n, d[i + 1])
+
+            G = u.khatri_rao_t(B_t, A_t)
+            assert G.shape == (n, d[i] * d[i + 1])
+
+            # average gradient
+            g = G.sum(dim=0, keepdim=True) / n
+            assert g.shape == (1, d[i] * d[i + 1])
+
+            u.check_close(B_t.t() @ A_t / n, layer.weight.saved_grad)
+            u.check_close(g.reshape(d[i + 1], d[i]), layer.weight.saved_grad)
+
+            # empirical Fisher
+            efisher = G.t() @ G / n
+            _sigma = efisher - g.t() @ g
+
+            #############################
+            # Hessian stats
+            #############################
+            A_t = layer.activations
+            Bh_t = [layer.backprops[out_idx + 1] for out_idx in range(o)]
+            Amat_t = torch.cat([A_t] * o, dim=0)
+            Bmat_t = torch.cat(Bh_t, dim=0)
+
+            assert Amat_t.shape == (n * o, d[i])
+            assert Bmat_t.shape == (n * o, d[i + 1])
+
+            # hessian in in row-vectorized layout instead of usual column vectorized, for easy comparison with PyTorch autograd
+            Jb = u.khatri_rao_t(Bmat_t, Amat_t)  # batch Jacobian
+            H = Jb.t() @ Jb / n
+
+            model.zero_grad()
+            output = model(data)  # opt: using autograd.grad means I don't have to zero_grad
+            loss = loss_fn(output, targets)
+            H_autograd = u.hessian(loss, layer.weight)
+            u.check_close(H, H_autograd.reshape(d[i] * d[i + 1], d[i] * d[i + 1]))
+            print("Hessian check passed")
+
+
 if __name__ == '__main__':
+    cross_entropy_test()
+    sys.exit()
     #    autoencoder_minimize_test()
     #    autoencoder2_minimize_test()
     #    autoencoder_newton_test()

@@ -5,7 +5,7 @@ import os
 import random
 import sys
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Callable
 from typing import List
 
 import globals as gl
@@ -162,11 +162,11 @@ def lyapunov_svd(A, C, rtol=1e-4, use_svd=False):
     S = S.diag() @ torch.ones_like(A)
     X = U @ ((U.t() @ C @ U) / (S + S.t())) @ U.t()
     error = A @ X + X @ A - C
-    relative_error = torch.max(torch.abs(error))/torch.max(torch.abs(A))
+    relative_error = torch.max(torch.abs(error)) / torch.max(torch.abs(A))
     if relative_error > rtol:
         # TODO(y): currently spams with errors, implement another method based on Newton iteration
         pass
-        #print(f"Warning, error {relative_error} encountered in lyapunov_svd")
+        # print(f"Warning, error {relative_error} encountered in lyapunov_svd")
 
     return X
 
@@ -412,7 +412,8 @@ def zero_grad(model: nn.Module) -> None:
 class TinyMNIST(datasets.MNIST):
     """Custom-size MNIST autoencoder dataset for debugging."""
 
-    def __init__(self, root, data_width=4, targets_width=4, dataset_size=0, download=True, train=True):
+    def __init__(self, root, data_width=4, targets_width=4, dataset_size=0, download=True, train=True,
+                 original_targets=False):
         """
 
         Args:
@@ -420,10 +421,11 @@ class TinyMNIST(datasets.MNIST):
             data_width: dimension of input images
             targets_width: dimension of target images
             dataset_size: number of examples
+            original_targets: if False, replaces original classification targets with image reconstruction targets
         """
         super().__init__(root, download=download, train=train)
 
-        if dataset_size>0:
+        if dataset_size > 0:
             assert dataset_size <= self.data.shape[0]
             self.data = self.data[:dataset_size, :, :]
 
@@ -439,7 +441,8 @@ class TinyMNIST(datasets.MNIST):
                 im.thumbnail((targets_width, targets_width), Image.ANTIALIAS)
                 new_targets[i, :, :] = np.array(im) / 255
             self.data = torch.from_numpy(new_data).float()
-            self.targets = torch.from_numpy(new_targets).float()
+            if not original_targets:
+                self.targets = torch.from_numpy(new_targets).float()
         else:
             self.data = self.data.float().unsqueeze(1)
             self.targets = self.data
@@ -627,3 +630,48 @@ def print_cpu_info():
 
 def move_to_gpu(tensors):
     return [tensor.cuda() for tensor in tensors]
+
+
+# Functions to capture backprops/activations and save them on the layer
+# layer.register_forward_hook(capture_activations) -> saves activations/output as layer.activations/layer.output
+# layer.register_backward_hook(capture_backprops)  -> saves it as layer.backprops under layer.backprops[idx]
+# layer.weight.register_hook(save_grad(layer.weight)) -> saves grad under layer.weight.saved_grad
+
+
+def capture_activations(module: nn.Module, input: List[torch.Tensor], output: torch.Tensor):
+    if gl.skip_forward_hooks:
+        return
+    assert gl.backward_idx == 0  # no need to forward-prop on Hessian computation
+    assert not hasattr(module, 'activations'), "Seeing results of previous autograd, call util.zero_grad to clear"
+    assert len(input) == 1, "this was tested for single input layers only"
+    setattr(module, "activations", input[0].detach())
+    setattr(module, "output", output.detach())
+
+
+def capture_backprops(module: nn.Module, _input, output):
+    if gl.skip_backward_hooks:
+        return
+    assert len(output) == 1, "this works for single variable layers only"
+    if gl.backward_idx == 0:
+        assert not hasattr(module, 'backprops'), "Seeing results of previous autograd, call util.zero_grad to clear"
+        setattr(module, 'backprops', [])
+    assert gl.backward_idx == len(module.backprops)
+    module.backprops.append(output[0])
+
+
+def save_grad(param: nn.Parameter) -> Callable[[torch.Tensor], None]:
+    """Hook to save gradient into 'param.saved_grad', so it can be accessed after model.zero_grad(). Only stores gradient
+    if the value has not been set, call util.zero_grad to clear it."""
+
+    def save_grad_fn(grad):
+        if not hasattr(param, 'saved_grad'):
+            setattr(param, 'saved_grad', grad)
+
+    return save_grad_fn
+
+
+def fmt(a):
+    """Helper function for converting copy-pasted Mathematica matrices into Python."""
+
+    a = a.replace('\n', '')
+    print(a.replace("{", "[").replace("}", "]"))

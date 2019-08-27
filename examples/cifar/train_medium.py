@@ -60,12 +60,13 @@ def main():
     train_loader = torch.utils.data.DataLoader(dataset, batch_size=args.train_batch_size, shuffle=False, drop_last=True)
     train_iter = u.infinite_iter(train_loader)
 
-    stats_loader = torch.utils.data.DataLoader(dataset, batch_size=args.stats_batch_size, shuffle=False, drop_last=True)
-    stats_iter = u.infinite_iter(stats_loader)
+    if not args.full_batch:
+        stats_loader = torch.utils.data.DataLoader(dataset, batch_size=args.stats_batch_size, shuffle=False, drop_last=True)
+        stats_iter = u.infinite_iter(stats_loader)
 
     test_dataset = u.TinyMNIST('/tmp', download=True, data_width=args.data_width, targets_width=args.targets_width,
                                train=False)
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.stats_batch_size, shuffle=True, drop_last=True)
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.train_batch_size, shuffle=False, drop_last=True)
     test_iter = u.infinite_iter(test_loader)
 
     skip_forward_hooks = False
@@ -127,7 +128,10 @@ def main():
             u.log_scalar(val_loss=val_loss.item())
 
         # compute stats
-        data, targets = next(stats_iter)
+        if args.full_batch:
+            data, targets = dataset.data, dataset.targets
+        else:
+            data, targets = next(stats_iter)
         skip_forward_hooks = False
         skip_backward_hooks = False
 
@@ -255,7 +259,7 @@ def main():
                 """Curvature in direction dd"""
                 return u.to_scalar(dd @ H @ dd.t() / (dd.flatten().norm() ** 2))
 
-            with u.timeit("pinvH"):
+            with u.timeit(f"pinvH-{i}"):
                 pinvH = u.pinv(H)
 
             with u.timeit(f'curv-{i}'):
@@ -265,7 +269,7 @@ def main():
                 s.newton_curv = curv_direction(ndir)
                 setattr(layer.weight, 'pre', pinvH)  # save Newton preconditioner
                 s.step_openai = 1 / s.grad_curv if s.grad_curv else 999
-                s.step_max = 2 / u.sym_l2_norm(H)
+                s.step_max = 2 / s.H_l2
                 s.step_min = torch.tensor(2) / torch.trace(H)
 
                 s.newton_fro = ndir.flatten().norm()  # frobenius norm of Newton update
@@ -323,6 +327,10 @@ def main():
 
             if args.method != 'newton':
                 optimizer.step()
+                if args.weight_decay:
+                    for group in optimizer.param_groups:
+                        for param in group['params']:
+                            param.data.mul_(1-args.weight_decay)
             else:
                 for (layer_idx, layer) in enumerate(model.layers):
                     param: torch.nn.Parameter = layer.weight
@@ -368,9 +376,9 @@ if __name__ == '__main__':
     parser.add_argument('--logdir', type=str, default='/temp/runs/curv_train_tiny/run')
 
     parser.add_argument('--train_batch_size', type=int, default=100)
-    parser.add_argument('--stats_batch_size', type=int, default=2000)
+    parser.add_argument('--stats_batch_size', type=int, default=60000)
     parser.add_argument('--dataset_size', type=int, default=60000)
-    parser.add_argument('--train_steps', type=int, default=10, help="this many train steps between stat collection")
+    parser.add_argument('--train_steps', type=int, default=100, help="this many train steps between stat collection")
     parser.add_argument('--stats_steps', type=int, default=1000000, help="total number of curvature stats collections")
     parser.add_argument('--nonlin', type=int, default=1, help="whether to add ReLU nonlinearity between layers")
     parser.add_argument('--method', type=str, choices=['gradient', 'newton'], default='gradient',
@@ -383,6 +391,8 @@ if __name__ == '__main__':
     parser.add_argument('--hess_kfac', type=int, default=0, help='whether to use KFAC approximation for hessian')
     parser.add_argument('--compute_rho', type=int, default=0, help='use expensive method to compute rho')
     parser.add_argument('--skip_stats', type=int, default=0, help='skip all stats collection')
+    parser.add_argument('--full_batch', type=int, default=1, help='do stats on the whole dataset')
+    parser.add_argument('--weight_decay', type=float, default=1e-4)
 
     args = parser.parse_args()
 
