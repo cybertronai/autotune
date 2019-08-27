@@ -224,14 +224,13 @@ def main():
 
             u.log_scalar(train_loss=loss.item())
 
-            # optimizer.step()
-
-            for (layer_idx, layer) in enumerate(model.layers):
-                param: torch.nn.Parameter = layer.weight
-                param_data: torch.Tensor = param.data
-                if args.method == 'gradient':
+            if args.method != 'newton':
+                optimizer.step()
+            else:
+                for (layer_idx, layer) in enumerate(model.layers):
+                    param: torch.nn.Parameter = layer.weight
+                    param_data: torch.Tensor = param.data
                     param_data.copy_(param_data - 0.1*param.grad)
-                elif args.method == 'newton':
                     if layer_idx != 1:   # only update 1 layer with Newton, unstable otherwise
                         continue
                     u.nan_check(layer.weight.pre)
@@ -273,9 +272,9 @@ if __name__ == '__main__':
 
     parser.add_argument('--train_batch_size', type=int, default=3)
     parser.add_argument('--stats_batch_size', type=int, default=100)
-    parser.add_argument('--dataset_size', type=int, default=3)
-    parser.add_argument('--train_steps', type=int, default=3, help="this many train steps between stat collection")
-    parser.add_argument('--stats_steps', type=int, default=3, help="total number of curvature stats collections")
+    parser.add_argument('--dataset_size', type=int, default=100)
+    parser.add_argument('--train_steps', type=int, default=300, help="this many train steps between stat collection")
+    parser.add_argument('--stats_steps', type=int, default=10, help="total number of curvature stats collections")
     parser.add_argument('--nonlin', type=int, default=1, help="whether to add ReLU nonlinearity between layers")
     parser.add_argument('--method', type=str, choices=['gradient', 'newton'], default='gradient',
                         help="descent method, newton or gradient")
