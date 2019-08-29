@@ -490,7 +490,32 @@ class SimpleNet(nn.Module):
         x = x.reshape((-1, self.d[0]))
         return self.predict(x)
 
+class SimpleConv(nn.Module):
+    """Simple conv network."""
 
+    def __init__(self, d: List[int], nonlin=False):
+        """
+
+        Args:
+            d: list of channels, ie [2, 2] to have 2 conv layers with 2 channels
+        """
+        super().__init__()
+        self.layers: List[nn.Module] = []
+        self.all_layers: List[nn.Module] = []
+        self.d: List[int] = d
+        for i in range(len(d) - 1):
+            linear = nn.Conv2d(d[i], d[i + 1], 2, bias=False)
+            setattr(linear, 'name', f'{i:02d}-conv')
+            self.layers.append(linear)
+            self.all_layers.append(linear)
+            if nonlin:
+                self.all_layers.append(nn.ReLU())
+        self.predict = torch.nn.Sequential(*self.all_layers)
+
+    def forward(self, x: torch.Tensor):
+        return self.predict(x)
+
+    
 def log_scalars(metrics: Dict[str, Any]) -> None:
     for tag in metrics:
         gl.event_writer.add_scalar(tag=tag, scalar_value=metrics[tag], global_step=gl.token_count)
