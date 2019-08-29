@@ -661,7 +661,7 @@ def unfold_test():
 
     
 def conv_grad_test():
-    N, Xc, Xh, Xw = 1, 1, 3, 3
+    N, Xc, Xh, Xw = 1, 2, 3, 3
     dd = [Xc, 2]
     model = u.SimpleConv(dd)
 
@@ -670,9 +670,12 @@ def conv_grad_test():
 
     weight_buffer = model.layers[0].weight.data
 
+    assert weight_buffer.shape == (dd[1], dd[0], Kh, Kw)
+    #weight_buffer.copy_(torch.ones_like(weight_buffer))
+
     # first output channel=1's, second channel=2's
-    weight_buffer[0, 0, :, :].copy_(torch.ones_like(weight_buffer[0, 0, :, :]))
-    weight_buffer[1, 0, :, :].copy_(2*torch.ones_like(weight_buffer[1, 0, :, :]))
+    weight_buffer[0, :, :, :].copy_(torch.ones_like(weight_buffer[0, :, :, :]))
+    weight_buffer[1, :, :, :].copy_(2*torch.ones_like(weight_buffer[1, :, :, :]))
     
     dims = N, Xc, Xh, Xw
     
@@ -680,8 +683,9 @@ def conv_grad_test():
     X = torch.range(0, size-1).reshape(*dims)
 
     def loss_fn(data):
-      err = data.reshape(len(data), -1)
-      return torch.sum(err * err) / 2 / len(data)
+        print(len(data))
+        err = data.reshape(len(data), -1)
+        return torch.sum(err * err) / 2 / len(data)
 
     layer = model.layers[0]
     layer.register_forward_hook(u.capture_activations)
@@ -690,7 +694,7 @@ def conv_grad_test():
     loss = loss_fn(output)
     loss.backward()
 
-    u.check_close(layer.activations, X)
+    u.check_equal(layer.activations, X)
     
     assert layer.backprops[0].shape == layer.output.shape
 
@@ -700,15 +704,22 @@ def conv_grad_test():
     assert unfold(layer.activations, (Oh, Ow)).shape == (N, Xc*Kh*Kw, Oh*Ow)
     assert layer.backprops[0].shape == (N, dd[1], Oh, Ow)
 
+    # make patches be the inner dimension
     bp = layer.backprops[0]
     bp = bp.reshape(N, dd[1], Oh*Ow)
     bp = bp.transpose(1, 2)
 
+    print('backprops')
+    print(bp)
     grad_unf = unfold(layer.activations, (Oh, Ow)) @ bp
-    assert grad_unf.shape == (N, Xc*Kh*Kw, dd[1]) # need (dd[1], dd[0], Kh, Kw)
+    assert grad_unf.shape == (N, dd[0]*Kh*Kw, dd[1]) # need (dd[1], dd[0], Kh, Kw)
     grad_unf = grad_unf.transpose(1, 2)
     grads = grad_unf.reshape((N, dd[1], dd[0], Kh, Kw))
     assert N==1, "currently only works for N=1"
+    print('predicted')
+    print(grads[0])
+    print('actual')
+    print(layer.weight.grad)
     print(torch.max(grads[0]-layer.weight.grad))
     u.check_equal(grads[0], layer.weight.grad)
     print("grad check passed")
