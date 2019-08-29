@@ -493,7 +493,7 @@ class SimpleNet(nn.Module):
 class SimpleConv(nn.Module):
     """Simple conv network."""
 
-    def __init__(self, d: List[int], nonlin=False):
+    def __init__(self, d: List[int], kernel_size=(2, 2), nonlin=False):
         """
 
         Args:
@@ -504,10 +504,10 @@ class SimpleConv(nn.Module):
         self.all_layers: List[nn.Module] = []
         self.d: List[int] = d
         for i in range(len(d) - 1):
-            linear = nn.Conv2d(d[i], d[i + 1], 2, bias=False)
-            setattr(linear, 'name', f'{i:02d}-conv')
-            self.layers.append(linear)
-            self.all_layers.append(linear)
+            conv = nn.Conv2d(d[i], d[i + 1], kernel_size, bias=False)
+            setattr(conv, 'name', f'{i:02d}-conv')
+            self.layers.append(conv)
+            self.all_layers.append(conv)
             if nonlin:
                 self.all_layers.append(nn.ReLU())
         self.predict = torch.nn.Sequential(*self.all_layers)
