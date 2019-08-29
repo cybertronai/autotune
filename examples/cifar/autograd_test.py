@@ -725,8 +725,82 @@ def conv_grad_test():
     print("grad check passed")
 
 
+def conv_multiexample_test():
+    N, Xc, Xh, Xw = 2, 2, 3, 3
+    dd = [Xc, 2]
+    model = u.SimpleConv(dd)
+
+    Kh, Kw = 2, 2
+    Oh, Ow = Xh-Kh+1, Xw-Kw+1
+
+    weight_buffer = model.layers[0].weight.data
+
+    assert weight_buffer.shape == (dd[1], dd[0], Kh, Kw)
+    #weight_buffer.copy_(torch.ones_like(weight_buffer))
+
+    # first output channel=1's, second channel=2's
+    weight_buffer[0, :, :, :].copy_(torch.ones_like(weight_buffer[0, :, :, :]))
+    weight_buffer[1, :, :, :].copy_(2*torch.ones_like(weight_buffer[1, :, :, :]))
+    
+    dims = N, Xc, Xh, Xw
+    
+    size = np.prod(dims)
+    X = torch.range(0, size-1).reshape(*dims)
+
+    def loss_fn(data):
+        print(len(data))
+        err = data.reshape(len(data), -1)
+        return torch.sum(err * err) / 2 / len(data)
+
+    layer = model.layers[0]
+    layer.register_forward_hook(u.capture_activations)
+    layer.register_backward_hook(u.capture_backprops)
+    output = model(X)
+    loss = loss_fn(output)
+    loss.backward()
+
+    u.check_equal(layer.activations, X)
+    
+    assert layer.backprops[0].shape == layer.output.shape
+
+    out_unf = layer.weight.view(layer.weight.size(0), -1) @ unfold(layer.activations, (2, 2))
+    u.check_close(fold(out_unf, layer.output.shape[2:], (1, 1)), output)
+
+    assert unfold(layer.activations, (Oh, Ow)).shape == (N, Xc*Kh*Kw, Oh*Ow)
+    assert layer.backprops[0].shape == (N, dd[1], Oh, Ow)
+
+    # make patches be the inner dimension
+    bp = layer.backprops[0] * N
+    bp = bp.reshape(N, dd[1], Oh*Ow)
+    bp = bp.transpose(1, 2)
+
+    print('backprops')
+    print(bp)
+    grad_unf = unfold(layer.activations, (Oh, Ow)) @ bp
+    assert grad_unf.shape == (N, dd[0]*Kh*Kw, dd[1]) # need (dd[1], dd[0], Kh, Kw)
+    grad_unf = grad_unf.transpose(1, 2)
+    grads = grad_unf.reshape((N, dd[1], dd[0], Kh, Kw))
+    mean_grad = torch.sum(grads, dim=0)/N
+    print('predicted')
+    print(mean_grad)
+    print('actual')
+    print(layer.weight.grad)
+    print(torch.max(mean_grad-layer.weight.grad))
+    u.check_equal(mean_grad, layer.weight.grad)
+    print("mean grad check passed")
+
+    # compute per-example gradients using autograd, compare against manual
+    for i in range(N):
+        u.zero_grad(model)
+        output = model(X[i:i+1,...])
+        loss = loss_fn(output)
+        loss.backward()
+        u.check_equal(grads[i], layer.weight.grad)
+
+
 if __name__ == '__main__':
-    conv_grad_test()
+    #    conv_grad_test()
+    conv_multiexample_test()
     sys.exit()
     unfold_test()
     cross_entropy_test()
