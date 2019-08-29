@@ -20,6 +20,10 @@ module_path = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, module_path)
 import util as u
 
+import numpy as np
+
+unfold=torch.nn.functional.unfold
+fold=torch.nn.functional.fold
 
 def autoencoder_minimize_test():
     """Minimize autoencoder for a few steps."""
@@ -622,9 +626,99 @@ def cross_entropy_test():
             print("Hessian check passed")
 
 
+def unfold_test():
+    N, Xc, Xh, Xw = 1, 2, 3, 3
+    model = u.SimpleConv([Xc, 2])
+
+    weight_buffer = model.layers[0].weight.data
+    weight_buffer.copy_(torch.ones_like(weight_buffer))
+    dims = N, Xc, Xh, Xw
+    
+    size = np.prod(dims)
+    X = torch.range(0, size-1).reshape(*dims)
+
+    def loss_fn(data):
+      err = data.reshape(len(data), -1)
+      return torch.sum(err * err) / 2 / len(data)
+
+    layer = model.layers[0]
+    layer.register_forward_hook(u.capture_activations)
+    layer.register_backward_hook(u.capture_backprops)
+    output = model(X)
+    loss = loss_fn(output)
+    loss.backward()
+
+    u.check_close(layer.activations, X)
+    
+    assert layer.backprops[0].shape == layer.output.shape
+
+    unfold=torch.nn.functional.unfold
+    fold=torch.nn.functional.fold
+    out_unf = layer.weight.view(layer.weight.size(0), -1) @ unfold(layer.activations, (2, 2))
+    u.check_close(fold(out_unf, layer.output.shape[2:], (1, 1)), output)
+
+    print("activations check passed")
+
+    
+def conv_grad_test():
+    N, Xc, Xh, Xw = 1, 1, 3, 3
+    dd = [Xc, 2]
+    model = u.SimpleConv(dd)
+
+    Kh, Kw = 2, 2
+    Oh, Ow = Xh-Kh+1, Xw-Kw+1
+
+    weight_buffer = model.layers[0].weight.data
+
+    # first output channel=1's, second channel=2's
+    weight_buffer[0, 0, :, :].copy_(torch.ones_like(weight_buffer[0, 0, :, :]))
+    weight_buffer[1, 0, :, :].copy_(2*torch.ones_like(weight_buffer[1, 0, :, :]))
+    
+    dims = N, Xc, Xh, Xw
+    
+    size = np.prod(dims)
+    X = torch.range(0, size-1).reshape(*dims)
+
+    def loss_fn(data):
+      err = data.reshape(len(data), -1)
+      return torch.sum(err * err) / 2 / len(data)
+
+    layer = model.layers[0]
+    layer.register_forward_hook(u.capture_activations)
+    layer.register_backward_hook(u.capture_backprops)
+    output = model(X)
+    loss = loss_fn(output)
+    loss.backward()
+
+    u.check_close(layer.activations, X)
+    
+    assert layer.backprops[0].shape == layer.output.shape
+
+    out_unf = layer.weight.view(layer.weight.size(0), -1) @ unfold(layer.activations, (2, 2))
+    u.check_close(fold(out_unf, layer.output.shape[2:], (1, 1)), output)
+
+    assert unfold(layer.activations, (Oh, Ow)).shape == (N, Xc*Kh*Kw, Oh*Ow)
+    assert layer.backprops[0].shape == (N, dd[1], Oh, Ow)
+
+    bp = layer.backprops[0]
+    bp = bp.reshape(N, dd[1], Oh*Ow)
+    bp = bp.transpose(1, 2)
+
+    grad_unf = unfold(layer.activations, (Oh, Ow)) @ bp
+    assert grad_unf.shape == (N, Xc*Kh*Kw, dd[1]) # need (dd[1], dd[0], Kh, Kw)
+    grad_unf = grad_unf.transpose(1, 2)
+    grads = grad_unf.reshape((N, dd[1], dd[0], Kh, Kw))
+    assert N==1, "currently only works for N=1"
+    print(torch.max(grads[0]-layer.weight.grad))
+    u.check_equal(grads[0], layer.weight.grad)
+    print("grad check passed")
+
+
 if __name__ == '__main__':
-    cross_entropy_test()
+    conv_grad_test()
     sys.exit()
+    unfold_test()
+    cross_entropy_test()
     #    autoencoder_minimize_test()
     #    autoencoder2_minimize_test()
     #    autoencoder_newton_test()
