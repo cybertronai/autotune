@@ -8,8 +8,6 @@ from typing import Optional, Tuple, Callable
 import torch.nn as nn
 from torchcurv.optim import SecondOrderOptimizer
 
-module_path = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, module_path)
 from util import *
 
 

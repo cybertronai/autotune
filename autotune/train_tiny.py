@@ -14,8 +14,6 @@ import wandb
 from attrdict import AttrDefault
 from torch.utils.tensorboard import SummaryWriter
 
-module_path = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, module_path)
 import util as u
 
 

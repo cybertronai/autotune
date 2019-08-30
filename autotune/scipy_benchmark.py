@@ -23,8 +23,6 @@ import numpy as np
 import time
 import sys
 
-module_path = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, module_path)
 import util as u
 
 

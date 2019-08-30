@@ -10,8 +10,6 @@ from torchcurv.optim import SecondOrderOptimizer
 
 import torch.nn as nn
 
-module_path = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, module_path)
 import util as u
 
 import numpy as np

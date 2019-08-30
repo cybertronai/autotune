@@ -25,8 +25,6 @@ from torch import optim
 #    g.event_writer.add_scalar(tag, val, g.token_count)
 
 
-module_path = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, module_path)
 import util as u
 
 

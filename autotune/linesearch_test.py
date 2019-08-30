@@ -13,8 +13,6 @@ import torch.nn as nn
 from attrdict import AttrDefault
 from torch import optim
 
-module_path = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, module_path)
 import util as u
 
 
