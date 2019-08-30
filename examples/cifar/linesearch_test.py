@@ -183,7 +183,9 @@ def log(metrics, step):
         pass
 
 
-def main():
+def lineasearch_test():
+    """Implement linesearch with sanity checks."""
+
     global logger, stats_data, stats_targets
 
     parser = argparse.ArgumentParser()
@@ -548,4 +550,4 @@ def train(model, device, train_loader, optimizer, epoch, args, logger):
 
 
 if __name__ == '__main__':
-    main()
+    u.run_all_tests(sys.modules[__name__])

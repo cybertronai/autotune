@@ -4,7 +4,7 @@ import sys
 # import torch
 import torch
 
-sys.path.insert(0, os.environ['HOME'] + '/git0/pytorch-curv/examples/cifar')
+module_path = os.path.dirname(os.path.abspath(__file__))
 import util as u
 
 import torch.nn.functional as F
@@ -48,6 +48,36 @@ def cross_entropy_soft_test():
     p = F.softmax(observed_logit, dim=1)
     hessian_manual = torch.diag(p[0]) - p.t() @ p
     u.check_close(hessian_autograd, hessian_manual)
+
+
+def symsqrt_test():
+    mat = torch.reshape(torch.arange(9) + 1, (3, 3)).float() + torch.eye(3) * 5
+    mat = mat + mat.t()  # make symmetric
+    smat = u.symsqrt(mat)
+    u.check_close(mat, smat @ smat.t())
+    u.check_close(mat, smat @ smat)
+
+    def randomly_rotate(X):
+        """Randomly rotate d,n data matrix X"""
+        d, n = X.shape
+        z = torch.randn((d, d), dtype=X.dtype)
+        q, r = torch.qr(z)
+        d = torch.diag(r)
+        ph = d / abs(d)
+        rot_mat = q * ph
+        return rot_mat @ X
+
+    n = 20
+    d = 10
+    X = torch.randn((d, n))
+
+    # embed in a larger space
+    X = torch.cat([X, torch.zeros_like(X)])
+    X = randomly_rotate(X)
+    cov = X.t() @ X
+    sqrt, rank = u.symsqrt(cov, return_rank=True)
+    assert rank == d
+    assert torch.allclose(sqrt @ sqrt, cov, atol=1e-5)
 
 
 if __name__ == '__main__':

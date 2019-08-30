@@ -287,10 +287,32 @@ def pinv_square_root(mat: torch.Tensor, eps=1e-4) -> torch.Tensor:
     return u @ torch.diag(si) @ v.t()
 
 
+def symsqrt(a, cond=None, return_rank=False):
+    """Computes the symmetric square root of a positive definite matrix"""
+
+    s, u = torch.symeig(a, eigenvectors=True)
+    cond_dict = {torch.float32: 1e3 * 1.1920929e-07, torch.float64: 1E6 * 2.220446049250313e-16}
+
+    if cond in [None, -1]:
+        cond = cond_dict[a.dtype]
+
+    above_cutoff = (abs(s) > cond * torch.max(abs(s)))
+
+    psigma_diag = torch.sqrt(s[above_cutoff])
+    u = u[:, above_cutoff]
+
+    B = u @ torch.diag(psigma_diag) @ u.t()
+    if return_rank:
+        return B, len(psigma_diag)
+    else:
+        return B
+
+
 def check_close(a0, b0, rtol=1e-5, atol=1e-8):
     return check_equal(a0, b0, rtol=rtol, atol=atol)
 
 
+# todo: replace with torch.allclose
 def check_equal(observed, truth, rtol=1e-9, atol=1e-12):
     truth = to_numpy(truth)
     observed = to_numpy(observed)
@@ -414,39 +436,9 @@ def clear_backprops(model: nn.Module) -> None:
             del p.saved_grad
 
 
-# from https://gist.github.com/y0ast/f69966e308e549f013a92dc66debeeb4
-class FastMNIST(datasets.MNIST):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        dataset_size = kwargs.get('dataset_size', 60000)
-        self.data = self.data[:dataset_size]
-        self.targets = self.targets[:dataset_size]
-
-        # Scale data to [0,1]
-        self.data = self.data.unsqueeze(1).float().div(255)
-
-        # Normalize it with the usual MNIST mean and std
-        self.data = self.data.sub_(0.1307).div_(0.3081)
-
-        # Put both data and targets on GPU in advance
-        self.data, self.targets = self.data.to(gl.device), self.targets.to(gl.device)
-
-    def __getitem__(self, index):
-        """
-        Args:
-            index (int): Index
-
-        Returns:
-            tuple: (image, target) where target is index of the target class.
-        """
-        img, target = self.data[index], self.targets[index]
-
-        return img, target
-
-
 class TinyMNIST(datasets.MNIST):
-    """Custom-size MNIST autoencoder dataset for debugging. Generates data/target images with reduced resolution."""
+    """Custom-size MNIST autoencoder dataset for debugging. Generates data/target images with reduced resolution.
+    Use original_targets to get original MNIST labels"""
 
     def __init__(self, root, data_width=4, targets_width=4, dataset_size=0, download=True, train=True,
                  original_targets=False):
@@ -852,7 +844,7 @@ def get_unique_logdir(root_logdir: str) -> str:
 # For a batch of size n,o, Hessian backward sampler will produce k backward values
 # (k between 1 and o) where each value can be fed into model.backward(value)
 #
-# The gradients corresponding to these k backward passes can be summed up to form an estimate of Hessian of the network
+# The gradients corresponding to these k backward will be summed up to form an estimate of Hessian of the network
 # sum_i gg' \approx H
 #
 #   sampler = HessianSamplerMyLoss
@@ -860,7 +852,11 @@ def get_unique_logdir(root_logdir: str) -> str:
 #       model.zero_grad()
 #       model.backward(bval)
 
-class HessianExactSqrLoss(object):
+class HessianSampler:
+    pass
+
+
+class HessianExactSqrLoss(HessianSampler):
     """Sampler for loss err*err/2/len(batch), produces exact Hessian."""
 
     def __init__(self):
@@ -874,7 +870,7 @@ class HessianExactSqrLoss(object):
             yield torch.stack([id_mat[out_idx]] * batch_size)
 
 
-class HessianSampledSqrLoss(object):
+class HessianSampledSqrLoss(HessianSampler):
     """Sampler for loss err*err/2/len(batch), produces exact Hessian."""
 
     samples: int
@@ -889,11 +885,41 @@ class HessianSampledSqrLoss(object):
         assert self.samples <= output_size, f"Requesting more samples than needed for exact Hessian computation " \
             f"({self.samples}>{output_size})"
 
-        # TODO(y): figure out why sqrt(self.samples) was needed here
+        # exact sampler provides n samples whose outer products add up to Identity
+        # this sampler can provides a single sample where outer product is Identity in expectation
+        # therefore must divide each individual vector in outer product by sqrt(samples)
+
         for out_idx in range(self.samples):
             # sample random vectors of +1/-1's
             bval = torch.LongTensor(batch_size, output_size).to(gl.device).random_(0, 2) * 2 - 1
             yield bval.float()/math.sqrt(self.samples)
+
+
+class HessianExactCrossEntropyLoss(HessianSampler):
+    """Sampler for nn.CrossEntropyLoss, produces exact Hessian."""
+
+    def __init__(self):
+        super().__init__()
+
+    def __call__(self, logits: torch.Tensor):
+        assert len(logits.shape) == 2
+
+        n, d = logits.shape
+        batch = F.softmax(logits, dim=1)
+
+        mask = torch.eye(d).expand(n, d, d)
+        diag_part = batch.unsqueeze(2).expand(n, d, d) * mask
+        outer_prod_part = torch.einsum('ij,ik->ijk', batch, batch)
+        hess = diag_part - outer_prod_part
+        assert hess.shape == (n, d, d)
+
+        for i in range(n):
+            hess[i, :, :] = u.symsqrt(hess[i, :, :])
+
+        for out_idx in range(d):
+            sample = hess[:, out_idx, :]
+            assert sample.shape == (n, d)
+            yield sample
 
 
 def register_hooks(model: SimpleModel):
@@ -904,7 +930,7 @@ def register_hooks(model: SimpleModel):
         layer.weight.register_hook(u.save_grad(layer.weight))
 
 
-def compute_hessian(A_t, Bh_t):
+def hessian_from_backprops(A_t, Bh_t):
     """Computes Hessian from a batch of forward and backward values.
 
     See documentation on HessianSampler for assumptions on how backprop values are generated

@@ -219,10 +219,10 @@ def main_autograd_test():
 
 # main test example to fork for checking Hessians against autograd
 def subsampled_hessian_test():
-    batch_size = 1000
+    batch_size = 500
 
-    data_width = 6
-    targets_width = 6
+    data_width = 4
+    targets_width = 4
     train_steps = 3
 
     d1 = data_width ** 2
@@ -256,7 +256,7 @@ def subsampled_hessian_test():
 
     A_t = layer.activations
     Bh_t = layer.backprops_list
-    H = u.compute_hessian(A_t, Bh_t)
+    H = u.hessian_from_backprops(A_t, Bh_t)
 
     # sanity check autograd
     u.clear_backprops(model)
@@ -281,7 +281,7 @@ def subsampled_hessian_test():
 
     A_t = layer.activations
     Bh_t = layer.backprops_list
-    H_approx1 = u.compute_hessian(A_t, Bh_t)
+    H_approx1 = u.hessian_from_backprops(A_t, Bh_t)
 
     # use more samples
     u.seed_random(1)
@@ -297,12 +297,11 @@ def subsampled_hessian_test():
 
     A_t = layer.activations
     Bh_t = layer.backprops_list
-    H_approx2 = u.compute_hessian(A_t, Bh_t)
+    H_approx2 = u.hessian_from_backprops(A_t, Bh_t)
 
-    assert(abs(u.l2_norm(H)/u.l2_norm(H_approx1)-1) < 0.03)
+    assert(abs(u.l2_norm(H)/u.l2_norm(H_approx1)-1) < 0.04)
     assert(abs(u.l2_norm(H)/u.l2_norm(H_approx2)-1) < 0.02)
-    print(u.l2_norm(H)/u.l2_norm(H_approx2))
-    assert u.kl_div_cov(H_approx1, H) < 0.07   # 0.0673
+    assert u.kl_div_cov(H_approx1, H) < 0.11   # 0.0673
     assert u.kl_div_cov(H_approx2, H) < 0.03   # 0.0020
 
 
@@ -321,7 +320,7 @@ def unfold_test():
     dims = N, Xc, Xh, Xw
 
     size = np.prod(dims)
-    X = torch.range(0, size - 1).reshape(*dims)
+    X = torch.arange(0, size).reshape(*dims)
 
     def loss_fn(data):
         err = data.reshape(len(data), -1)
@@ -342,8 +341,6 @@ def unfold_test():
     fold = torch.nn.functional.fold
     out_unf = layer.weight.view(layer.weight.size(0), -1) @ unfold(layer.activations, (2, 2))
     u.check_close(fold(out_unf, layer.output.shape[2:], (1, 1)), output)
-
-    print("activations check passed")
 
 
 # noinspection PyUnresolvedReferences
@@ -369,10 +366,9 @@ def conv_grad_test():
     dims = N, Xc, Xh, Xw
 
     size = np.prod(dims)
-    X = torch.range(0, size - 1).reshape(*dims)
+    X = torch.arange(0, size).reshape(*dims)
 
     def loss_fn(data):
-        print(len(data))
         err = data.reshape(len(data), -1)
         return torch.sum(err * err) / 2 / len(data)
 
@@ -398,20 +394,12 @@ def conv_grad_test():
     bp = bp.reshape(N, dd[1], Oh * Ow)
     bp = bp.transpose(1, 2)
 
-    print('backprops')
-    print(bp)
     grad_unf = unfold(layer.activations, (Oh, Ow)) @ bp
     assert grad_unf.shape == (N, dd[0] * Kh * Kw, dd[1])  # need (dd[1], dd[0], Kh, Kw)
     grad_unf = grad_unf.transpose(1, 2)
     grads = grad_unf.reshape((N, dd[1], dd[0], Kh, Kw))
     assert N == 1, "currently only works for N=1"
-    print('predicted')
-    print(grads[0])
-    print('actual')
-    print(layer.weight.grad)
-    print(torch.max(grads[0] - layer.weight.grad))
     u.check_equal(grads[0], layer.weight.grad)
-    print("grad check passed")
 
 
 def conv_multiexample_test():
@@ -456,7 +444,6 @@ def conv_multiexample_test():
     u.check_equal(fold(out_unf, (Oh, Ow), (1, 1)), output)
     u.check_equal(out_unf.view(N, dd[1], Oh, Ow), output)
 
-    #    print(unfold(layer.activations, (Kh, Kw)))
     assert unfold(layer.activations, (Kh, Kw)).shape == (N, Xc * Kh * Kw, Oh * Ow)
     assert layer.backprops_list[0].shape == (N, dd[1], Oh, Ow)
 
@@ -476,7 +463,6 @@ def conv_multiexample_test():
     grads = grad_unf.reshape((N, dd[1], dd[0], Kh, Kw))
     mean_grad = torch.sum(grads, dim=0) / N
 
-    print(f'grad: {torch.max(abs(mean_grad - layer.weight.grad))}')
     u.check_equal(mean_grad, layer.weight.grad)
 
     # compute per-example gradients using autograd, compare against manual computation
@@ -485,12 +471,98 @@ def conv_multiexample_test():
         output = model(X[i:i + 1, ...])
         loss = loss_fn(output)
         loss.backward()
-        print(f'grad {i}: {torch.max(abs(grads[i] - layer.weight.grad))}')
         u.check_equal(grads[i], layer.weight.grad)
 
 
+def cross_entropy_hessian_tiny_test():
+    u.seed_random(1)
+
+    batch_size = 1
+    d = [2, 2]
+    o = d[-1]
+    n = batch_size
+    train_steps = 1
+
+    model: u.SimpleModel = u.SimpleFullyConnected(d, nonlin=True)
+    u.register_hooks(model)
+    model.layers[0].weight.data.copy_(torch.eye(2))
+
+    loss_fn = torch.nn.CrossEntropyLoss()
+    loss_hessian = u.HessianExactCrossEntropyLoss()
+
+    data = u.to_logits(torch.tensor([[0.7, 0.3]]))
+    targets = torch.tensor([0])
+
+    # get gradient values
+    u.clear_backprops(model)
+    model.skip_forward_hooks = False
+    model.skip_backward_hooks = False
+    output = model(data)
+
+    for bval in loss_hessian(output):
+        output.backward(bval, retain_graph=True)
+    i = 0
+    layer = model.layers[i]
+    H = u.hessian_from_backprops(layer.activations, layer.backprops_list)
+    model.skip_forward_hooks = True
+    model.skip_backward_hooks = True
+
+    # compute Hessian through autograd
+    model.zero_grad()
+    output = model(data)
+    loss = loss_fn(output, targets)
+    H_autograd = u.hessian(loss, layer.weight)
+    u.check_close(H, H_autograd.reshape(d[i] * d[i + 1], d[i] * d[i + 1]))
+
+
+def cross_entropy_hessian_mnist_test():
+    u.seed_random(1)
+
+    data_width = 3
+    batch_size = 1
+    d = [data_width**2, 10]
+    o = d[-1]
+    n = batch_size
+    train_steps = 1
+
+    model: u.SimpleModel = u.SimpleFullyConnected(d, nonlin=False)
+    u.register_hooks(model)
+
+    dataset = u.TinyMNIST('/tmp', dataset_size=batch_size, data_width=data_width, original_targets=True)
+    trainloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
+    train_iter = iter(trainloader)
+
+    loss_fn = torch.nn.CrossEntropyLoss()
+    loss_hessian = u.HessianExactCrossEntropyLoss()
+
+    gl.token_count = 0
+    for train_step in range(train_steps):
+        data, targets = next(train_iter)
+
+        # get gradient values
+        u.clear_backprops(model)
+        model.skip_forward_hooks = False
+        model.skip_backward_hooks = False
+        output = model(data)
+        for bval in loss_hessian(output):
+            output.backward(bval, retain_graph=True)
+        i = 0
+        layer = model.layers[i]
+        H = u.hessian_from_backprops(layer.activations, layer.backprops_list)
+        model.skip_forward_hooks = True
+        model.skip_backward_hooks = True
+
+        # compute Hessian through autograd
+        model.zero_grad()
+        output = model(data)
+        loss = loss_fn(output, targets)
+        H_autograd = u.hessian(loss, layer.weight).reshape(d[i] * d[i + 1], d[i] * d[i + 1])
+        u.check_close(H, H_autograd)
+
+
 if __name__ == '__main__':
-    subsampled_hessian_test()
-    if __name__.endswith('__'):
-        sys.exit()
+    #cross_entropy_hessian_tiny_test()
+    #    cross_entropy_hessian_mnist_test()
+
+    #    if __name__.endswith('__'):    sys.exit()
     u.run_all_tests(sys.modules[__name__])
