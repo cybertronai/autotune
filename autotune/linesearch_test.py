@@ -181,7 +181,7 @@ def log(metrics, step):
         pass
 
 
-def lineasearch_test():
+def test_lineasearch():
     """Implement linesearch with sanity checks."""
 
     global logger, stats_data, stats_targets

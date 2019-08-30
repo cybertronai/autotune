@@ -21,7 +21,7 @@ class Net(nn.Module):
         return result
 
 
-def simple_hessian_test():
+def test_simple_hessian():
     # Compare against manual calculations in
     # https://www.wolframcloud.com/obj/yaroslavvb/newton/linear-jacobians-and-hessians.nb
     d = [2, 3, 4, 2]

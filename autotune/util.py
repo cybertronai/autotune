@@ -53,7 +53,7 @@ def vec(mat):
     return mat.t().reshape(-1, 1)
 
 
-def vec_test():
+def test_vec():
     mat = torch.tensor([[1, 3, 5], [2, 4, 6]])
     check_equal(c2v(vec(mat)), [1, 2, 3, 4, 5, 6])
 
@@ -64,7 +64,7 @@ def tvec(mat):
     return mat.reshape(1, -1)
 
 
-def tvec_test():
+def test_tvec():
     mat = torch.tensor([[1, 3, 5], [2, 4, 6]])
     check_equal(tvec(mat), [[1, 3, 5, 2, 4, 6]])
 
@@ -96,7 +96,7 @@ def slow_kron(a, b):
     return torch.einsum("ab,cd->acbd", a, b).contiguous().view(a.size(0) * b.size(0), a.size(1) * b.size(1))
 
 
-def kron_test():
+def test_kron():
     A = torch.tensor([[1, 2], [3, 4]])
     B = torch.tensor([[6, 7], [8, 9]])
     C = kron(A, B)
@@ -122,7 +122,7 @@ def l2_norm(mat: torch.Tensor):
     return torch.max(s)
 
 
-def l2_norm_test():
+def test_l2_norm():
     mat = torch.tensor([[1, 1], [0, 1]]).float()
     check_equal(l2_norm(mat), 0.5 * (1 + math.sqrt(5)))
     ii = torch.eye(5)
@@ -385,7 +385,7 @@ def run_all_tests(module: nn.Module):
 
     all_functions = inspect.getmembers(module, inspect.isfunction)
     for name, func in all_functions:
-        if name.endswith("_test"):
+        if name.startswith("test_"):
             with local_timeit(name):
                 func()
     print(module.__name__ + " tests passed.")

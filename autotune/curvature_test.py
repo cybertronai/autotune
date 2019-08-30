@@ -21,7 +21,7 @@ class Net(nn.Module):
         return result
 
 
-def singlelayer_test():
+def test_singlelayer():
     # Reproduce Linear Regression example
     # https://www.wolframcloud.com/obj/yaroslavvb/newton/curvature-unit-tests.nb
 
@@ -244,7 +244,7 @@ class Net2(nn.Module):
         return result
 
 
-def multilayer_test():
+def test_multilayer():
     # Reproduce multilayer example
     # https://www.wolframcloud.com/obj/yaroslavvb/newton/curvature-unit-tests.nb
 
@@ -489,6 +489,4 @@ def multilayer_test():
 
 
 if __name__ == '__main__':
-    #    singlelayer_test()
-    #    multilayer_test()
     run_all_tests(sys.modules[__name__])

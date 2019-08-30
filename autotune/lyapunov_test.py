@@ -14,6 +14,7 @@ import util as u
 
 import numpy as np
 
+
 class Net(nn.Module):
     def __init__(self, d):
         super().__init__()
@@ -27,20 +28,20 @@ class Net(nn.Module):
 # Backward via iterative Lyapunov solver
 # from https://github.com/msubhransu/matrix-sqrt/blob/master/matrix_sqrt.py
 def lyap_newton_schulz(z, dldz, numIters, dtype):
-  batchSize = z.shape[0]
-  dim = z.shape[1]
-  normz = z.mul(z).sum(dim=1).sum(dim=1).sqrt()
-  a = z.div(normz.view(batchSize, 1, 1).expand_as(z))
-  I = torch.eye(dim,dim).view(1, dim, dim).repeat(batchSize,1,1).type(dtype)
-  q = dldz.div(normz.view(batchSize, 1, 1).expand_as(z))
-  for i in range(numIters):
-    q = 0.5*(q.bmm(3.0*I - a.bmm(a)) - a.transpose(1, 2).bmm(a.transpose(1,2).bmm(q) - q.bmm(a)) )
-    a = 0.5*a.bmm(3.0*I - a.bmm(a))
-  dlda = 0.5*q
-  return dlda
+    batchSize = z.shape[0]
+    dim = z.shape[1]
+    normz = z.mul(z).sum(dim=1).sum(dim=1).sqrt()
+    a = z.div(normz.view(batchSize, 1, 1).expand_as(z))
+    I = torch.eye(dim, dim).view(1, dim, dim).repeat(batchSize, 1, 1).type(dtype)
+    q = dldz.div(normz.view(batchSize, 1, 1).expand_as(z))
+    for i in range(numIters):
+        q = 0.5 * (q.bmm(3.0 * I - a.bmm(a)) - a.transpose(1, 2).bmm(a.transpose(1, 2).bmm(q) - q.bmm(a)))
+        a = 0.5 * a.bmm(3.0 * I - a.bmm(a))
+    dlda = 0.5 * q
+    return dlda
 
 
-def lyapunov_test():
+def test_lyapunov():
     """Test that scipy lyapunov solver works correctly."""
     d = 2
     n = 3
@@ -114,9 +115,8 @@ def lyapunov_test():
     H = J.t() @ J / n
     noise_variance = torch.trace(H.inverse() @ sigma)
 
-
     # Slow way
-    #p_sigma = (u.kron(H, torch.eye(d)) + u.kron(torch.eye(d), H)).inverse() @ u.vec(sigma)
+    # p_sigma = (u.kron(H, torch.eye(d)) + u.kron(torch.eye(d), H)).inverse() @ u.vec(sigma)
     p_sigma = torch.solve(u.vec(sigma), u.kron(H, torch.eye(d)) + u.kron(torch.eye(d), H))[0]
     p_sigma = u.unvec(p_sigma, d)
 
@@ -147,12 +147,11 @@ def lyapunov_svd(A, C, rtol=1e-4, use_svd=False):
     S = S.diag() @ torch.ones(A.shape)
     X = U @ ((U.t() @ C @ U) / (S + S.t())) @ U.t()
     error = A @ X + X @ A - C
-    relative_error = torch.max(torch.abs(error))/torch.max(torch.abs(A))
+    relative_error = torch.max(torch.abs(error)) / torch.max(torch.abs(A))
     if relative_error > rtol:
         print(f"Warning, error {relative_error} encountered in lyapunov_svd")
 
     return X
-
 
 
 class timeit:
@@ -173,76 +172,29 @@ class timeit:
 
 
 def get_mkl_version():
-  import ctypes
-  import numpy as np
+    import ctypes
+    import numpy as np
 
-  # this recipe only works on Linux
-  try:
-    ver = np.zeros(199, dtype=np.uint8)
-    mkl = ctypes.cdll.LoadLibrary("libmkl_rt.so")
-    mkl.MKL_Get_Version_String(ver.ctypes.data_as(ctypes.c_char_p), 198)
-    return ver[ver != 0].tostring()
-  except:
-    return 'unknown'
+    # this recipe only works on Linux
+    try:
+        ver = np.zeros(199, dtype=np.uint8)
+        mkl = ctypes.cdll.LoadLibrary("libmkl_rt.so")
+        mkl.MKL_Get_Version_String(ver.ctypes.data_as(ctypes.c_char_p), 198)
+        return ver[ver != 0].tostring()
+    except:
+        return 'unknown'
 
 
 def print_cpu_info():
-  ver = 'unknown'
-  try:
-    for l in open("/proc/cpuinfo").read().split('\n'):
-      if 'model name' in l:
-        ver = l
-        break
-  except:
-    pass
-
-
-def lyapunov_benchmark():
-    if np.__config__.get_info("lapack_mkl_info"):
-        print("MKL version", get_mkl_version())
-    else:
-        print("not using MKL")
-
-    print("PyTorch version", torch.version.__version__)
-
-    print("Scipy version: ", scipy.version.full_version)
-    print("Numpy version: ", np.version.full_version)
-
-    for d in [10, 100, 1000]:
-        n = 2 * d
-        X = np.random.random((d, 10000)).astype(np.float32)
-        Y = np.random.random((d, 10000)).astype(np.float32)
-        H = X @ X.T
-        S = Y @ Y.T
-
-        with timeit(f"lyapunov d={d}"):
-            result = scipy.linalg.solve_lyapunov(H, S)
-            #print(result[0,0])
-
-        with timeit(f"lyapunov_svd d={d}"):
-            result = lyapunov_svd(torch.tensor(H), torch.tensor(S))
-            #print(result[0,0])
-
-        with timeit(f"discrete d={d}"):
-            result = scipy.linalg.solve_discrete_lyapunov(H, S)
-            #print(result[0,0])
-
-
-        with timeit(f"pinvh d={d}"):
-            result = scipy.linalg.pinvh(H)
-            #print(result[0, 0])
-
-        with timeit(f"pinv d={d}"):
-            result = scipy.linalg.pinv(H)
-            #print(result[0, 0])
-
-
-        with timeit(f"inv d={d}"):
-            result = scipy.linalg.pinv(H)
-            #print(result[0, 0])
+    ver = 'unknown'
+    try:
+        for l in open("/proc/cpuinfo").read().split('\n'):
+            if 'model name' in l:
+                ver = l
+                break
+    except:
+        pass
 
 
 if __name__ == '__main__':
-    lyapunov_test()
-#    lyapunov_benchmark()
-    #  u.run_all_tests(sys.modules[__name__])
+    u.run_all_tests(sys.modules[__name__])

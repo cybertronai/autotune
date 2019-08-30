@@ -17,7 +17,7 @@ unfold = torch.nn.functional.unfold
 fold = torch.nn.functional.fold
 
 
-def autoencoder_minimize_test():
+def test_autoencoder_minimize():
     """Minimize autoencoder for a few steps."""
     data_width = 4
     targets_width = 2
@@ -54,7 +54,7 @@ def autoencoder_minimize_test():
     assert loss < 0.032
 
 
-def autoencoder_newton_test():
+def test_autoencoder_newton():
     """Use Newton's method to train autoencoder."""
 
     image_size = 3
@@ -97,7 +97,7 @@ def autoencoder_newton_test():
 
 
 # main test example to fork for checking Hessians against autograd
-def main_autograd_test():
+def test_main_autograd():
     log_wandb = False
     autograd_check = True
 
@@ -216,7 +216,7 @@ def main_autograd_test():
 
 
 # main test example to fork for checking Hessians against autograd
-def subsampled_hessian_test():
+def test_subsampled_hessian():
     batch_size = 500
 
     data_width = 4
@@ -303,7 +303,7 @@ def subsampled_hessian_test():
     assert u.kl_div_cov(H_approx2, H) < 0.03   # 0.0020
 
 
-def unfold_test():
+def test_unfold():
     """ Test convolution as a special case of matrix multiplication with unfolded input tensors
     """
     gl.skip_backward_hooks = False
@@ -342,7 +342,7 @@ def unfold_test():
 
 
 # noinspection PyUnresolvedReferences
-def conv_grad_test():
+def test_conv_grad():
     """Test gradient computation for convolutional layer."""
     gl.skip_backward_hooks = False
     gl.skip_forward_hooks = False
@@ -400,7 +400,7 @@ def conv_grad_test():
     u.check_equal(grads[0], layer.weight.grad)
 
 
-def conv_multiexample_test():
+def test_conv_multiexample():
     """Test per-example gradient computation for conv layer."""
     gl.skip_backward_hooks = False
     gl.skip_forward_hooks = False
@@ -472,7 +472,7 @@ def conv_multiexample_test():
         u.check_equal(grads[i], layer.weight.grad)
 
 
-def cross_entropy_hessian_tiny_test():
+def test_cross_entropy_hessian_tiny():
     u.seed_random(1)
 
     batch_size = 1
@@ -513,7 +513,7 @@ def cross_entropy_hessian_tiny_test():
     u.check_close(H, H_autograd.reshape(d[i] * d[i + 1], d[i] * d[i + 1]))
 
 
-def cross_entropy_hessian_mnist_test():
+def test_cross_entropy_hessian_mnist():
     u.seed_random(1)
 
     data_width = 3
@@ -559,8 +559,4 @@ def cross_entropy_hessian_mnist_test():
 
 
 if __name__ == '__main__':
-    #cross_entropy_hessian_tiny_test()
-    #    cross_entropy_hessian_mnist_test()
-
-    #    if __name__.endswith('__'):    sys.exit()
     u.run_all_tests(sys.modules[__name__])
