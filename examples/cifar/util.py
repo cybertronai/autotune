@@ -5,7 +5,7 @@ import os
 import random
 import sys
 import time
-from typing import Any, Dict, Callable
+from typing import Any, Dict, Callable, Optional
 from typing import List
 
 import globals as gl
@@ -398,12 +398,12 @@ def seed_random(seed):
         torch.cuda.manual_seed_all(seed)
 
 
-def zero_grad(model: nn.Module) -> None:
+def clear_backprops(model: nn.Module) -> None:
     """model.zero_grad + delete all backprops/activations/saved_grad values"""
     model.zero_grad()
     for m in model.modules():
-        if hasattr(m, 'backprops'):
-            del m.backprops
+        if hasattr(m, 'backprops_list'):
+            del m.backprops_list
         if hasattr(m, 'activations'):
             del m.activations
     for p in model.parameters():
@@ -463,7 +463,44 @@ class TinyMNIST(datasets.MNIST):
         return img, target
 
 
-class SimpleNet(nn.Module):
+model_layer_map = {}
+model_param_map = {}
+
+
+class SimpleModel(nn.Module):
+    """Simple sequential model. Adds layers[] attribute, flags to turn on/off hooks, and lookup mechanism from layer to parent
+    model."""
+
+    layers: List[nn.Module]
+    all_layers: List[nn.Module]
+    skip_forward_hooks: bool
+    skip_backward_hooks: bool
+
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        self.skip_backward_hooks = False
+        self.skip_forward_hooks = False
+
+    def _finalize(self):
+        global model_layer_map
+        for module in self.modules():
+            model_layer_map[module] = self
+        for param in self.parameters():
+            model_layer_map[param] = self
+
+
+def get_parent_model(module_or_param) -> Optional[nn.Module]:
+    """Returns root model for given parameter."""
+    global model_layer_map
+    global model_param_map
+    if module_or_param in model_layer_map:
+        assert module_or_param not in model_param_map
+        return model_layer_map[module_or_param]
+    if module_or_param in model_param_map:
+        return model_param_map[module_or_param]
+
+
+class SimpleFullyConnected(SimpleModel):
     """Simple feedforward network that works on images."""
 
     def __init__(self, d: List[int], nonlin=False):
@@ -488,12 +525,14 @@ class SimpleNet(nn.Module):
                 self.all_layers.append(nn.ReLU())
         self.predict = torch.nn.Sequential(*self.all_layers)
 
+        super()._finalize()
+
     def forward(self, x: torch.Tensor):
         x = x.reshape((-1, self.d[0]))
         return self.predict(x)
 
 
-class SimpleConv(nn.Module):
+class SimpleConvolutional(SimpleModel):
     """Simple conv network."""
 
     def __init__(self, d: List[int], kernel_size=(2, 2), nonlin=False):
@@ -515,10 +554,12 @@ class SimpleConv(nn.Module):
                 self.all_layers.append(nn.ReLU())
         self.predict = torch.nn.Sequential(*self.all_layers)
 
+        self._finalize()
+
     def forward(self, x: torch.Tensor):
         return self.predict(x)
 
-    
+
 def log_scalars(metrics: Dict[str, Any]) -> None:
     for tag in metrics:
         gl.event_writer.add_scalar(tag=tag, scalar_value=metrics[tag], global_step=gl.token_count)
@@ -595,6 +636,8 @@ def dump(result, fname):
 
 
 def print_version_info():
+    """Print version numbers of numerical packages in current env."""
+
     def get_mkl_version():
         import ctypes
         import numpy as np
@@ -661,34 +704,44 @@ def move_to_gpu(tensors):
 
 
 # Functions to capture backprops/activations and save them on the layer
-# layer.register_forward_hook(capture_activations) -> saves activations/output as layer.activations/layer.output
-# layer.register_backward_hook(capture_backprops)  -> saves it as layer.backprops under layer.backprops[idx]
-# layer.weight.register_hook(save_grad(layer.weight)) -> saves grad under layer.weight.saved_grad
 
+# layer.register_forward_hook(capture_activations) -> saves activations/output as layer.activations/layer.output
+# layer.register_backward_hook(capture_backprops)  -> appends each backprop to layer.backprops_list
+# layer.weight.register_hook(save_grad(layer.weight)) -> saves grad under layer.weight.saved_grad
+# util.clear_backprops(model) -> delete all values above
 
 def capture_activations(module: nn.Module, input: List[torch.Tensor], output: torch.Tensor):
-    if gl.skip_forward_hooks:
+    """Saves activations (layer input) into layer.activations. """
+    model = get_parent_model(module)
+    if getattr(model, 'skip_forward_hooks', False):
         return
-    assert not hasattr(module, 'activations'), "Seeing results of previous autograd, call util.zero_grad to clear"
+    assert not hasattr(module,
+                       'activations'), "Seeing results of previous autograd, call util.clear_backprops(model) to clear"
     assert len(input) == 1, "this was tested for single input layers only"
     setattr(module, "activations", input[0].detach())
     setattr(module, "output", output.detach())
 
 
 def capture_backprops(module: nn.Module, _input, output):
-    if gl.skip_backward_hooks:
+    """Appends all backprops (Jacobian Lops from upstream) to layer.backprops_list.
+    Using list in order to capture multiple backprop values for a single batch. Use util.clear_backprops(model)
+    to clear all saved values.
+    """
+    model = get_parent_model(module)
+    if getattr(model, 'skip_backward_hooks', False):
         return
     assert len(output) == 1, "this works for single variable layers only"
-    if gl.backward_idx == 0:
-        assert not hasattr(module, 'backprops'), "Seeing results of previous autograd, call util.zero_grad to clear"
-        setattr(module, 'backprops', [])
-    assert gl.backward_idx == len(module.backprops)
-    module.backprops.append(output[0])
+    if not hasattr(module, 'backprops_list'):
+        setattr(module, 'backprops_list', [])
+    assert len(module.backprops_list) < 100, "Possible memory leak, captured more than 100 backprops, comment this assert " \
+                                             "out if this is intended."""
+
+    module.backprops_list.append(output[0])
 
 
 def save_grad(param: nn.Parameter) -> Callable[[torch.Tensor], None]:
     """Hook to save gradient into 'param.saved_grad', so it can be accessed after model.zero_grad(). Only stores gradient
-    if the value has not been set, call util.zero_grad to clear it."""
+    if the value has not been set, call util.clear_backprops to clear it."""
 
     def save_grad_fn(grad):
         if not hasattr(param, 'saved_grad'):
@@ -712,7 +765,7 @@ def to_logits(p: torch.Tensor) -> torch.Tensor:
         assert len(p.shape) == 2
         batch = p
 
-    batch = torch.log(batch)-torch.log(batch[:, -1])
+    batch = torch.log(batch) - torch.log(batch[:, -1])
     return batch.reshape(p.shape)
 
 
@@ -747,3 +800,41 @@ class CrossEntropySoft(nn.Module):
         loss = torch.sum(torch.mul(target, log_likelihood)) / n
 
         return loss
+
+
+def get_unique_logdir(root_logdir: str) -> str:
+    """Increments suffix at the end of root_logdir until getting directory that doesn't exist locally, return that."""
+    count = 0
+    while os.path.exists(f"{root_logdir}{count:02d}"):
+        count += 1
+    return f"{root_logdir}{count:02d}"
+
+
+######################################################
+# Hessian backward samplers
+#
+# A sampler provides a representation of final layer Hessian (loss Hessian).
+#
+# For a batch of size n,o, Hessian backward sampler will produce k backward values
+# (k between 1 and o) where each value can be fed into model.backward()
+#
+# The gradients corresponding to these k backward passes can be summed up to form an estimate of Hessian of the network
+# sum_i gg' \approx H
+#
+#   sampler = HessianSamplerMyLoss
+#   for bval in sampler(model(batch)):
+#       model.zero_grad()
+#       model.backward(bval)
+
+class HessianExactSqrLoss(object):
+    """Sampler for loss err*err/2/len(batch), produces exact Hessian."""
+
+    def __init__(self):
+        super().__init__()
+
+    def __call__(self, output: torch.Tensor):
+        assert len(output.shape) == 2
+        batch_size, output_size = output.shape
+        id_mat = torch.eye(output_size)
+        for out_idx in range(output_size):
+            yield torch.stack([id_mat[out_idx]] * batch_size)
