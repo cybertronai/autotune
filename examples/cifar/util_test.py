@@ -21,14 +21,18 @@ def cross_entropy_soft_test():
     p = torch.tensor([0.7, 0.3]).unsqueeze(0).float()
     observed_logit = u.to_logits(p)
 
+    # Compare against other loss functions
     # https://www.wolframcloud.com/obj/user-eac9ee2d-7714-42da-8f84-bec1603944d5/newton/logistic-hessian.nb
-    print(observed_logit)
+
     loss1 = F.binary_cross_entropy(p[0], q[0])
     u.check_close(loss1, 0.865054)
 
     loss_fn = u.CrossEntropySoft()
     loss2 = loss_fn(observed_logit, q)
     u.check_close(loss2, loss1)
+
+    loss3 = F.cross_entropy(observed_logit, torch.tensor([0]))
+    u.check_close(loss3, loss_fn(observed_logit, torch.tensor([[1, 0.]])))
 
     # check gradient
     observed_logit.requires_grad = True
@@ -38,14 +42,11 @@ def cross_entropy_soft_test():
     # check Hessian
     observed_logit = u.to_logits(p)
     observed_logit.zero_()
-    observed_logit.requires_grad=True
+    observed_logit.requires_grad = True
     hessian_autograd = u.hessian(loss_fn(observed_logit, target=q), observed_logit)
-    print(hessian_autograd)
     hessian_autograd = hessian_autograd.reshape((p.numel(), p.numel()))
     p = F.softmax(observed_logit, dim=1)
     hessian_manual = torch.diag(p[0]) - p.t() @ p
-    print(hessian_manual)
-    print('their hess is', hessian_autograd)
     u.check_close(hessian_autograd, hessian_manual)
 
 

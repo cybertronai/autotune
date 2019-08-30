@@ -414,6 +414,37 @@ def clear_backprops(model: nn.Module) -> None:
             del p.saved_grad
 
 
+# from https://gist.github.com/y0ast/f69966e308e549f013a92dc66debeeb4
+class FastMNIST(datasets.MNIST):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        dataset_size = kwargs.get('dataset_size', 60000)
+        self.data = self.data[:dataset_size]
+        self.targets = self.targets[:dataset_size]
+
+        # Scale data to [0,1]
+        self.data = self.data.unsqueeze(1).float().div(255)
+
+        # Normalize it with the usual MNIST mean and std
+        self.data = self.data.sub_(0.1307).div_(0.3081)
+
+        # Put both data and targets on GPU in advance
+        self.data, self.targets = self.data.to(gl.device), self.targets.to(gl.device)
+
+    def __getitem__(self, index):
+        """
+        Args:
+            index (int): Index
+
+        Returns:
+            tuple: (image, target) where target is index of the target class.
+        """
+        img, target = self.data[index], self.targets[index]
+
+        return img, target
+
+
 class TinyMNIST(datasets.MNIST):
     """Custom-size MNIST autoencoder dataset for debugging. Generates data/target images with reduced resolution."""
 
