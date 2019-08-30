@@ -51,7 +51,7 @@ def main():
     o = d3
     n = args.stats_batch_size
     d = [d1, d2, d3]
-    model = u.SimpleNet(d, nonlin=args.nonlin)
+    model = u.SimpleFullyConnected(d, nonlin=args.nonlin)
     optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
 
     dataset = u.TinyMNIST('/tmp', download=True, data_width=args.data_width, targets_width=args.targets_width,

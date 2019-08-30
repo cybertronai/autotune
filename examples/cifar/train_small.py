@@ -38,7 +38,7 @@ def main():
     o = d3
     n = args.stats_batch_size
     d = [d1, d2, d3]
-    model = u.SimpleNet(d, nonlin=args.nonlin)
+    model = u.SimpleFullyConnected(d, nonlin=args.nonlin)
     model = model.to(gl.device)
 
     try:
@@ -78,7 +78,6 @@ def main():
     def capture_activations(module: nn.Module, input: List[torch.Tensor], output: torch.Tensor):
         if skip_forward_hooks:
             return
-        assert gl.backward_idx == 0  # no need to forward-prop on Hessian computation
         assert not hasattr(module, 'activations'), "Seeing results of previous autograd, call util.zero_grad to clear"
         assert len(input) == 1, "this was tested for single input layers only"
         setattr(module, "activations", input[0].detach())

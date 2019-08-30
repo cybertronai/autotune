@@ -37,7 +37,7 @@ def main():
     o = d1
     n = args.stats_batch_size
     d = [d1, 30, 30, 30, 20, 30, 30, 30, d1]
-    model = u.SimpleNet(d, nonlin=args.nonlin)
+    model = u.SimpleFullyConnected(d, nonlin=args.nonlin)
     model = model.to(gl.device)
 
     try:

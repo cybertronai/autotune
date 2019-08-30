@@ -813,10 +813,10 @@ def get_unique_logdir(root_logdir: str) -> str:
 ######################################################
 # Hessian backward samplers
 #
-# A sampler provides a representation of final layer Hessian (loss Hessian).
+# A sampler provides a representation of hessian of the loss layer
 #
 # For a batch of size n,o, Hessian backward sampler will produce k backward values
-# (k between 1 and o) where each value can be fed into model.backward()
+# (k between 1 and o) where each value can be fed into model.backward(value)
 #
 # The gradients corresponding to these k backward passes can be summed up to form an estimate of Hessian of the network
 # sum_i gg' \approx H
@@ -831,6 +831,23 @@ class HessianExactSqrLoss(object):
 
     def __init__(self):
         super().__init__()
+
+    def __call__(self, output: torch.Tensor):
+        assert len(output.shape) == 2
+        batch_size, output_size = output.shape
+        id_mat = torch.eye(output_size)
+        for out_idx in range(output_size):
+            yield torch.stack([id_mat[out_idx]] * batch_size)
+
+
+class HessianSampledSqrLoss(object):
+    """Sampler for loss err*err/2/len(batch), produces exact Hessian."""
+
+    samples: int
+
+    def __init__(self, samples):
+        super().__init__()
+        self.samples = samples
 
     def __call__(self, output: torch.Tensor):
         assert len(output.shape) == 2
