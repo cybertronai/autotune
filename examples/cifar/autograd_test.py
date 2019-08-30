@@ -3,10 +3,8 @@
 import os
 import sys
 from typing import Any, Dict, Callable
-from typing import List
 
 import globals as gl
-# import torch
 import torch
 import torch.nn as nn
 import wandb
@@ -14,51 +12,18 @@ from attrdict import AttrDefault
 from torch import optim
 from torch.utils.tensorboard import SummaryWriter
 
-# Test exact Hessian computation
-
 module_path = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, module_path)
 import util as u
 
 import numpy as np
 
-unfold=torch.nn.functional.unfold
-fold=torch.nn.functional.fold
+unfold = torch.nn.functional.unfold
+fold = torch.nn.functional.fold
+
 
 def autoencoder_minimize_test():
     """Minimize autoencoder for a few steps."""
-    data_width = 4
-    targets_width = 2
-    batch_size = 64
-    dataset = u.TinyMNIST('/tmp', download=True, data_width=data_width, targets_width=targets_width, dataset_size=batch_size)
-    trainloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
-
-    u.seed_random(1)
-    d = data_width ** 2
-    model = u.SimpleNet([d, targets_width ** 2])
-
-    optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
-
-    def loss_fn(data, targets):
-        err = data - targets.view(-1, data.shape[1])
-        assert len(data) == batch_size
-        return torch.sum(err * err) / 2 / len(data)
-
-    loss = 0
-    for i in range(10):
-        data, targets = next(iter(trainloader))
-        optimizer.zero_grad()
-        loss = loss_fn(model(data), targets)
-        if i == 0:
-            assert loss > 0.03
-        loss.backward()
-        optimizer.step()
-
-    assert loss < 0.015
-
-
-def autoencoder2_minimize_test():
-    """deeper autoencoder."""
     data_width = 4
     targets_width = 2
 
@@ -361,6 +326,7 @@ def log_scalars(metrics: Dict[str, Any]) -> None:
         gl.event_writer.add_scalar(tag=tag, scalar_value=metrics[tag], global_step=gl.token_count)
 
 
+# TODO: rename
 def autoencoder_training_test():
     log_wandb = False
     autograd_check = True
@@ -402,6 +368,7 @@ def autoencoder_training_test():
     trainloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
     train_iter = iter(trainloader)
 
+    # TODO: use values from util
     def capture_activations(module, input, _output):
         if skip_forward_hooks:
             return
@@ -498,7 +465,7 @@ def autoencoder_training_test():
             #############################
             A_t = layer.activations
             Bh_t = [layer.backprops[out_idx+1] for out_idx in range(o)]
-            Amat_t = torch.cat([A_t] * o, dim=0)
+            Amat_t = torch.cat([A_t] * o, dim=0)  # todo: can instead replace with a khatri-rao loop
             Bmat_t = torch.cat(Bh_t, dim=0)
 
             assert Amat_t.shape == (n*o, d[i])
@@ -523,6 +490,7 @@ def cross_entropy_test():
     data_width = 4
     targets_width = 2
     batch_size = 5
+    gl.backward_idx = 0
 
     d1 = data_width ** 2
     d2 = 10
@@ -627,6 +595,10 @@ def cross_entropy_test():
 
 
 def unfold_test():
+    gl.skip_backward_hooks = False
+    gl.skip_forward_hooks = False
+    gl.backward_idx = 0
+
     N, Xc, Xh, Xw = 1, 2, 3, 3
     model = u.SimpleConv([Xc, 2])
 
@@ -659,19 +631,21 @@ def unfold_test():
 
     print("activations check passed")
 
-    
+
+# noinspection PyUnresolvedReferences
 def conv_grad_test():
+    gl.skip_backward_hooks = False
+    gl.skip_forward_hooks = False
+    gl.backward_idx = 0
     N, Xc, Xh, Xw = 1, 2, 3, 3
     dd = [Xc, 2]
-    model = u.SimpleConv(dd)
-
+    model: u.SimpleConv = u.SimpleConv(dd)
     Kh, Kw = 2, 2
     Oh, Ow = Xh-Kh+1, Xw-Kw+1
 
     weight_buffer = model.layers[0].weight.data
 
     assert weight_buffer.shape == (dd[1], dd[0], Kh, Kw)
-    #weight_buffer.copy_(torch.ones_like(weight_buffer))
 
     # first output channel=1's, second channel=2's
     weight_buffer[0, :, :, :].copy_(torch.ones_like(weight_buffer[0, :, :, :]))
@@ -726,28 +700,25 @@ def conv_grad_test():
 
 
 def conv_multiexample_test():
+    gl.skip_backward_hooks = False
+    gl.skip_forward_hooks = False
+    gl.backward_idx = 0
+    u.seed_random(1)
     N, Xc, Xh, Xw = 3, 2, 3, 7
     dd = [Xc, 2]
 
     Kh, Kw = 2, 3
     Oh, Ow = Xh-Kh+1, Xw-Kw+1
-    model = u.SimpleConv(dd, kernel_size=(Kh, Kw))
+    model = u.SimpleConv(dd, kernel_size=(Kh, Kw)).double()
 
     weight_buffer = model.layers[0].weight.data
 
     # output channels, input channels, height, width
     assert weight_buffer.shape == (dd[1], dd[0], Kh, Kw)
 
-    if dd[1] == 1:
-        weight_buffer.copy_(torch.ones_like(weight_buffer))
-    else:
-        # first output channel=1's, second channel=2's
-        weight_buffer[0, :, :, :].copy_(torch.ones_like(weight_buffer[0, :, :, :]))
-        weight_buffer[1, :, :, :].copy_(2*torch.ones_like(weight_buffer[1, :, :, :]))
-    
     input_dims = N, Xc, Xh, Xw
     size = np.prod(input_dims)
-    X = torch.arange(0, size).reshape(*input_dims)
+    X = torch.arange(0, size).reshape(*input_dims).double()
 
     def loss_fn(data):
         err = data.reshape(len(data), -1)
@@ -766,54 +737,48 @@ def conv_multiexample_test():
     assert layer.output.shape == (N, dd[1], Oh, Ow)
 
     out_unf = layer.weight.view(layer.weight.size(0), -1) @ unfold(layer.activations, (Kh, Kw))
-    u.check_close(fold(out_unf, (Oh, Ow), (1, 1)), output)
-    u.check_close(out_unf.view(N, dd[1], Oh, Ow), output)
+    u.check_equal(fold(out_unf, (Oh, Ow), (1, 1)), output)
+    u.check_equal(out_unf.view(N, dd[1], Oh, Ow), output)
     
-    print('activations')
     #    print(unfold(layer.activations, (Kh, Kw)))
     assert unfold(layer.activations, (Kh, Kw)).shape == (N, Xc*Kh*Kw, Oh*Ow)
     assert layer.backprops[0].shape == (N, dd[1], Oh, Ow)
 
-
     bp = layer.backprops[0] * N   # remove factor of N applied during loss batch averaging
 
-    # move patches to be the inner dimension, output channels the outer dimension
+    # merge patches into single dimension, move patches to be the inner dimension, output channels the rightmost dimension
+    # since we multiplying on the left. TODO(y) try einsum for this and benchmark
     bp = bp.reshape(N, dd[1], Oh*Ow)
     bp = bp.transpose(1, 2)
 
-    print('backprops')
-    print(bp)
     grad_unf = unfold(layer.activations, (Kh, Kw)) @ bp
     assert grad_unf.shape == (N, dd[0]*Kh*Kw, dd[1])
 
-     # need shape (N, dd[1], dd[0], Kh, Kw), move output channels to be inner again
+    # For comparison with autograd, shape needs to be (N, dd[1], dd[0], Kh, Kw)
+    # therefore move output channels to the left, and unmerge remaining shapes
     grad_unf = grad_unf.transpose(1, 2)
     grads = grad_unf.reshape((N, dd[1], dd[0], Kh, Kw))
     mean_grad = torch.sum(grads, dim=0)/N
-    print('predicted')
-    print(mean_grad)
-    print('actual')
-    print(layer.weight.grad)
-    print(torch.max(mean_grad-layer.weight.grad))
-    u.check_equal(mean_grad, layer.weight.grad)
-    print("mean grad check passed")
 
-    # compute per-example gradients using autograd, compare against manual
+    print(f'grad: {torch.max(abs(mean_grad-layer.weight.grad))}')
+    u.check_equal(mean_grad, layer.weight.grad)
+
+    # compute per-example gradients using autograd, compare against manual computation
     for i in range(N):
         u.zero_grad(model)
         output = model(X[i:i+1,...])
         loss = loss_fn(output)
         loss.backward()
-        u.check_equal(grads[i], layer.weight.grad)
         print(f'grad {i}: {torch.max(abs(grads[i]-layer.weight.grad))}')
+        u.check_equal(grads[i], layer.weight.grad)
 
 
 if __name__ == '__main__':
     #    conv_grad_test()
-    conv_multiexample_test()
-    sys.exit()
-    unfold_test()
-    cross_entropy_test()
+#    conv_multiexample_test()
+#    sys.exit()
+#    unfold_test()
+#    cross_entropy_test()
     #    autoencoder_minimize_test()
     #    autoencoder2_minimize_test()
     #    autoencoder_newton_test()

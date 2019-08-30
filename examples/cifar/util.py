@@ -16,6 +16,8 @@ import torch.nn as nn
 import torchvision.datasets as datasets
 from PIL import Image
 
+import torch.nn.functional as F
+
 
 def v2c(vec):
     """Convert vector to column matrix."""
@@ -410,7 +412,7 @@ def zero_grad(model: nn.Module) -> None:
 
 
 class TinyMNIST(datasets.MNIST):
-    """Custom-size MNIST autoencoder dataset for debugging."""
+    """Custom-size MNIST autoencoder dataset for debugging. Generates data/target images with reduced resolution."""
 
     def __init__(self, root, data_width=4, targets_width=4, dataset_size=0, download=True, train=True,
                  original_targets=False):
@@ -489,6 +491,7 @@ class SimpleNet(nn.Module):
     def forward(self, x: torch.Tensor):
         x = x.reshape((-1, self.d[0]))
         return self.predict(x)
+
 
 class SimpleConv(nn.Module):
     """Simple conv network."""
@@ -666,7 +669,6 @@ def move_to_gpu(tensors):
 def capture_activations(module: nn.Module, input: List[torch.Tensor], output: torch.Tensor):
     if gl.skip_forward_hooks:
         return
-    assert gl.backward_idx == 0  # no need to forward-prop on Hessian computation
     assert not hasattr(module, 'activations'), "Seeing results of previous autograd, call util.zero_grad to clear"
     assert len(input) == 1, "this was tested for single input layers only"
     setattr(module, "activations", input[0].detach())
@@ -700,3 +702,48 @@ def fmt(a):
 
     a = a.replace('\n', '')
     print(a.replace("{", "[").replace("}", "]"))
+
+
+def to_logits(p: torch.Tensor) -> torch.Tensor:
+    """Inverse of F.softmax"""
+    if len(p.shape) == 1:
+        batch = torch.unsqueeze(p, 0)
+    else:
+        assert len(p.shape) == 2
+        batch = p
+
+    batch = torch.log(batch)-torch.log(batch[:, -1])
+    return batch.reshape(p.shape)
+
+
+class CrossEntropySoft(nn.Module):
+    """Like torch.nn.CrossEntropyLoss but instead of class index it accepts a
+    probability distribution.
+
+    The `input` is expected to contain raw, unnormalized scores for each class.
+    The `target` is expected to contain empirical probabilities for each class (positive and adding up to 1)
+
+    """
+
+    def __init__(self):
+        super(CrossEntropySoft, self).__init__()
+        return
+
+    def forward(self, inputs, target):
+        """
+        :param inputs: predictions
+        :param target: target labels
+        :return: loss
+        """
+
+        # check that targets are positive and add up to 1
+        assert (target >= 0).sum() == target.numel()
+        sums = target.sum(dim=1)
+        assert np.allclose(sums, torch.ones_like(sums))
+
+        assert len(target.shape) == 2
+        n = target.shape[0]
+        log_likelihood = -F.log_softmax(inputs, dim=1)
+        loss = torch.sum(torch.mul(target, log_likelihood)) / n
+
+        return loss
