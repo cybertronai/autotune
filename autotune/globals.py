@@ -11,6 +11,8 @@ event_writer: Optional[SummaryWriter] = None
 token_count: int = 0
 backward_idx: int = 0  # used by save_backprops to decide where to save values
 
+dataset_root = '/tmp/data'   # where PyTorch datasets will go on auto-download
+
 if torch.cuda.is_available():
     device = torch.device('cuda')
 else:

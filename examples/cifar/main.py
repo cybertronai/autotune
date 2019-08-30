@@ -125,7 +125,7 @@ def main():
     elif args.dataset == DATASET_MNIST:
         num_classes = 10
         #dataset_class = datasets.MNIST
-        dataset_class = FastMNIST
+        dataset_class = FastMNISTa
     else:
         assert False, f'unknown dataset {args.dataset}'
 

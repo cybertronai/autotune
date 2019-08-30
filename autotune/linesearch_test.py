@@ -15,6 +15,8 @@ from torch import optim
 
 import util as u
 
+import globals as gl
+
 
 try:
     import wandb
@@ -183,138 +185,32 @@ def log(metrics, step):
 
 def test_lineasearch():
     """Implement linesearch with sanity checks."""
-
-    global logger, stats_data, stats_targets
-
-    parser = argparse.ArgumentParser()
-    # Data
-    parser.add_argument('--dataset', type=str,
-                        choices=[DATASET_MNIST], default=DATASET_MNIST,
-                        help='name of dataset')
-    parser.add_argument('--root', type=str, default='./data',
-                        help='root of dataset')
-    parser.add_argument('--epochs', type=int, default=100,
-                        help='number of epochs to train')
-    parser.add_argument('--batch_size', type=int, default=128,
-                        help='input batch size for training')
-    parser.add_argument('--stats_batch_size', type=int, default=1,
-                        help='size of batch to use for second order statistics')
-    parser.add_argument('--val_batch_size', type=int, default=128,
-                        help='input batch size for valing')
-    parser.add_argument('--normalizing_data', action='store_true',
-                        help='[data pre processing] normalizing data')
-    parser.add_argument('--random_crop', action='store_true',
-                        help='[data augmentation] random crop')
-    parser.add_argument('--random_horizontal_flip', action='store_true',
-                        help='[data augmentation] random horizontal flip')
-    # Training Settings
-    parser.add_argument('--arch_file', type=str, default=None,
-                        help='name of file which defines the architecture')
-    parser.add_argument('--arch_name', type=str, default='LeNet5',
-                        help='name of the architecture')
-    parser.add_argument('--arch_args', type=json.loads, default=None,
-                        help='[JSON] arguments for the architecture')
-    parser.add_argument('--optim_name', type=str, default=SecondOrderOptimizer.__name__,
-                        help='name of the optimizer')
-    parser.add_argument('--optim_args', type=json.loads, default=None,
-                        help='[JSON] arguments for the optimizer')
-    parser.add_argument('--curv_args', type=json.loads, default=None,
-                        help='[JSON] arguments for the curvature')
-    # Options
-    parser.add_argument('--download', action='store_true', default=True,
-                        help='if True, downloads the dataset (CIFAR-10 or 100) from the internet')
-    parser.add_argument('--create_graph', action='store_true', default=False,
-                        help='create graph of the derivative')
-    parser.add_argument('--no_cuda', action='store_true', default=False,
-                        help='disables CUDA training')
-    parser.add_argument('--seed', type=int, default=1,
-                        help='random seed')
-    parser.add_argument('--num_workers', type=int, default=0,
-                        help='number of sub processes for data loading')
-    parser.add_argument('--log_interval', type=int, default=50,
-                        help='how many batches to wait before logging training status')
-    parser.add_argument('--log_file_name', type=str, default='log',
-                        help='log file name')
-    parser.add_argument('--checkpoint_interval', type=int, default=50,
-                        help='how many epochs to wait before logging training status')
-    parser.add_argument('--resume', type=str, default=None,
-                        help='checkpoint path for resume training')
-    parser.add_argument('--out', type=str, default='result',
-                        help='dir to save output files')
-    parser.add_argument('--config', default=None,
-                        help='config file path')
-    parser.add_argument('--fisher_mc_approx', action='store_true', default=False,
-                        help='if True, Fisher is estimated by MC sampling')
-    parser.add_argument('--fisher_num_mc', type=int, default=1,
-                        help='number of MC samples for estimating Fisher')
-    parser.add_argument('--log_wandb', type=int, default=0,
-                        help='log to wandb')
-
-    args = parser.parse_args()
+    global logger, stats_data, stats_targets, args
     run_name = 'default'  # name of run in
 
     # Copy this file & config to args.out
-    if not os.path.isdir(args.out):
-        os.makedirs(args.out)
-    shutil.copy(os.path.realpath(__file__), args.out)
-
-    # Load config file
-    if args.config:
-        run_name = args.config
-        run_name = os.path.basename(run_name)
-        run_name = run_name.rsplit('.', 1)[0]  # extract filename without .json suffix
-        with open(args.config) as f:
-            config = json.load(f)
-        dict_args = vars(args)
-        dict_args.update(config)
-
-    if args.config is not None:
-        shutil.copy(args.config, args.out)
-    if args.arch_file is not None:
-        shutil.copy(args.arch_file, args.out)
+    out = '/tmp'
+    if not os.path.isdir(out):
+        os.makedirs(out)
+    shutil.copy(os.path.realpath(__file__), out)
 
     # Setup logger
-    logger = Logger(args.out, args.log_file_name)
+    log_file_name = 'log'
+    logger = Logger(out, log_file_name)
     logger.start()
 
-    try:
-        # os.environ['WANDB_SILENT'] = 'true'
-        if args.log_wandb:
-            wandb.init(project='pytorch-curv', name=run_name)
-        wandb.config['config'] = args.config
-        wandb.config['batch'] = args.batch_size
-        wandb.config['optim'] = args.optim_name
-    except Exception as e:
-        if args.log_wandb:
-            print(f"wandb crash with {e}")
-        pass
-
     # Set device
-    use_cuda = not args.no_cuda and torch.cuda.is_available()
+    use_cuda = False
     device = torch.device('cuda' if use_cuda else 'cpu')
 
     # Set random seed
-    torch.manual_seed(args.seed)
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(args.seed)
+    u.seed_random(1)
 
     # Setup data augmentation & data pre processing
     train_transforms, val_transforms = [], []
-    if args.random_crop:
-        train_transforms.append(transforms.RandomCrop(32, padding=4))
-
-    if args.random_horizontal_flip:
-        train_transforms.append(transforms.RandomHorizontalFlip())
 
     train_transforms.append(transforms.ToTensor())
     val_transforms.append(transforms.ToTensor())
-
-    if args.normalizing_data:
-        normalize = transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
-        train_transforms.append(normalize)
-        val_transforms.append(normalize)
 
     train_transform = transforms.Compose(train_transforms)
     # val_transform = transforms.Compose(val_transforms)
@@ -340,9 +236,10 @@ def test_lineasearch():
             x = x.reshape((-1, self.d[0]))
             return self.predict(x)
 
+    stats_batch_size = 1
     def compute_layer_stats(layer):
         stats = AttrDefault(str, {})
-        n = args.stats_batch_size
+        n = stats_batch_size
         param = u.get_param(layer)
         d = len(param.flatten())
         layer_idx = model.layers.index(layer)
@@ -436,18 +333,17 @@ def test_lineasearch():
         return stats
 
     train_dataset = dataset_class(
-        root=args.root, train=True, download=args.download, transform=train_transform)
+        root=gl.dataset_root, train=True, download=True, transform=train_transform)
     # val_dataset = dataset_class(root=args.root, train=False, download=args.download, transform=val_transform)
 
+    batch_size = 32
+    num_workers = 0
     train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
-    # val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=args.val_batch_size, shuffle=False, num_workers=args.num_workers)
+        train_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
     stats_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.stats_batch_size, shuffle=False, num_workers=args.num_workers)
+        train_dataset, batch_size=stats_batch_size, shuffle=False, num_workers=num_workers)
     stats_data, stats_targets = next(iter(stats_loader))
 
-    arch_kwargs = {} if args.arch_args is None else args.arch_args
-    arch_kwargs['num_classes'] = num_classes
 
     model = Net([NUM_CHANNELS * IMAGE_SIZE ** 2, 8, 8, 1],  nonlin=False)
     setattr(model, 'num_classes', num_classes)
@@ -467,7 +363,8 @@ def test_lineasearch():
     start_epoch = 1
 
     # Run training
-    for epoch in range(start_epoch, args.epochs + 1):
+    epochs = 100
+    for epoch in range(start_epoch, epochs + 1):
         num_examples_processed = epoch * len(train_loader) * train_loader.batch_size
         layer_stats = compute_layer_stats(model.layers[1])
 
@@ -499,7 +396,7 @@ def train(model, device, train_loader, optimizer, epoch, args, logger):
             optimizer.zero_grad()
             output = model(data)
             loss = compute_loss(output, target)
-            loss.backward(create_graph=args.create_graph)
+            loss.backward(create_graph=False)
             return loss, output
 
         #loss, output = optimizer.step(closure=closure)
@@ -510,7 +407,8 @@ def train(model, device, train_loader, optimizer, epoch, args, logger):
         iteration = base_num_iter + batch_idx + 1
         total_data_size += len(data)
 
-        if batch_idx % args.log_interval == 0:
+        batch_size = 128
+        if batch_idx % 20 == 0:
             elapsed_time = logger.elapsed_time
             if last_elapsed_time:
                 interval_ms = 1000 * (elapsed_time - last_elapsed_time)
@@ -542,10 +440,78 @@ def train(model, device, train_loader, optimizer, epoch, args, logger):
                 #  print(p_log)
                 metrics[name] = p_log
 
-            log(metrics, step=iteration * args.batch_size)
+            log(metrics, step=iteration * batch_size)
 
     return 0, loss, confidence
 
 
 if __name__ == '__main__':
+
+    parser = argparse.ArgumentParser()
+    # Data
+    parser.add_argument('--dataset', type=str,
+                        choices=[DATASET_MNIST], default=DATASET_MNIST,
+                        help='name of dataset')
+    parser.add_argument('--root', type=str, default='./data',
+                        help='root of dataset')
+    parser.add_argument('--epochs', type=int, default=100,
+                        help='number of epochs to train')
+    parser.add_argument('--batch_size', type=int, default=128,
+                        help='input batch size for training')
+    parser.add_argument('--stats_batch_size', type=int, default=1,
+                        help='size of batch to use for second order statistics')
+    parser.add_argument('--val_batch_size', type=int, default=128,
+                        help='input batch size for valing')
+    parser.add_argument('--normalizing_data', action='store_true',
+                        help='[data pre processing] normalizing data')
+    parser.add_argument('--random_crop', action='store_true',
+                        help='[data augmentation] random crop')
+    parser.add_argument('--random_horizontal_flip', action='store_true',
+                        help='[data augmentation] random horizontal flip')
+    # Training Settings
+    parser.add_argument('--arch_file', type=str, default=None,
+                        help='name of file which defines the architecture')
+    parser.add_argument('--arch_name', type=str, default='LeNet5',
+                        help='name of the architecture')
+    parser.add_argument('--arch_args', type=json.loads, default=None,
+                        help='[JSON] arguments for the architecture')
+    parser.add_argument('--optim_name', type=str, default=SecondOrderOptimizer.__name__,
+                        help='name of the optimizer')
+    parser.add_argument('--optim_args', type=json.loads, default=None,
+                        help='[JSON] arguments for the optimizer')
+    parser.add_argument('--curv_args', type=json.loads, default=None,
+                        help='[JSON] arguments for the curvature')
+    # Options
+    parser.add_argument('--download', action='store_true', default=True,
+                        help='if True, downloads the dataset (CIFAR-10 or 100) from the internet')
+    parser.add_argument('--create_graph', action='store_true', default=False,
+                        help='create graph of the derivative')
+    parser.add_argument('--no_cuda', action='store_true', default=False,
+                        help='disables CUDA training')
+    parser.add_argument('--seed', type=int, default=1,
+                        help='random seed')
+    parser.add_argument('--num_workers', type=int, default=0,
+                        help='number of sub processes for data loading')
+    parser.add_argument('--log_interval', type=int, default=50,
+                        help='how many batches to wait before logging training status')
+    parser.add_argument('--log_file_name', type=str, default='log',
+                        help='log file name')
+    parser.add_argument('--checkpoint_interval', type=int, default=50,
+                        help='how many epochs to wait before logging training status')
+    parser.add_argument('--resume', type=str, default=None,
+                        help='checkpoint path for resume training')
+    parser.add_argument('--out', type=str, default='/tmp',
+                        help='dir to save output files')
+    parser.add_argument('--config', default=None,
+                        help='config file path')
+    parser.add_argument('--fisher_mc_approx', action='store_true', default=False,
+                        help='if True, Fisher is estimated by MC sampling')
+    parser.add_argument('--fisher_num_mc', type=int, default=1,
+                        help='number of MC samples for estimating Fisher')
+    parser.add_argument('--log_wandb', type=int, default=0,
+                        help='log to wandb')
+
+    args = parser.parse_args()
+
+
     u.run_all_tests(sys.modules[__name__])

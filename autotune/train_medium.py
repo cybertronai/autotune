@@ -53,7 +53,7 @@ def main():
     #optimizer = torch.optim.SGD(model.parameters(), lr=0.03, momentum=0.9)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.003)
 
-    dataset = u.TinyMNIST('/tmp', download=True, data_width=args.data_width, targets_width=args.targets_width)
+    dataset = u.TinyMNIST(data_width=args.data_width, targets_width=args.targets_width)
 
     train_loader = torch.utils.data.DataLoader(dataset, batch_size=args.train_batch_size, shuffle=False, drop_last=True)
     train_iter = u.infinite_iter(train_loader)
@@ -62,7 +62,7 @@ def main():
         stats_loader = torch.utils.data.DataLoader(dataset, batch_size=args.stats_batch_size, shuffle=False, drop_last=True)
         stats_iter = u.infinite_iter(stats_loader)
 
-    test_dataset = u.TinyMNIST('/tmp', download=True, data_width=args.data_width, targets_width=args.targets_width,
+    test_dataset = u.TinyMNIST(data_width=args.data_width, targets_width=args.targets_width,
                                train=False)
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.train_batch_size, shuffle=False, drop_last=True)
     test_iter = u.infinite_iter(test_loader)

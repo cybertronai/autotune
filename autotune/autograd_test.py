@@ -23,7 +23,7 @@ def test_autoencoder_minimize():
     targets_width = 2
 
     batch_size = 64
-    dataset = u.TinyMNIST('/tmp', download=True, data_width=data_width, targets_width=targets_width,
+    dataset = u.TinyMNIST(data_width=data_width, targets_width=targets_width,
                           dataset_size=batch_size)
     trainloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
@@ -59,7 +59,7 @@ def test_autoencoder_newton():
 
     image_size = 3
     batch_size = 64
-    dataset = u.TinyMNIST('/tmp', download=True, data_width=image_size, targets_width=image_size,
+    dataset = u.TinyMNIST(data_width=image_size, targets_width=image_size,
                           dataset_size=batch_size)
     trainloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
@@ -129,7 +129,7 @@ def test_main_autograd():
     model: u.SimpleModel = u.SimpleFullyConnected(d, nonlin=True)
     train_steps = 3
 
-    dataset = u.TinyMNIST('/tmp', download=True, data_width=data_width, targets_width=targets_width,
+    dataset = u.TinyMNIST(data_width=data_width, targets_width=targets_width,
                           dataset_size=batch_size * train_steps)
     trainloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
     train_iter = iter(trainloader)
@@ -230,7 +230,7 @@ def test_subsampled_hessian():
     n = batch_size
     d = [d1, d2, d3]
 
-    dataset = u.TinyMNIST('/tmp', download=True, data_width=data_width, targets_width=targets_width,
+    dataset = u.TinyMNIST(data_width=data_width, targets_width=targets_width,
                           dataset_size=batch_size * train_steps)
     trainloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
     train_iter = iter(trainloader)
@@ -526,7 +526,7 @@ def test_cross_entropy_hessian_mnist():
     model: u.SimpleModel = u.SimpleFullyConnected(d, nonlin=False)
     u.register_hooks(model)
 
-    dataset = u.TinyMNIST('/tmp', dataset_size=batch_size, data_width=data_width, original_targets=True)
+    dataset = u.TinyMNIST(dataset_size=batch_size, data_width=data_width, original_targets=True)
     trainloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
     train_iter = iter(trainloader)
 

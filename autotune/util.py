@@ -440,18 +440,17 @@ class TinyMNIST(datasets.MNIST):
     """Custom-size MNIST autoencoder dataset for debugging. Generates data/target images with reduced resolution.
     Use original_targets to get original MNIST labels"""
 
-    def __init__(self, root, data_width=4, targets_width=4, dataset_size=0, download=True, train=True,
+    def __init__(self, data_width=4, targets_width=4, dataset_size=0, download=True, train=True,
                  original_targets=False):
         """
 
         Args:
-            root: dataset root
             data_width: dimension of input images
             targets_width: dimension of target images
             dataset_size: number of examples
             original_targets: if False, replaces original classification targets with image reconstruction targets
         """
-        super().__init__(root, download=download, train=train)
+        super().__init__(gl.dataset_root, download=True, train=train)
 
         if dataset_size > 0:
             assert dataset_size <= self.data.shape[0]

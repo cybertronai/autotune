@@ -52,7 +52,7 @@ def main():
     model = u.SimpleFullyConnected(d, nonlin=args.nonlin)
     optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
 
-    dataset = u.TinyMNIST('/tmp', download=True, data_width=args.data_width, targets_width=args.targets_width,
+    dataset = u.TinyMNIST(data_width=args.data_width, targets_width=args.targets_width,
                           dataset_size=args.dataset_size)
     train_loader = torch.utils.data.DataLoader(dataset, batch_size=args.train_batch_size, shuffle=False, drop_last=True)
     train_iter = u.infinite_iter(train_loader)
