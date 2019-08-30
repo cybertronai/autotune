@@ -18,6 +18,9 @@ from PIL import Image
 
 import torch.nn.functional as F
 
+# to enable referring to functions in its own module as u.func
+u = sys.modules[__name__]
+
 
 def v2c(vec):
     """Convert vector to column matrix."""
@@ -284,8 +287,8 @@ def pinv_square_root(mat: torch.Tensor, eps=1e-4) -> torch.Tensor:
     return u @ torch.diag(si) @ v.t()
 
 
-def check_close(a0, b0):
-    return check_equal(a0, b0, rtol=1e-5, atol=1e-8)
+def check_close(a0, b0, rtol=1e-5, atol=1e-8):
+    return check_equal(a0, b0, rtol=rtol, atol=atol)
 
 
 def check_equal(observed, truth, rtol=1e-9, atol=1e-12):
@@ -852,6 +855,56 @@ class HessianSampledSqrLoss(object):
     def __call__(self, output: torch.Tensor):
         assert len(output.shape) == 2
         batch_size, output_size = output.shape
-        id_mat = torch.eye(output_size)
-        for out_idx in range(output_size):
-            yield torch.stack([id_mat[out_idx]] * batch_size)
+        assert self.samples <= output_size, f"Requesting more samples than needed for exact Hessian computation " \
+            f"({self.samples}>{output_size})"
+
+        # TODO(y): figure out why sqrt(self.samples) was needed here
+        for out_idx in range(self.samples):
+            # sample random vectors of +1/-1's
+            bval = torch.LongTensor(batch_size, output_size).to(gl.device).random_(0, 2) * 2 - 1
+            yield bval.float()/math.sqrt(self.samples)
+
+
+def register_hooks(model: SimpleModel):
+    # TODO(y): remove hardcoding of parameter name
+    for layer in model.layers:
+        layer.register_forward_hook(u.capture_activations)
+        layer.register_backward_hook(u.capture_backprops)
+        layer.weight.register_hook(u.save_grad(layer.weight))
+
+
+def compute_hessian(A_t, Bh_t):
+    """Computes Hessian from a batch of forward and backward values.
+
+    See documentation on HessianSampler for assumptions on how backprop values are generated
+
+    For batch size n
+    Forward values have shape n,layer_inputs
+    Backward values is a list of length c of tensors of shape n,layer_outputs
+
+    For exact Hessian computation, c is number of classes
+    """
+    n = A_t.shape[0]
+    Amat_t = torch.cat([A_t] * len(Bh_t), dim=0)  # todo: can instead replace with a khatri-rao loop
+    Bmat_t = torch.cat(Bh_t, dim=0)
+    Jb = u.khatri_rao_t(Bmat_t, Amat_t)  # batch Jacobian
+    H = Jb.t() @ Jb / n
+    return H
+
+
+def kl_div_cov(mat1, mat2, eps=1e-3):
+    """KL divergence between two zero centered Gaussian's with given covariance matrices."""
+
+    evals1 = torch.symeig(mat1).eigenvalues
+    evals2 = torch.symeig(mat2).eigenvalues
+    k = mat1.shape[0]
+    # scale regularizer in proportion to achievable numerical precision (taken from scipy.pinv2)
+    l1 = torch.max(evals1) * k
+    l2 = torch.max(evals2) * k
+    l = max(l1, l2)
+    reg = torch.eye(mat1.shape[0])*l*eps
+    mat1 = mat1 + reg
+    mat2 = mat2 + reg
+
+    div = torch.trace(mat1@torch.inverse(mat2))-(torch.logdet(mat1)-torch.logdet(mat2))-k
+    return div

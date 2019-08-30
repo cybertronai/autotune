@@ -6,7 +6,6 @@ import sys
 import globals as gl
 import torch
 import wandb
-from attrdict import AttrDefault
 from torch import optim
 from torch.utils.tensorboard import SummaryWriter
 
@@ -220,13 +219,11 @@ def main_autograd_test():
 
 # main test example to fork for checking Hessians against autograd
 def subsampled_hessian_test():
-    autograd_check = True
+    batch_size = 1000
 
-    batch_size = 5
-    u.seed_random(1)
-
-    data_width = 4
-    targets_width = 2
+    data_width = 6
+    targets_width = 6
+    train_steps = 3
 
     d1 = data_width ** 2
     d2 = 10
@@ -234,82 +231,79 @@ def subsampled_hessian_test():
     o = d3
     n = batch_size
     d = [d1, d2, d3]
-    model: u.SimpleModel = u.SimpleFullyConnected(d, nonlin=True)
-    train_steps = 3
 
     dataset = u.TinyMNIST('/tmp', download=True, data_width=data_width, targets_width=targets_width,
                           dataset_size=batch_size * train_steps)
     trainloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
     train_iter = iter(trainloader)
-
-    for layer in model.layers:
-        layer.register_forward_hook(u.capture_activations)
-        layer.register_backward_hook(u.capture_backprops)
-        layer.weight.register_hook(u.save_grad(layer.weight))
+    data, targets = next(train_iter)
 
     def loss_fn(data, targets):
         err = data - targets.view(-1, data.shape[1])
         assert len(data) == batch_size
         return torch.sum(err * err) / 2 / len(data)
 
-    loss_hessian_approx = u.HessianSampledSqrLoss(samples=1)
+    u.seed_random(1)
+    model: u.SimpleModel = u.SimpleFullyConnected(d, nonlin=False)
+    u.register_hooks(model)
     loss_hessian = u.HessianExactSqrLoss()
-
-    data, targets = next(train_iter)
-
-    # get gradient values
-    model.skip_backward_hooks = False
-    model.skip_forward_hooks = False
-    u.clear_backprops(model)
     output = model(data)
-    loss = loss_fn(output, targets)
-    loss.backward(retain_graph=True)
-    model.skip_forward_hooks = True
 
-    # get exact Hessian
-    output = model(data)
     for bval in loss_hessian(output):
         output.backward(bval, retain_graph=True)
     model.skip_backward_hooks = True
     i, layer = next(enumerate(model.layers))
 
-    #############################
-    # Gradient stats
-    #############################
     A_t = layer.activations
-    assert A_t.shape == (n, d[i])
+    Bh_t = layer.backprops_list
+    H = u.compute_hessian(A_t, Bh_t)
 
-    # add factor of n because backprop takes loss averaged over batch, while we need per-example loss
-    B_t = layer.backprops_list[0] * n
-    assert B_t.shape == (n, d[i + 1])
-
-    G = u.khatri_rao_t(B_t, A_t)
-    assert G.shape == (n, d[i] * d[i + 1])
-
-    # average gradient
-    g = G.sum(dim=0, keepdim=True) / n
-    assert g.shape == (1, d[i] * d[i + 1])
-
-    u.check_close(B_t.t() @ A_t / n, layer.weight.saved_grad)
-    u.check_close(g.reshape(d[i + 1], d[i]), layer.weight.saved_grad)
-
-    A_t = layer.activations
-    Bh_t = [layer.backprops_list[out_idx + 1] for out_idx in range(o)]
-    Amat_t = torch.cat([A_t] * o, dim=0)  # todo: can instead replace with a khatri-rao loop
-    Bmat_t = torch.cat(Bh_t, dim=0)
-
-    assert Amat_t.shape == (n * o, d[i])
-    assert Bmat_t.shape == (n * o, d[i + 1])
-
-    # hessian in in row-vectorized layout instead of usual column vectorized, for easy comparison with PyTorch autograd
-    Jb = u.khatri_rao_t(Bmat_t, Amat_t)  # batch Jacobian
-    H = Jb.t() @ Jb / n
-
-    model.zero_grad()
+    # sanity check autograd
+    u.clear_backprops(model)
     output = model(data)
     loss = loss_fn(output, targets)
+    model.skip_backward_hooks = True
+
     H_autograd = u.hessian(loss, layer.weight)
-    u.check_close(H, H_autograd.reshape(d[i] * d[i + 1], d[i] * d[i + 1]))
+    u.check_close(H, H_autograd.reshape(d[i] * d[i + 1], d[i] * d[i + 1]), rtol=1e-4, atol=1e-7)
+
+    # get subsampled Hessian
+    u.seed_random(1)
+    model = u.SimpleFullyConnected(d, nonlin=False)
+    u.register_hooks(model)
+    loss_hessian = u.HessianSampledSqrLoss(samples=1)
+    output = model(data)
+
+    for bval in loss_hessian(output):
+        output.backward(bval, retain_graph=True)
+    model.skip_backward_hooks = True
+    i, layer = next(enumerate(model.layers))
+
+    A_t = layer.activations
+    Bh_t = layer.backprops_list
+    H_approx1 = u.compute_hessian(A_t, Bh_t)
+
+    # use more samples
+    u.seed_random(1)
+    model = u.SimpleFullyConnected(d, nonlin=False)
+    u.register_hooks(model)
+    loss_hessian = u.HessianSampledSqrLoss(samples=o)
+    output = model(data)
+
+    for bval in loss_hessian(output):
+        output.backward(bval, retain_graph=True)
+    model.skip_backward_hooks = True
+    i, layer = next(enumerate(model.layers))
+
+    A_t = layer.activations
+    Bh_t = layer.backprops_list
+    H_approx2 = u.compute_hessian(A_t, Bh_t)
+
+    assert(abs(u.l2_norm(H)/u.l2_norm(H_approx1)-1) < 0.03)
+    assert(abs(u.l2_norm(H)/u.l2_norm(H_approx2)-1) < 0.02)
+    print(u.l2_norm(H)/u.l2_norm(H_approx2))
+    assert u.kl_div_cov(H_approx1, H) < 0.07   # 0.0673
+    assert u.kl_div_cov(H_approx2, H) < 0.03   # 0.0020
 
 
 def unfold_test():
@@ -497,5 +491,6 @@ def conv_multiexample_test():
 
 if __name__ == '__main__':
     subsampled_hessian_test()
-    sys.exit()
+    if __name__.endswith('__'):
+        sys.exit()
     u.run_all_tests(sys.modules[__name__])
