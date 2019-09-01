@@ -447,14 +447,15 @@ class TinyMNIST(datasets.MNIST):
         Args:
             data_width: dimension of input images
             targets_width: dimension of target images
-            dataset_size: number of examples
+            dataset_size: number of examples, use for smaller subsets and running locally
             original_targets: if False, replaces original classification targets with image reconstruction targets
         """
         super().__init__(gl.dataset_root, download=True, train=train)
 
         if dataset_size > 0:
-            assert dataset_size <= self.data.shape[0]
+            # assert dataset_size <= self.data.shape[0]
             self.data = self.data[:dataset_size, :, :]
+            self.targets = self.targets[:dataset_size]
 
         if data_width != 28 or targets_width != 28:
             new_data = np.zeros((self.data.shape[0], data_width, data_width))
@@ -472,7 +473,8 @@ class TinyMNIST(datasets.MNIST):
                 self.targets = torch.from_numpy(new_targets).float()
         else:
             self.data = self.data.float().unsqueeze(1)
-            self.targets = self.data
+            if not original_targets:
+                self.targets = self.data
         self.data, self.targets = self.data.to(gl.device), self.targets.to(gl.device)
 
     def __getitem__(self, index):
@@ -528,7 +530,7 @@ def get_parent_model(module_or_param) -> Optional[nn.Module]:
 class SimpleFullyConnected(SimpleModel):
     """Simple feedforward network that works on images."""
 
-    def __init__(self, d: List[int], nonlin=False):
+    def __init__(self, d: List[int], nonlin=False, bias=False):
         """
         Feedfoward network of linear layers with optional ReLU nonlinearity. Stores layers in "layers" attr, ie
         model.layers[0] refers to first linear layer.
@@ -542,7 +544,7 @@ class SimpleFullyConnected(SimpleModel):
         self.all_layers: List[nn.Module] = []
         self.d: List[int] = d
         for i in range(len(d) - 1):
-            linear = nn.Linear(d[i], d[i + 1], bias=False)
+            linear = nn.Linear(d[i], d[i + 1], bias=bias)
             setattr(linear, 'name', f'{i:02d}-linear')
             self.layers.append(linear)
             self.all_layers.append(linear)

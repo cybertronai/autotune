@@ -49,53 +49,56 @@ def main():
     d = [784, 2500, 2000, 1500, 1000, 500, 10]
     o = 10
     n = args.stats_batch_size
-    model = u.SimpleFullyConnected(d, nonlin=args.nonlin)
+    model = u.SimpleFullyConnected(d, nonlin=args.nonlin, bias=args.bias)
     model = model.to(gl.device)
 
     try:
         # os.environ['WANDB_SILENT'] = 'true'
         if args.wandb:
-            wandb.init(project='curv_train_tiny', name=run_name)
+            wandb.init(project='train_ciresan', name=run_name)
             wandb.tensorboard.patch(tensorboardX=False)
             wandb.config['train_batch'] = args.train_batch_size
             wandb.config['stats_batch'] = args.stats_batch_size
-            wandb.config['method'] = args.method
-            wandb.config['n'] = n
     except Exception as e:
         print(f"wandb crash with {e}")
 
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
-    dataset = u.TinyMNIST(data_width=args.data_width, targets_width=args.targets_width, original_targets=True)
+    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
+    dataset = u.TinyMNIST(data_width=args.data_width, targets_width=args.targets_width, original_targets=True,
+                          dataset_size=args.dataset_size)
     train_loader = torch.utils.data.DataLoader(dataset, batch_size=args.train_batch_size, shuffle=True, drop_last=True)
     train_iter = u.infinite_iter(train_loader)
 
+    assert not args.full_batch, "fixme: validation still uses stats_iter"
     if not args.full_batch:
         stats_loader = torch.utils.data.DataLoader(dataset, batch_size=args.stats_batch_size, shuffle=False, drop_last=True)
         stats_iter = u.infinite_iter(stats_loader)
     else:
         stats_iter = None
 
-    test_dataset = u.TinyMNIST(data_width=args.data_width, targets_width=args.targets_width,
-                               train=False, original_targets=True)
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.train_batch_size, shuffle=False, drop_last=False)
+    test_dataset = u.TinyMNIST(data_width=args.data_width, targets_width=args.targets_width, train=False, original_targets=True,
+                               dataset_size=args.dataset_size)
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.stats_batch_size, shuffle=False, drop_last=False)
 
     loss_fn = torch.nn.CrossEntropyLoss()
 
     gl.token_count = 0
     last_outer = 0
     for step in range(args.stats_steps):
+        epoch = gl.token_count // 60000
+        print(gl.token_count)
         if last_outer:
             u.log_scalars({"time/outer": 1000*(time.perf_counter() - last_outer)})
         last_outer = time.perf_counter()
+
         # compute validation loss
 
-        with u.timeit("val_loss"):
-            val_accuracy, val_loss = validate(model, test_loader)
+        with u.timeit("validate"):
+            val_accuracy, val_loss = validate(model, test_loader, f'test (epoch {epoch})')
+            train_accuracy, train_loss = validate(model, stats_loader, f'train (epoch {epoch})')
 
         # save log
-        epoch = gl.token_count / 60000
-        metrics = {'epoch': epoch,
-                   'val_accuracy': val_accuracy, 'val_loss': val_loss,
+        metrics = {'epoch': epoch, 'val_accuracy': val_accuracy, 'val_loss': val_loss,
+                   'train_loss': train_loss, 'train_accuracy': train_accuracy,
                    'lr': optimizer.param_groups[0]['lr'],
                    'momentum': optimizer.param_groups[0].get('momentum', 0)}
         u.log_scalars(metrics)
@@ -123,12 +126,8 @@ def main():
         hessian_backprops = []
         hessians = []   # list of Hessians in Kronecker form
 
-        # for layer in
-        # do forward backward to compute the Hessian
         model.skip_forward_hooks = True
-
         for (i, layer) in enumerate(model.layers):
-
             if args.skip_stats:
                 continue
 
@@ -229,8 +228,6 @@ def main():
             loss = loss_fn(output, targets)
             loss.backward()
 
-            u.log_scalar(train_loss=loss.item())
-
             optimizer.step()
             if args.weight_decay:
                 for group in optimizer.param_groups:
@@ -242,7 +239,7 @@ def main():
     gl.event_writer.close()
 
 
-def validate(model, val_loader):
+def validate(model, val_loader, tag='validation'):
     model.eval()
     val_loss = 0
     correct = 0
@@ -261,8 +258,7 @@ def validate(model, val_loader):
     val_accuracy = 100. * correct / len(val_loader.dataset)
 
     # TODO(y) log scalar here
-    print('\nEval: Average loss: {:.4f}, Accuracy: {:.0f}/{} ({:.2f}%)\n'.format(
-        val_loss, correct, len(val_loader.dataset), val_accuracy))
+    print(f'Eval: Average {tag} loss: {val_loss:.4f}, Accuracy: {correct:.0f}/{len(val_loader.dataset)} ({val_accuracy:.2f}%)')
 
     return val_accuracy, val_loss
 
@@ -275,10 +271,6 @@ if __name__ == '__main__':
                         help='input batch size for testing (default: 1000)')
     parser.add_argument('--epochs', type=int, default=10, metavar='N',
                         help='number of epochs to train (default: 10)')
-    parser.add_argument('--lr', type=float, default=0.01, metavar='LR',
-                        help='learning rate (default: 0.01)')
-    parser.add_argument('--momentum', type=float, default=0.5, metavar='M',
-                        help='SGD momentum (default: 0.5)')
     parser.add_argument('--no-cuda', action='store_true', default=False,
                         help='disables CUDA training')
     parser.add_argument('--seed', type=int, default=1, metavar='S',
@@ -292,24 +284,29 @@ if __name__ == '__main__':
     parser.add_argument('--autograd_check', type=int, default=0, help='autograd correctness checks')
     parser.add_argument('--logdir', type=str, default='/temp/runs/curv_train_tiny/run')
 
-    parser.add_argument('--train_batch_size', type=int, default=100)
-    parser.add_argument('--stats_batch_size', type=int, default=60000)
-    parser.add_argument('--dataset_size', type=int, default=60000)
-    parser.add_argument('--train_steps', type=int, default=100, help="this many train steps between stat collection")
-    parser.add_argument('--stats_steps', type=int, default=1000000, help="total number of curvature stats collections")
     parser.add_argument('--nonlin', type=int, default=1, help="whether to add ReLU nonlinearity between layers")
-    parser.add_argument('--method', type=str, choices=['gradient', 'newton'], default='gradient',
-                        help="descent method, newton or gradient")
+    parser.add_argument('--bias', type=int, default=1, help="whether to add bias between layers")
+
     parser.add_argument('--layer', type=int, default=-1, help="restrict updates to this layer")
     parser.add_argument('--data_width', type=int, default=28)
     parser.add_argument('--targets_width', type=int, default=28)
-    parser.add_argument('--lmb', type=float, default=1e-3)
     parser.add_argument('--hess_samples', type=int, default=1, help='number of samples when sub-sampling outputs, 0 for exact hessian')
     parser.add_argument('--hess_kfac', type=int, default=0, help='whether to use KFAC approximation for hessian')
     parser.add_argument('--compute_rho', type=int, default=0, help='use expensive method to compute rho')
-    parser.add_argument('--skip_stats', type=int, default=0, help='skip all stats collection')
-    parser.add_argument('--full_batch', type=int, default=1, help='do stats on the whole dataset')
-    parser.add_argument('--weight_decay', type=float, default=1e-4)
+    parser.add_argument('--skip_stats', type=int, default=1, help='skip all stats collection')
+
+    parser.add_argument('--dataset_size', type=int, default=60000)
+    parser.add_argument('--train_steps', type=int, default=1000, help="this many train steps between stat collection")
+    parser.add_argument('--stats_steps', type=int, default=1000000, help="total number of curvature stats collections")
+
+    parser.add_argument('--full_batch', type=int, default=0, help='do stats on the whole dataset')
+    parser.add_argument('--train_batch_size', type=int, default=64)
+    parser.add_argument('--stats_batch_size', type=int, default=10000)
+    parser.add_argument('--lr', type=float, default=0.0001)
+    parser.add_argument('--weight_decay', type=float, default=1e-5)
+    parser.add_argument('--momentum', type=float, default=0.9)
+    parser.add_argument('--lmb', type=float, default=1e-3)
+
 
     args = parser.parse_args()
 
