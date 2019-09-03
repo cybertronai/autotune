@@ -88,12 +88,12 @@ def untvec(a, rows):
 
 def kron(a, b):
     """Kronecker product."""
-    return torch.einsum("ab,cd->acbd", a, b).view(a.size(0) * b.size(0), a.size(1) * b.size(1))
-
-
-def slow_kron(a, b):
-    """Slower version which is required when dimensions are not contiguous."""
-    return torch.einsum("ab,cd->acbd", a, b).contiguous().view(a.size(0) * b.size(0), a.size(1) * b.size(1))
+    result = torch.einsum("ab,cd->acbd", a, b)
+    if result.is_contiguous():
+        return result.view(a.size(0) * b.size(0), a.size(1) * b.size(1))
+    else:
+        print("Warning kronecker product not contiguous, using reshape")
+        return result.reshape(a.size(0) * b.size(0), a.size(1) * b.size(1))
 
 
 def test_kron():
@@ -118,6 +118,7 @@ def has_nan(mat):
 
 
 def l2_norm(mat: torch.Tensor):
+    """Largest eigenvalue."""
     u, s, v = torch.svd(mat)
     return torch.max(s)
 
@@ -130,6 +131,7 @@ def test_l2_norm():
 
 
 def sym_l2_norm(mat: torch.Tensor):
+    """Largest eigenvalue assuming that matrix is symmetric."""
     evals, _evecs = torch.symeig(mat)
     return torch.max(evals)
 
@@ -151,12 +153,12 @@ def erank(mat):
 
 
 def sym_erank(mat):
-    """Effective rank of matrix."""
+    """Effective rank of symmetric matrix."""
     return torch.trace(mat) / sym_l2_norm(mat)
 
 
 def lyapunov_svd(A, C, rtol=1e-4, use_svd=False):
-    """Solve AX+XA=C"""
+    """Solve AX+XA=C using SVD"""
 
     assert A.shape[0] == A.shape[1]
     assert len(A.shape) == 2
@@ -177,10 +179,12 @@ def lyapunov_svd(A, C, rtol=1e-4, use_svd=False):
 
 
 def outer(x, y):
+    """Outer product of xy', treating x,y as column vectors."""
     return x.unsqueeze(1) @ y.unsqueeze(0)
 
 
 def to_scalar(x):
+    """Convert object to Python scalar."""
     if hasattr(x, 'item'):
         return x.item()
     x = to_numpy(x).flatten()
@@ -423,19 +427,6 @@ def seed_random(seed):
         torch.cuda.manual_seed_all(seed)
 
 
-def clear_backprops(model: nn.Module) -> None:
-    """model.zero_grad + delete all backprops/activations/saved_grad values"""
-    model.zero_grad()
-    for m in model.modules():
-        if hasattr(m, 'backprops_list'):
-            del m.backprops_list
-        if hasattr(m, 'activations'):
-            del m.activations
-    for p in model.parameters():
-        if hasattr(p, 'saved_grad'):
-            del p.saved_grad
-
-
 class TinyMNIST(datasets.MNIST):
     """Custom-size MNIST autoencoder dataset for debugging. Generates data/target images with reduced resolution.
     Use original_targets to get original MNIST labels"""
@@ -527,6 +518,75 @@ def get_parent_model(module_or_param) -> Optional[nn.Module]:
         return model_param_map[module_or_param]
 
 
+# Functions to capture backprops/activations and save them on the layer
+
+# layer.register_forward_hook(capture_activations) -> saves activations/output as layer.activations/layer.output
+# layer.register_backward_hook(capture_backprops)  -> appends each backprop to layer.backprops_list
+# layer.weight.register_hook(save_grad(layer.weight)) -> saves grad under layer.weight.saved_grad
+# util.clear_backprops(model) -> delete all values above
+
+def capture_activations(module: nn.Module, input: List[torch.Tensor], output: torch.Tensor):
+    """Saves activations (layer input) into layer.activations. """
+    model = get_parent_model(module)
+    if getattr(model, 'skip_forward_hooks', False):
+        return
+    assert not hasattr(module,
+                       'activations'), "Seeing results of previous autograd, call util.clear_backprops(model) to clear"
+    assert len(input) == 1, "this was tested for single input layers only"
+    setattr(module, "activations", input[0].detach())
+    setattr(module, "output", output.detach())
+
+
+def capture_backprops(module: nn.Module, _input, output):
+    """Appends all backprops (Jacobian Lops from upstream) to layer.backprops_list.
+    Using list in order to capture multiple backprop values for a single batch. Use util.clear_backprops(model)
+    to clear all saved values.
+    """
+    model = get_parent_model(module)
+    if getattr(model, 'skip_backward_hooks', False):
+        return
+    assert len(output) == 1, "this works for single variable layers only"
+    if not hasattr(module, 'backprops_list'):
+        setattr(module, 'backprops_list', [])
+    assert len(module.backprops_list) < 100, "Possible memory leak, captured more than 100 backprops, comment this assert " \
+                                             "out if this is intended."""
+
+    module.backprops_list.append(output[0])
+
+
+def save_grad(param: nn.Parameter) -> Callable[[torch.Tensor], None]:
+    """Hook to save gradient into 'param.saved_grad', so it can be accessed after model.zero_grad(). Only stores gradient
+    if the value has not been set, call util.clear_backprops to clear it."""
+
+    def save_grad_fn(grad):
+        if not hasattr(param, 'saved_grad'):
+            setattr(param, 'saved_grad', grad)
+
+    return save_grad_fn
+
+
+def clear_backprops(model: nn.Module) -> None:
+    """model.zero_grad + delete all backprops/activations/saved_grad values"""
+    model.zero_grad()
+    for m in model.modules():
+        if hasattr(m, 'backprops_list'):
+            del m.backprops_list
+        if hasattr(m, 'activations'):
+            del m.activations
+    for p in model.parameters():
+        if hasattr(p, 'saved_grad'):
+            del p.saved_grad
+
+
+def register_hooks(model: SimpleModel):
+    # TODO(y): remove hardcoding of parameter name
+    for layer in model.layers:
+        layer.register_forward_hook(u.capture_activations)
+        layer.register_backward_hook(u.capture_backprops)
+        for param in layer.parameters():
+            param.register_hook(u.save_grad(param))
+
+
 class SimpleFullyConnected(SimpleModel):
     """Simple feedforward network that works on images."""
 
@@ -564,7 +624,7 @@ class SimpleFullyConnected(SimpleModel):
 class SimpleConvolutional(SimpleModel):
     """Simple conv network."""
 
-    def __init__(self, d: List[int], kernel_size=(2, 2), nonlin=False):
+    def __init__(self, d: List[int], kernel_size=(2, 2), nonlin=False, bias=False):
         """
 
         Args:
@@ -575,7 +635,7 @@ class SimpleConvolutional(SimpleModel):
         self.all_layers: List[nn.Module] = []
         self.d: List[int] = d
         for i in range(len(d) - 1):
-            conv = nn.Conv2d(d[i], d[i + 1], kernel_size, bias=False)
+            conv = nn.Conv2d(d[i], d[i + 1], kernel_size, bias=bias)
             setattr(conv, 'name', f'{i:02d}-conv')
             self.layers.append(conv)
             self.all_layers.append(conv)
@@ -639,6 +699,7 @@ def get_events(fname, x_axis='step'):
 
 
 def infinite_iter(obj):
+    """Wraps iterable object to restart on last iteration."""
     while True:
         for result in iter(obj):
             yield result
@@ -730,53 +791,6 @@ def print_cpu_info():
 
 def move_to_gpu(tensors):
     return [tensor.cuda() for tensor in tensors]
-
-
-# Functions to capture backprops/activations and save them on the layer
-
-# layer.register_forward_hook(capture_activations) -> saves activations/output as layer.activations/layer.output
-# layer.register_backward_hook(capture_backprops)  -> appends each backprop to layer.backprops_list
-# layer.weight.register_hook(save_grad(layer.weight)) -> saves grad under layer.weight.saved_grad
-# util.clear_backprops(model) -> delete all values above
-
-def capture_activations(module: nn.Module, input: List[torch.Tensor], output: torch.Tensor):
-    """Saves activations (layer input) into layer.activations. """
-    model = get_parent_model(module)
-    if getattr(model, 'skip_forward_hooks', False):
-        return
-    assert not hasattr(module,
-                       'activations'), "Seeing results of previous autograd, call util.clear_backprops(model) to clear"
-    assert len(input) == 1, "this was tested for single input layers only"
-    setattr(module, "activations", input[0].detach())
-    setattr(module, "output", output.detach())
-
-
-def capture_backprops(module: nn.Module, _input, output):
-    """Appends all backprops (Jacobian Lops from upstream) to layer.backprops_list.
-    Using list in order to capture multiple backprop values for a single batch. Use util.clear_backprops(model)
-    to clear all saved values.
-    """
-    model = get_parent_model(module)
-    if getattr(model, 'skip_backward_hooks', False):
-        return
-    assert len(output) == 1, "this works for single variable layers only"
-    if not hasattr(module, 'backprops_list'):
-        setattr(module, 'backprops_list', [])
-    assert len(module.backprops_list) < 100, "Possible memory leak, captured more than 100 backprops, comment this assert " \
-                                             "out if this is intended."""
-
-    module.backprops_list.append(output[0])
-
-
-def save_grad(param: nn.Parameter) -> Callable[[torch.Tensor], None]:
-    """Hook to save gradient into 'param.saved_grad', so it can be accessed after model.zero_grad(). Only stores gradient
-    if the value has not been set, call util.clear_backprops to clear it."""
-
-    def save_grad_fn(grad):
-        if not hasattr(param, 'saved_grad'):
-            setattr(param, 'saved_grad', grad)
-
-    return save_grad_fn
 
 
 def fmt(a):
@@ -925,15 +939,7 @@ class HessianExactCrossEntropyLoss(HessianSampler):
             yield sample
 
 
-def register_hooks(model: SimpleModel):
-    # TODO(y): remove hardcoding of parameter name
-    for layer in model.layers:
-        layer.register_forward_hook(u.capture_activations)
-        layer.register_backward_hook(u.capture_backprops)
-        layer.weight.register_hook(u.save_grad(layer.weight))
-
-
-def hessian_from_backprops(A_t, Bh_t):
+def hessian_from_backprops(A_t, Bh_t, bias=False):
     """Computes Hessian from a batch of forward and backward values.
 
     See documentation on HessianSampler for assumptions on how backprop values are generated
@@ -942,14 +948,22 @@ def hessian_from_backprops(A_t, Bh_t):
     Forward values have shape n,layer_inputs
     Backward values is a list of length c of tensors of shape n,layer_outputs
 
-    For exact Hessian computation, c is number of classes
+    For exact Hessian computation, c is number of classes.
+
+    Args:
+      bias: if True, also return Hessian of the bias parameter
     """
     n = A_t.shape[0]
     Amat_t = torch.cat([A_t] * len(Bh_t), dim=0)  # todo: can instead replace with a khatri-rao loop
     Bmat_t = torch.cat(Bh_t, dim=0)
     Jb = u.khatri_rao_t(Bmat_t, Amat_t)  # batch Jacobian
     H = Jb.t() @ Jb / n
-    return H
+
+    if not bias:
+        return H
+    else:
+        Hbias = Bmat_t.t() @ Bmat_t / n
+        return H, Hbias
 
 
 def kl_div_cov(mat1, mat2, eps=1e-3):

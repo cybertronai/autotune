@@ -31,11 +31,11 @@ def test_simple_hessian():
     Bs = torch.tensor([[[3, -3], [-3, -1], [-3, 3], [-3, 0]], [[2, -1], [-3, 0], [1, 1], [-2, 0]]]).float()
 
     # output Jacobian for first example
-    Jo1 = u.slow_kron(u.v2r(As[0]), Bs[0].t())
+    Jo1 = u.kron(u.v2r(As[0]), Bs[0].t())
     u.check_equal(Jo1, [[9, -9, -9, -9, 3, -3, -3, -3, -3, 3, 3, 3], [-9, -3, 9, 0, -3, -1, 3, 0, 3, 1, -3, 0]])
 
     # batch output Jacobian
-    Jb = torch.cat([u.slow_kron(u.v2r(As[i]), Bs[i].t()) for i in range(n)])
+    Jb = torch.cat([u.kron(u.v2r(As[i]), Bs[i].t()) for i in range(n)])
     u.check_equal(Jb, [[9, -9, -9, -9, 3, -3, -3, -3, -3, 3, 3, 3], [-9, -3, 9, 0, -3, -1, 3, 0, 3, 1, -3, 0],
                        [2, -3, 1, -2, -6, 9, -3, 6, -4, 6, -2, 4], [-1, 0, 1, 0, 3, 0, -3, 0, 2, 0, -2, 0]])
 
@@ -54,7 +54,7 @@ def test_simple_hessian():
 
     u.check_equal(Jo1, jac.transpose(0, 1).transpose(2, 3).reshape((c, -1)))
 
-    Jb = torch.cat([u.slow_kron(u.v2r(As[i]), Bs[i].t()) for i in range(n)])
+    Jb = torch.cat([u.kron(u.v2r(As[i]), Bs[i].t()) for i in range(n)])
     manualHess = Jb.t() @ Jb
     u.check_equal(manualHess, [[167, -60, -161, -85, 39, 0, -57, -15, -64, 30, 52, 35],
                                [-60, 99, 51, 87, 0, 3, 27, 9, 30, -48, -12, -39],

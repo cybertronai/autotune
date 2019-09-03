@@ -334,7 +334,6 @@ def test_lineasearch():
 
     train_dataset = dataset_class(
         root='/tmp/data', train=True, download=True, transform=train_transform)
-    # val_dataset = dataset_class(root=args.root, train=False, download=args.download, transform=val_transform)
 
     batch_size = 32
     num_workers = 0

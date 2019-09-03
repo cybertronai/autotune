@@ -97,10 +97,10 @@ def test_autoencoder_newton():
 
 
 def test_main_autograd():
-    """main test example to fork for checking Hessians against autograd"""
+    u.seed_random(1)
     log_wandb = False
     autograd_check = True
-    use_double = True
+    use_double = False
 
     logdir = u.get_unique_logdir('/tmp/autoencoder_test/run')
 
@@ -108,7 +108,6 @@ def test_main_autograd():
     gl.event_writer = SummaryWriter(logdir)
 
     batch_size = 5
-    u.seed_random(1)
 
     try:
         if log_wandb:
@@ -127,7 +126,7 @@ def test_main_autograd():
     o = d3
     n = batch_size
     d = [d1, d2, d3]
-    model: u.SimpleModel = u.SimpleFullyConnected(d, nonlin=True)
+    model: u.SimpleModel = u.SimpleFullyConnected(d, nonlin=True, bias=True)
     if use_double:
         model = model.double()
     train_steps = 3
@@ -137,10 +136,7 @@ def test_main_autograd():
     trainloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
     train_iter = iter(trainloader)
 
-    for layer in model.layers:
-        layer.register_forward_hook(u.capture_activations)
-        layer.register_backward_hook(u.capture_backprops)
-        layer.weight.register_hook(u.save_grad(layer.weight))
+    u.register_hooks(model)
 
     def loss_fn(data, targets):
         err = data - targets.view(-1, data.shape[1])
@@ -184,17 +180,23 @@ def test_main_autograd():
             B_t = layer.backprops_list[0] * n
             assert B_t.shape == (n, d[i + 1])
 
+            # per example gradients
             G = u.khatri_rao_t(B_t, A_t)
             assert G.shape == (n, d[i] * d[i + 1])
-
+            Gbias = B_t
+            assert Gbias.shape == (n, d[i + 1])
+            
             # average gradient
             g = G.sum(dim=0, keepdim=True) / n
+            gb = Gbias.sum(dim=0, keepdim=True) / n
             assert g.shape == (1, d[i] * d[i + 1])
+            assert gb.shape == (1, d[i + 1])
 
             if autograd_check:
                 u.check_close(B_t.t() @ A_t / n, layer.weight.saved_grad)
                 u.check_close(g.reshape(d[i + 1], d[i]), layer.weight.saved_grad)
-
+                u.check_close(torch.mean(B_t, dim=0), layer.bias.saved_grad)
+                
             # empirical Fisher
             efisher = G.t() @ G / n
             _sigma = efisher - g.t() @ g
@@ -211,15 +213,19 @@ def test_main_autograd():
             assert Bmat_t.shape == (n * o, d[i + 1])
 
             # hessian in in row-vectorized layout instead of usual column vectorized, for easy comparison with PyTorch autograd
-            Jb = u.khatri_rao_t(Bmat_t, Amat_t)  # batch Jacobian
+            Jb = u.khatri_rao_t(Bmat_t, Amat_t)  # batch output Jacobian
             H = Jb.t() @ Jb / n
+
+            Hbias = Bmat_t.t() @ Bmat_t / n
 
             if autograd_check:
                 model.zero_grad()
                 output = model(data)
                 loss = loss_fn(output, targets)
                 H_autograd = u.hessian(loss, layer.weight)
+                Hbias_autograd = u.hessian(loss, layer.bias)
                 u.check_close(H, H_autograd.reshape(d[i] * d[i + 1], d[i] * d[i + 1]))
+                u.check_close(Hbias, Hbias_autograd)
 
 
 def test_subsampled_hessian():
@@ -488,7 +494,7 @@ def test_cross_entropy_hessian_tiny():
     n = batch_size
     train_steps = 1
 
-    model: u.SimpleModel = u.SimpleFullyConnected(d, nonlin=True)
+    model: u.SimpleModel = u.SimpleFullyConnected(d, nonlin=True, bias=True)
     u.register_hooks(model)
     model.layers[0].weight.data.copy_(torch.eye(2))
 
@@ -508,7 +514,9 @@ def test_cross_entropy_hessian_tiny():
         output.backward(bval, retain_graph=True)
     i = 0
     layer = model.layers[i]
-    H = u.hessian_from_backprops(layer.activations, layer.backprops_list)
+    H, Hbias = u.hessian_from_backprops(layer.activations,
+                                        layer.backprops_list,
+                                        bias=True)
     model.skip_forward_hooks = True
     model.skip_backward_hooks = True
 
@@ -518,6 +526,8 @@ def test_cross_entropy_hessian_tiny():
     loss = loss_fn(output, targets)
     H_autograd = u.hessian(loss, layer.weight)
     u.check_close(H, H_autograd.reshape(d[i] * d[i + 1], d[i] * d[i + 1]))
+    Hbias_autograd = u.hessian(loss, layer.bias)
+    u.check_close(Hbias, Hbias_autograd)
 
 
 def test_cross_entropy_hessian_mnist():
@@ -530,7 +540,7 @@ def test_cross_entropy_hessian_mnist():
     n = batch_size
     train_steps = 1
 
-    model: u.SimpleModel = u.SimpleFullyConnected(d, nonlin=False)
+    model: u.SimpleModel = u.SimpleFullyConnected(d, nonlin=False, bias=True)
     u.register_hooks(model)
 
     dataset = u.TinyMNIST(dataset_size=batch_size, data_width=data_width, original_targets=True)
@@ -553,7 +563,9 @@ def test_cross_entropy_hessian_mnist():
             output.backward(bval, retain_graph=True)
         i = 0
         layer = model.layers[i]
-        H = u.hessian_from_backprops(layer.activations, layer.backprops_list)
+        H, Hbias = u.hessian_from_backprops(layer.activations,
+                                            layer.backprops_list,
+                                            bias=True)
         model.skip_forward_hooks = True
         model.skip_backward_hooks = True
 
@@ -563,6 +575,10 @@ def test_cross_entropy_hessian_mnist():
         loss = loss_fn(output, targets)
         H_autograd = u.hessian(loss, layer.weight).reshape(d[i] * d[i + 1], d[i] * d[i + 1])
         u.check_close(H, H_autograd)
+        
+        Hbias_autograd = u.hessian(loss, layer.bias)
+        u.check_close(Hbias, Hbias_autograd)
+
 
 
 if __name__ == '__main__':
