@@ -497,7 +497,7 @@ def test_conv_grad():
     # check output with added bias
     out_unf = layer.weight.view(layer.weight.size(0), -1) @ unfold(layer.activations, (2, 2))
     assert out_unf.shape == (N, dd[1], Oh * Ow)
-    reshaped_bias = layer.bias.reshape(1, dd[1], 1) # (Co,) -> (N, Co, 1)
+    reshaped_bias = layer.bias.reshape(1, dd[1], 1) # (Co,) -> (1, Co, 1)
     out_unf = out_unf + reshaped_bias
     u.check_close(fold(out_unf, layer.output.shape[2:], (1, 1)), output)
 
@@ -534,7 +534,7 @@ def test_conv_multiexample():
 
     Kh, Kw = 2, 3
     Oh, Ow = Xh - Kh + 1, Xw - Kw + 1
-    model = u.SimpleConvolutional(dd, kernel_size=(Kh, Kw)).double()
+    model = u.SimpleConvolutional(dd, kernel_size=(Kh, Kw), bias=True).double()
 
     weight_buffer = model.layers[0].weight.data
 
@@ -560,11 +560,20 @@ def test_conv_multiexample():
     assert layer.output.shape == (N, dd[1], Oh, Ow)
 
     out_unf = layer.weight.view(layer.weight.size(0), -1) @ unfold(layer.activations, (Kh, Kw))
-    u.check_equal(fold(out_unf, (Oh, Ow), (1, 1)), output)
+    assert out_unf.shape == (N, dd[1], Oh * Ow)
+    reshaped_bias = layer.bias.reshape(1, dd[1], 1) # (Co,) -> (1, Co, 1)
+    out_unf = out_unf + reshaped_bias
+
+    u.check_equal(fold(out_unf, (Oh, Ow), (1, 1)), output)  # two alternative ways of reshaping
     u.check_equal(out_unf.view(N, dd[1], Oh, Ow), output)
 
     assert unfold(layer.activations, (Kh, Kw)).shape == (N, Xc * Kh * Kw, Oh * Ow)
     assert layer.backprops_list[0].shape == (N, dd[1], Oh, Ow)
+
+
+    grads_bias = layer.backprops_list[0].sum(dim=(2, 3)) * N
+    mean_grad_bias = grads_bias.sum(dim=0) / N
+    u.check_equal(mean_grad_bias, layer.bias.grad)
 
     bp = layer.backprops_list[0] * N  # remove factor of N applied during loss batch averaging
 
@@ -591,8 +600,9 @@ def test_conv_multiexample():
         loss = loss_fn(output)
         loss.backward()
         u.check_equal(grads[i], layer.weight.grad)
+        u.check_equal(grads_bias[i], layer.bias.grad)
 
 
 if __name__ == '__main__':
-    #    test_conv_grad()
-    u.run_all_tests(sys.modules[__name__])
+    test_conv_multiexample()
+    # u.run_all_tests(sys.modules[__name__])
