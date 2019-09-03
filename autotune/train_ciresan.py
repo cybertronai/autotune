@@ -12,6 +12,7 @@ import globals as gl
 import scipy
 import torch
 import torch.nn as nn
+import torchcontrib
 import wandb
 from attrdict import AttrDefault
 from torch.utils.tensorboard import SummaryWriter
@@ -49,7 +50,7 @@ def main():
     d = [784, 2500, 2000, 1500, 1000, 500, 10]
     o = 10
     n = args.stats_batch_size
-    model = u.SimpleFullyConnected(d, nonlin=args.nonlin, bias=args.bias)
+    model = u.SimpleFullyConnected(d, nonlin=args.nonlin, bias=args.bias, dropout=args.dropout)
     model = model.to(gl.device)
 
     try:
@@ -91,6 +92,20 @@ def main():
         last_outer = time.perf_counter()
 
         # compute validation loss
+        model.eval()
+        if args.swa:
+            with u.timeit('swa'):
+                base_opt = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
+                opt = torchcontrib.optim.SWA(base_opt, swa_start=0, swa_freq=1, swa_lr=args.lr)
+                for _ in range(100):
+                    optimizer.zero_grad()
+                    data, targets = next(train_iter)
+                    model.zero_grad()
+                    output = model(data)
+                    loss = loss_fn(output, targets)
+                    loss.backward()
+                    opt.step()
+                opt.swap_swa_sgd()
 
         with u.timeit("validate"):
             val_accuracy, val_loss = validate(model, test_loader, f'test (epoch {epoch})')
@@ -215,6 +230,7 @@ def main():
             u.log_scalars(u.nest_stats(layer.name, s))
 
         # gradient steps
+        model.train()
         last_inner = 0
         for i in range(args.train_steps):
             if last_inner:
@@ -282,7 +298,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--wandb', type=int, default=1, help='log to weights and biases')
     parser.add_argument('--autograd_check', type=int, default=0, help='autograd correctness checks')
-    parser.add_argument('--logdir', type=str, default='/temp/runs/curv_train_tiny/run')
+    parser.add_argument('--logdir', type=str, default='/tmp/runs/curv_train_tiny/run')
 
     parser.add_argument('--nonlin', type=int, default=1, help="whether to add ReLU nonlinearity between layers")
     parser.add_argument('--bias', type=int, default=1, help="whether to add bias between layers")
@@ -302,9 +318,11 @@ if __name__ == '__main__':
     parser.add_argument('--full_batch', type=int, default=0, help='do stats on the whole dataset')
     parser.add_argument('--train_batch_size', type=int, default=64)
     parser.add_argument('--stats_batch_size', type=int, default=10000)
-    parser.add_argument('--lr', type=float, default=0.0001)
+    parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--weight_decay', type=float, default=1e-5)
     parser.add_argument('--momentum', type=float, default=0.9)
+    parser.add_argument('--dropout', type=int, default=0)
+    parser.add_argument('--swa', type=int, default=1)
     parser.add_argument('--lmb', type=float, default=1e-3)
 
 
