@@ -73,7 +73,7 @@ def test_symsqrt():
     # embed in a larger space
     X = torch.cat([X, torch.zeros_like(X)])
     X = randomly_rotate(X)
-    cov = X.t() @ X
+    cov = X @ X.t()
     sqrt, rank = u.symsqrt(cov, return_rank=True)
     assert rank == d
     assert torch.allclose(sqrt @ sqrt, cov, atol=1e-5)

@@ -317,8 +317,8 @@ def check_equal(observed, truth, rtol=1e-9, atol=1e-12):
     truth = to_numpy(truth)
     observed = to_numpy(observed)
     assert truth.shape == observed.shape, f"Observed shape {observed.shape}, expected shape {truth.shape}"
-    assert np.allclose(observed, truth, rtol=rtol, atol=atol, equal_nan=True)
-    #    np.testing.assert_allclose(truth, observed, rtol=rtol, atol=atol)
+    if not np.allclose(observed, truth, rtol=rtol, atol=atol, equal_nan=True):
+        np.testing.assert_allclose(truth, observed, rtol=rtol, atol=atol, equal_nan=True)
 
     # try:
     #     np.testing.assert_allclose(truth, observed, rtol=rtol, atol=atol)
@@ -530,7 +530,7 @@ def get_parent_model(module_or_param) -> Optional[nn.Module]:
 class SimpleFullyConnected(SimpleModel):
     """Simple feedforward network that works on images."""
 
-    def __init__(self, d: List[int], nonlin=False, bias=False):
+    def __init__(self, d: List[int], nonlin=False, bias=False, dropout=False):
         """
         Feedfoward network of linear layers with optional ReLU nonlinearity. Stores layers in "layers" attr, ie
         model.layers[0] refers to first linear layer.
@@ -550,6 +550,8 @@ class SimpleFullyConnected(SimpleModel):
             self.all_layers.append(linear)
             if nonlin:
                 self.all_layers.append(nn.ReLU())
+            if i <= len(d) - 3 and dropout:
+                self.all_layers.append(nn.Dropout(p=0.5))
         self.predict = torch.nn.Sequential(*self.all_layers)
 
         super()._finalize()

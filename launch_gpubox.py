@@ -45,6 +45,8 @@ def main():
 
   # upload sample notebook and start Jupyter server
   task.run('mkdir -p /ncluster/notebooks')
+
+  task.rsync('.')
   task.upload(f'{module_path}/gpubox_sample.ipynb',
               '/ncluster/notebooks/gpubox_sample.ipynb',
               dont_overwrite=True)

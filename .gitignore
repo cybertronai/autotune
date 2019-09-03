@@ -108,3 +108,4 @@ venv.bak/
 /examples/cifar/data
 /examples/cifar/result
 /examples/cifar/wandb
+wandb
