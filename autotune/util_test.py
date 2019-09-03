@@ -50,6 +50,8 @@ def test_cross_entropy_soft():
 
 
 def test_symsqrt():
+    u.seed_random(1)
+    
     mat = torch.reshape(torch.arange(9) + 1, (3, 3)).float() + torch.eye(3) * 5
     mat = mat + mat.t()  # make symmetric
     smat = u.symsqrt(mat)

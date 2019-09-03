@@ -223,7 +223,10 @@ def test_khatri_rao():
 
 
 def khatri_rao_t(A: torch.Tensor, B: torch.Tensor):
-    """Transposed Khatri-Rao, inputs and outputs are transposed."""
+    """Transposed Khatri-Rao, inputs and outputs are transposed.
+
+    i'th row of result C_i is a Kronecker product of corresponding rows of A and B"""
+    
     assert A.shape[0] == B.shape[0]
     # noinspection PyTypeChecker
     return torch.einsum("ki,kj->kij", A, B).reshape(A.shape[0], A.shape[1] * B.shape[1])
@@ -675,6 +678,22 @@ class SimpleConvolutional(SimpleModel):
         return self.predict(x)
 
 
+class ReshapedConvolutional(SimpleConvolutional):
+    """Simple conv network."""
+
+    def __init__(self, *args, **kwargs):
+        """
+
+        Args:
+            d: list of channels, ie [2, 2] to have 2 conv layers with 2 channels
+        """
+        super().__init__(*args, **kwargs)
+
+    def forward(self, x: torch.Tensor):
+        output = self.predict(x)
+        return output.reshape(output.shape[0], -1)
+
+    
 def log_scalars(metrics: Dict[str, Any]) -> None:
     for tag in metrics:
         gl.event_writer.add_scalar(tag=tag, scalar_value=metrics[tag], global_step=gl.token_count)
@@ -896,7 +915,7 @@ def get_unique_logdir(root_logdir: str) -> str:
 #       model.backward(bval)
 
 class HessianSampler:
-    pass
+    samples: int  # number of samples
 
 
 class HessianExactSqrLoss(HessianSampler):
@@ -906,8 +925,11 @@ class HessianExactSqrLoss(HessianSampler):
         super().__init__()
 
     def __call__(self, output: torch.Tensor):
+
         assert len(output.shape) == 2
         batch_size, output_size = output.shape
+        self.samples = output_size
+        
         id_mat = torch.eye(output_size)
         for out_idx in range(output_size):
             yield torch.stack([id_mat[out_idx]] * batch_size)
@@ -988,6 +1010,60 @@ def hessian_from_backprops(A_t, Bh_t, bias=False):
     if not bias:
         return H
     else:
+        Hbias = Bmat_t.t() @ Bmat_t / n
+        return H, Hbias
+
+# TODO: rename to "mean_hess"
+def per_example_hess(A_t, Bh_t, bias=False):
+    """Computes Hessian from a batch of forward and backward values.
+
+
+    Args:
+      bias: if True, also return Hessian of the bias parameter
+    """
+    n = A_t.shape[0]
+    in_dim = A_t.shape[1]
+    out_dim = Bh_t[0].shape[1]
+    o = len(Bh_t)
+    assert Bh_t[0].shape[0] == n
+    
+    Amat_t = torch.stack([A_t] * len(Bh_t), dim=0)
+    Bmat_t = torch.stack(Bh_t, dim=0)
+
+    # sum out output classes, get batch of per-example jacobians
+    Ji = torch.einsum('oni,onj->nij', Bmat_t, Amat_t)
+    assert Ji.shape == (n, out_dim, in_dim)
+    Ji = Ji.reshape((n, out_dim*in_dim))  # individual jacobians
+
+    # original Hessian computation
+    Jb = u.khatri_rao_t(Bmat_t.reshape(o*n, -1), Amat_t.reshape(o*n, -1))
+    Hmean = Jb.t() @ Jb / n
+
+    Jb2 = torch.einsum('oni,onj->onij', Bmat_t, Amat_t)
+    check_close(Jb2.reshape((o*n, out_dim*in_dim)), Jb)
+    Hmean2 = torch.einsum('onij,onkl->ijkl', Jb2, Jb2).reshape((out_dim*in_dim,
+                                                                out_dim*in_dim))/n
+    check_close(Hmean, Hmean2)
+
+    # sum out the classes
+    Hindiv = torch.einsum('onij,onkl->nijkl', Jb2, Jb2)
+    Hmean3 = Hindiv.sum(dim=0)/n
+    Hmean3 = Hmean3.reshape((out_dim*in_dim, out_dim*in_dim))
+    check_close(Hmean, Hmean3) # fails
+
+    
+    return Hindiv.reshape(n, out_dim*in_dim, out_dim*in_dim)
+
+    # batch of jacobians -> batch of Hessians
+    H = torch.einsum("ni,nj->nij", J, J)
+    
+    assert H.shape == (n, out_dim*in_dim, out_dim*in_dim)
+    
+    if not bias:
+        return H
+    else:
+        # TODO(y): make it work
+        assert False, 'not implemented'
         Hbias = Bmat_t.t() @ Bmat_t / n
         return H, Hbias
 
