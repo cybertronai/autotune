@@ -333,7 +333,7 @@ def test_lineasearch():
         return stats
 
     train_dataset = dataset_class(
-        root=gl.dataset_root, train=True, download=True, transform=train_transform)
+        root='/tmp/data', train=True, download=True, transform=train_transform)
     # val_dataset = dataset_class(root=args.root, train=False, download=args.download, transform=val_transform)
 
     batch_size = 32
