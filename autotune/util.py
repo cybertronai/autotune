@@ -508,6 +508,10 @@ class SimpleModel(nn.Module):
         self.skip_forward_hooks = True
         self.skip_backward_hooks = True
 
+    def enable_hooks(self):
+        self.skip_forward_hooks = False
+        self.skip_backward_hooks = False
+
         
     # TODO(y): make public method
     def _finalize(self):

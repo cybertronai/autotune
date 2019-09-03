@@ -316,6 +316,8 @@ def test_subsampled_hessian():
     assert u.kl_div_cov(H_approx2, H) < 0.03   # 0.0020
 
 
+
+
 def test_unfold():
     """ Test convolution as a special case of matrix multiplication with unfolded input tensors
     """
@@ -400,7 +402,7 @@ def test_cross_entropy_hessian_mnist():
     u.seed_random(1)
 
     data_width = 3
-    batch_size = 1
+    batch_size = 2
     d = [data_width**2, 10]
     o = d[-1]
     n = batch_size
@@ -445,85 +447,7 @@ def test_cross_entropy_hessian_mnist():
         u.check_close(Hbias, Hbias_autograd)
 
 
-
-# noinspection PyUnresolvedReferences
 def test_conv_grad():
-    """Test gradient computation for convolutional layer."""
-
-    u.seed_random(1)
-    u.dtype = torch.float64
-    
-    gl.skip_backward_hooks = False
-    gl.skip_forward_hooks = False
-
-    gl.backward_idx = 0
-    N, Xc, Xh, Xw = 1, 2, 3, 3
-    dd = [Xc, 2]
-    model: u.SimpleConvolutional = u.SimpleConvolutional(dd, bias=True)
-    Kh, Kw = 2, 2
-    Oh, Ow = Xh - Kh + 1, Xw - Kw + 1
-
-    layer = model.layers[0]
-    weight_buffer = layer.weight.data
-    assert weight_buffer.shape == (dd[1], dd[0], Kh, Kw)
-
-    # first output channel=1's, second channel=2's
-    weight_buffer[0, :, :, :].copy_(torch.ones_like(weight_buffer[0, :, :, :]))
-    weight_buffer[1, :, :, :].copy_(2 * torch.ones_like(weight_buffer[1, :, :, :]))
-
-    assert layer.bias.shape == (dd[1],), layer.bias.shape
-    bias_buffer = layer.bias.data
-    #    bias_buffer.copy_(3*torch.ones_like(bias_buffer))
-
-    dims = N, Xc, Xh, Xw
-    size = np.prod(dims)
-    X = torch.arange(0, size).reshape(*dims).type(u.dtype)
-
-    def loss_fn(data):
-        err = data.reshape(len(data), -1)
-        return torch.sum(err * err) / 2 / len(data)
-
-    output = model(X)
-    loss = loss_fn(output)
-    loss.backward()
-
-    u.check_equal(layer.activations, X)
-
-    # [N, Co, Oh, Ow] -> [N, Co]
-    # todo: backprops_list[0] -> backprops
-    grads_bias = layer.backprops_list[0].sum(dim=(2, 3))
-    u.check_equal(grads_bias[0], layer.bias.grad)
-
-    # check output with added bias
-    out_unf = layer.weight.view(layer.weight.size(0), -1) @ unfold(layer.activations, (2, 2))
-    assert out_unf.shape == (N, dd[1], Oh * Ow)
-    reshaped_bias = layer.bias.reshape(1, dd[1], 1) # (Co,) -> (1, Co, 1)
-    out_unf = out_unf + reshaped_bias
-    u.check_close(fold(out_unf, layer.output.shape[2:], (1, 1)), output)
-
-    assert unfold(layer.activations, (Oh, Ow)).shape == (N, Xc * Kh * Kw, Oh * Ow)
-    assert layer.backprops_list[0].shape == (N, dd[1], Oh, Ow)
-    
-    # make patches be the inner dimension
-    bp = layer.backprops_list[0]
-    bp = bp.reshape(N, dd[1], Oh * Ow)
-    bp = bp.transpose(1, 2)
-    assert bp.shape == (N, Oh*Ow, dd[1])
-
-    bias_grads = bp.sum(dim=1)
-    u.check_equal(bias_grads[0], layer.bias.grad)
-    
-    grad_unf = unfold(layer.activations, (Oh, Ow)) @ bp
-    assert grad_unf.shape == (N, dd[0] * Kh * Kw, dd[1])  # need (dd[1], dd[0], Kh, Kw)
-    grad_unf = grad_unf.transpose(1, 2)
-    grads = grad_unf.reshape((N, dd[1], dd[0], Kh, Kw))
-    assert N == 1, "currently only works for N=1"
-    u.check_equal(grads[0], layer.weight.grad)
-    
-    u.dtype = torch.float32   # restore default dtype
-
-
-def test_conv_multiexample():
     """Test per-example gradient computation for conv layer."""
     gl.skip_backward_hooks = False
     gl.skip_forward_hooks = False
@@ -604,5 +528,6 @@ def test_conv_multiexample():
 
 
 if __name__ == '__main__':
-    test_conv_multiexample()
-    # u.run_all_tests(sys.modules[__name__])
+    u.run_all_tests(sys.modules[__name__])
+    #    test_cross_entropy_hessian_conv()
+    pass
