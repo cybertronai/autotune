@@ -32,6 +32,7 @@ def test_autoencoder_minimize():
     d2 = 10
     d3 = targets_width ** 2
     model = u.SimpleFullyConnected([d1, d2, d3], nonlin=True)
+    model.disable_hooks()
 
     optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
 
@@ -66,7 +67,8 @@ def test_autoencoder_newton():
     d = image_size ** 2  # hidden layer size
     u.seed_random(1)
     model = u.SimpleFullyConnected([d, d])
-
+    model.disable_hooks()
+    
     optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
 
     def loss_fn(data, targets):
@@ -135,8 +137,6 @@ def test_main_autograd():
                           dataset_size=batch_size * train_steps)
     trainloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
     train_iter = iter(trainloader)
-
-    u.register_hooks(model)
 
     def loss_fn(data, targets):
         err = data - targets.view(-1, data.shape[1])
@@ -256,7 +256,7 @@ def test_subsampled_hessian():
 
     u.seed_random(1)
     model: u.SimpleModel = u.SimpleFullyConnected(d, nonlin=False)
-    u.register_hooks(model)
+    
     loss_hessian = u.HessianExactSqrLoss()
     output = model(data)
 
@@ -281,7 +281,7 @@ def test_subsampled_hessian():
     # get subsampled Hessian
     u.seed_random(1)
     model = u.SimpleFullyConnected(d, nonlin=False)
-    u.register_hooks(model)
+    
     loss_hessian = u.HessianSampledSqrLoss(samples=1)
     output = model(data)
 
@@ -297,7 +297,7 @@ def test_subsampled_hessian():
     # use more samples
     u.seed_random(1)
     model = u.SimpleFullyConnected(d, nonlin=False)
-    u.register_hooks(model)
+    
     loss_hessian = u.HessianSampledSqrLoss(samples=o)
     output = model(data)
 
@@ -338,8 +338,6 @@ def test_unfold():
         return torch.sum(err * err) / 2 / len(data)
 
     layer = model.layers[0]
-    layer.register_forward_hook(u.capture_activations)
-    layer.register_backward_hook(u.capture_backprops)
     output = model(X)
     loss = loss_fn(output)
     loss.backward()
@@ -354,137 +352,6 @@ def test_unfold():
     u.check_close(fold(out_unf, layer.output.shape[2:], (1, 1)), output)
 
 
-# noinspection PyUnresolvedReferences
-def test_conv_grad():
-    """Test gradient computation for convolutional layer."""
-    gl.skip_backward_hooks = False
-    gl.skip_forward_hooks = False
-    gl.backward_idx = 0
-    N, Xc, Xh, Xw = 1, 2, 3, 3
-    dd = [Xc, 2]
-    model: u.SimpleConvolutional = u.SimpleConvolutional(dd)
-    Kh, Kw = 2, 2
-    Oh, Ow = Xh - Kh + 1, Xw - Kw + 1
-
-    weight_buffer = model.layers[0].weight.data
-
-    assert weight_buffer.shape == (dd[1], dd[0], Kh, Kw)
-
-    # first output channel=1's, second channel=2's
-    weight_buffer[0, :, :, :].copy_(torch.ones_like(weight_buffer[0, :, :, :]))
-    weight_buffer[1, :, :, :].copy_(2 * torch.ones_like(weight_buffer[1, :, :, :]))
-
-    dims = N, Xc, Xh, Xw
-
-    size = np.prod(dims)
-    X = torch.arange(0, size).reshape(*dims)
-
-    def loss_fn(data):
-        err = data.reshape(len(data), -1)
-        return torch.sum(err * err) / 2 / len(data)
-
-    layer = model.layers[0]
-    layer.register_forward_hook(u.capture_activations)
-    layer.register_backward_hook(u.capture_backprops)
-    output = model(X)
-    loss = loss_fn(output)
-    loss.backward()
-
-    u.check_equal(layer.activations, X)
-
-    assert layer.backprops_list[0].shape == layer.output.shape
-
-    out_unf = layer.weight.view(layer.weight.size(0), -1) @ unfold(layer.activations, (2, 2))
-    u.check_close(fold(out_unf, layer.output.shape[2:], (1, 1)), output)
-
-    assert unfold(layer.activations, (Oh, Ow)).shape == (N, Xc * Kh * Kw, Oh * Ow)
-    assert layer.backprops_list[0].shape == (N, dd[1], Oh, Ow)
-
-    # make patches be the inner dimension
-    bp = layer.backprops_list[0]
-    bp = bp.reshape(N, dd[1], Oh * Ow)
-    bp = bp.transpose(1, 2)
-
-    grad_unf = unfold(layer.activations, (Oh, Ow)) @ bp
-    assert grad_unf.shape == (N, dd[0] * Kh * Kw, dd[1])  # need (dd[1], dd[0], Kh, Kw)
-    grad_unf = grad_unf.transpose(1, 2)
-    grads = grad_unf.reshape((N, dd[1], dd[0], Kh, Kw))
-    assert N == 1, "currently only works for N=1"
-    u.check_equal(grads[0], layer.weight.grad)
-
-
-def test_conv_multiexample():
-    """Test per-example gradient computation for conv layer."""
-    gl.skip_backward_hooks = False
-    gl.skip_forward_hooks = False
-    gl.backward_idx = 0
-    u.seed_random(1)
-    N, Xc, Xh, Xw = 3, 2, 3, 7
-    dd = [Xc, 2]
-
-    Kh, Kw = 2, 3
-    Oh, Ow = Xh - Kh + 1, Xw - Kw + 1
-    model = u.SimpleConvolutional(dd, kernel_size=(Kh, Kw)).double()
-
-    weight_buffer = model.layers[0].weight.data
-
-    # output channels, input channels, height, width
-    assert weight_buffer.shape == (dd[1], dd[0], Kh, Kw)
-
-    input_dims = N, Xc, Xh, Xw
-    size = np.prod(input_dims)
-    X = torch.arange(0, size).reshape(*input_dims).double()
-
-    def loss_fn(data):
-        err = data.reshape(len(data), -1)
-        return torch.sum(err * err) / 2 / len(data)
-
-    layer = model.layers[0]
-    layer.register_forward_hook(u.capture_activations)
-    layer.register_backward_hook(u.capture_backprops)
-    output = model(X)
-    loss = loss_fn(output)
-    loss.backward()
-
-    u.check_equal(layer.activations, X)
-
-    assert layer.backprops_list[0].shape == layer.output.shape
-    assert layer.output.shape == (N, dd[1], Oh, Ow)
-
-    out_unf = layer.weight.view(layer.weight.size(0), -1) @ unfold(layer.activations, (Kh, Kw))
-    u.check_equal(fold(out_unf, (Oh, Ow), (1, 1)), output)
-    u.check_equal(out_unf.view(N, dd[1], Oh, Ow), output)
-
-    assert unfold(layer.activations, (Kh, Kw)).shape == (N, Xc * Kh * Kw, Oh * Ow)
-    assert layer.backprops_list[0].shape == (N, dd[1], Oh, Ow)
-
-    bp = layer.backprops_list[0] * N  # remove factor of N applied during loss batch averaging
-
-    # merge patches into single dimension, move patches to be the inner dimension, output channels the rightmost dimension
-    # since we multiplying on the left. TODO(y) try einsum for this and benchmark
-    bp = bp.reshape(N, dd[1], Oh * Ow)
-    bp = bp.transpose(1, 2)
-
-    grad_unf = unfold(layer.activations, (Kh, Kw)) @ bp
-    assert grad_unf.shape == (N, dd[0] * Kh * Kw, dd[1])
-
-    # For comparison with autograd, shape needs to be (N, dd[1], dd[0], Kh, Kw)
-    # therefore move output channels to the left, and unmerge remaining shapes
-    grad_unf = grad_unf.transpose(1, 2)
-    grads = grad_unf.reshape((N, dd[1], dd[0], Kh, Kw))
-    mean_grad = torch.sum(grads, dim=0) / N
-
-    u.check_equal(mean_grad, layer.weight.grad)
-
-    # compute per-example gradients using autograd, compare against manual computation
-    for i in range(N):
-        u.clear_backprops(model)
-        output = model(X[i:i + 1, ...])
-        loss = loss_fn(output)
-        loss.backward()
-        u.check_equal(grads[i], layer.weight.grad)
-
-
 def test_cross_entropy_hessian_tiny():
     u.seed_random(1)
 
@@ -495,7 +362,6 @@ def test_cross_entropy_hessian_tiny():
     train_steps = 1
 
     model: u.SimpleModel = u.SimpleFullyConnected(d, nonlin=True, bias=True)
-    u.register_hooks(model)
     model.layers[0].weight.data.copy_(torch.eye(2))
 
     loss_fn = torch.nn.CrossEntropyLoss()
@@ -541,7 +407,6 @@ def test_cross_entropy_hessian_mnist():
     train_steps = 1
 
     model: u.SimpleModel = u.SimpleFullyConnected(d, nonlin=False, bias=True)
-    u.register_hooks(model)
 
     dataset = u.TinyMNIST(dataset_size=batch_size, data_width=data_width, original_targets=True)
     trainloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
@@ -581,5 +446,153 @@ def test_cross_entropy_hessian_mnist():
 
 
 
+# noinspection PyUnresolvedReferences
+def test_conv_grad():
+    """Test gradient computation for convolutional layer."""
+
+    u.seed_random(1)
+    u.dtype = torch.float64
+    
+    gl.skip_backward_hooks = False
+    gl.skip_forward_hooks = False
+
+    gl.backward_idx = 0
+    N, Xc, Xh, Xw = 1, 2, 3, 3
+    dd = [Xc, 2]
+    model: u.SimpleConvolutional = u.SimpleConvolutional(dd, bias=True)
+    Kh, Kw = 2, 2
+    Oh, Ow = Xh - Kh + 1, Xw - Kw + 1
+
+    layer = model.layers[0]
+    weight_buffer = layer.weight.data
+    assert weight_buffer.shape == (dd[1], dd[0], Kh, Kw)
+
+    # first output channel=1's, second channel=2's
+    weight_buffer[0, :, :, :].copy_(torch.ones_like(weight_buffer[0, :, :, :]))
+    weight_buffer[1, :, :, :].copy_(2 * torch.ones_like(weight_buffer[1, :, :, :]))
+
+    assert layer.bias.shape == (dd[1],), layer.bias.shape
+    bias_buffer = layer.bias.data
+    #    bias_buffer.copy_(3*torch.ones_like(bias_buffer))
+
+    dims = N, Xc, Xh, Xw
+    size = np.prod(dims)
+    X = torch.arange(0, size).reshape(*dims).type(u.dtype)
+
+    def loss_fn(data):
+        err = data.reshape(len(data), -1)
+        return torch.sum(err * err) / 2 / len(data)
+
+    output = model(X)
+    loss = loss_fn(output)
+    loss.backward()
+
+    u.check_equal(layer.activations, X)
+
+    # [N, Co, Oh, Ow] -> [N, Co]
+    # todo: backprops_list[0] -> backprops
+    grads_bias = layer.backprops_list[0].sum(dim=(2, 3))
+    u.check_equal(grads_bias[0], layer.bias.grad)
+
+    # check output with added bias
+    out_unf = layer.weight.view(layer.weight.size(0), -1) @ unfold(layer.activations, (2, 2))
+    assert out_unf.shape == (N, dd[1], Oh * Ow)
+    reshaped_bias = layer.bias.reshape(1, dd[1], 1) # (Co,) -> (N, Co, 1)
+    out_unf = out_unf + reshaped_bias
+    u.check_close(fold(out_unf, layer.output.shape[2:], (1, 1)), output)
+
+    assert unfold(layer.activations, (Oh, Ow)).shape == (N, Xc * Kh * Kw, Oh * Ow)
+    assert layer.backprops_list[0].shape == (N, dd[1], Oh, Ow)
+    
+    # make patches be the inner dimension
+    bp = layer.backprops_list[0]
+    bp = bp.reshape(N, dd[1], Oh * Ow)
+    bp = bp.transpose(1, 2)
+    assert bp.shape == (N, Oh*Ow, dd[1])
+
+    bias_grads = bp.sum(dim=1)
+    u.check_equal(bias_grads[0], layer.bias.grad)
+    
+    grad_unf = unfold(layer.activations, (Oh, Ow)) @ bp
+    assert grad_unf.shape == (N, dd[0] * Kh * Kw, dd[1])  # need (dd[1], dd[0], Kh, Kw)
+    grad_unf = grad_unf.transpose(1, 2)
+    grads = grad_unf.reshape((N, dd[1], dd[0], Kh, Kw))
+    assert N == 1, "currently only works for N=1"
+    u.check_equal(grads[0], layer.weight.grad)
+    
+    u.dtype = torch.float32   # restore default dtype
+
+
+def test_conv_multiexample():
+    """Test per-example gradient computation for conv layer."""
+    gl.skip_backward_hooks = False
+    gl.skip_forward_hooks = False
+    gl.backward_idx = 0
+    u.seed_random(1)
+    N, Xc, Xh, Xw = 3, 2, 3, 7
+    dd = [Xc, 2]
+
+    Kh, Kw = 2, 3
+    Oh, Ow = Xh - Kh + 1, Xw - Kw + 1
+    model = u.SimpleConvolutional(dd, kernel_size=(Kh, Kw)).double()
+
+    weight_buffer = model.layers[0].weight.data
+
+    # output channels, input channels, height, width
+    assert weight_buffer.shape == (dd[1], dd[0], Kh, Kw)
+
+    input_dims = N, Xc, Xh, Xw
+    size = np.prod(input_dims)
+    X = torch.arange(0, size).reshape(*input_dims).double()
+
+    def loss_fn(data):
+        err = data.reshape(len(data), -1)
+        return torch.sum(err * err) / 2 / len(data)
+
+    layer = model.layers[0]
+    output = model(X)
+    loss = loss_fn(output)
+    loss.backward()
+
+    u.check_equal(layer.activations, X)
+
+    assert layer.backprops_list[0].shape == layer.output.shape
+    assert layer.output.shape == (N, dd[1], Oh, Ow)
+
+    out_unf = layer.weight.view(layer.weight.size(0), -1) @ unfold(layer.activations, (Kh, Kw))
+    u.check_equal(fold(out_unf, (Oh, Ow), (1, 1)), output)
+    u.check_equal(out_unf.view(N, dd[1], Oh, Ow), output)
+
+    assert unfold(layer.activations, (Kh, Kw)).shape == (N, Xc * Kh * Kw, Oh * Ow)
+    assert layer.backprops_list[0].shape == (N, dd[1], Oh, Ow)
+
+    bp = layer.backprops_list[0] * N  # remove factor of N applied during loss batch averaging
+
+    # merge patches into single dimension, move patches to be the inner dimension, output channels the rightmost dimension
+    # since we multiplying on the left. TODO(y) try einsum for this and benchmark
+    bp = bp.reshape(N, dd[1], Oh * Ow)
+    bp = bp.transpose(1, 2)
+
+    grad_unf = unfold(layer.activations, (Kh, Kw)) @ bp
+    assert grad_unf.shape == (N, dd[0] * Kh * Kw, dd[1])
+
+    # For comparison with autograd, shape needs to be (N, dd[1], dd[0], Kh, Kw)
+    # therefore move output channels to the left, and unmerge remaining shapes
+    grad_unf = grad_unf.transpose(1, 2)
+    grads = grad_unf.reshape((N, dd[1], dd[0], Kh, Kw))
+    mean_grad = torch.sum(grads, dim=0) / N
+
+    u.check_equal(mean_grad, layer.weight.grad)
+
+    # compute per-example gradients using autograd, compare against manual computation
+    for i in range(N):
+        u.clear_backprops(model)
+        output = model(X[i:i + 1, ...])
+        loss = loss_fn(output)
+        loss.backward()
+        u.check_equal(grads[i], layer.weight.grad)
+
+
 if __name__ == '__main__':
+    #    test_conv_grad()
     u.run_all_tests(sys.modules[__name__])

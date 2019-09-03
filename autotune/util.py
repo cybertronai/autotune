@@ -21,6 +21,7 @@ import torch.nn.functional as F
 # to enable referring to functions in its own module as u.func
 u = sys.modules[__name__]
 
+dtype = torch.float32
 
 def v2c(vec):
     """Convert vector to column matrix."""
@@ -466,6 +467,10 @@ class TinyMNIST(datasets.MNIST):
             self.data = self.data.float().unsqueeze(1)
             if not original_targets:
                 self.targets = self.data
+                
+        self.data = self.data.type(u.dtype)
+        if not original_targets:  # don't cast original int labels
+            self.targets = self.targets.type(u.dtype)
         self.data, self.targets = self.data.to(gl.device), self.targets.to(gl.device)
 
     def __getitem__(self, index):
@@ -499,12 +504,23 @@ class SimpleModel(nn.Module):
         self.skip_backward_hooks = False
         self.skip_forward_hooks = False
 
+    def disable_hooks(self):
+        self.skip_forward_hooks = True
+        self.skip_backward_hooks = True
+
+        
+    # TODO(y): make public method
     def _finalize(self):
+        """Extra logic shared across all SimpleModel instances."""
+        self.type(u.dtype)
+        
         global model_layer_map
         for module in self.modules():
             model_layer_map[module] = self
         for param in self.parameters():
             model_layer_map[param] = self
+
+        u.register_hooks(self)
 
 
 def get_parent_model(module_or_param) -> Optional[nn.Module]:
@@ -531,7 +547,7 @@ def capture_activations(module: nn.Module, input: List[torch.Tensor], output: to
     if getattr(model, 'skip_forward_hooks', False):
         return
     assert not hasattr(module,
-                       'activations'), "Seeing results of previous autograd, call util.clear_backprops(model) to clear"
+                       'activations'), "Seeing results of previous autograd, call util.clear_backprops(model) to clear or do 'model.disable_hooks()'"
     assert len(input) == 1, "this was tested for single input layers only"
     setattr(module, "activations", input[0].detach())
     setattr(module, "output", output.detach())
@@ -578,13 +594,19 @@ def clear_backprops(model: nn.Module) -> None:
             del p.saved_grad
 
 
+# TODO: remove?
 def register_hooks(model: SimpleModel):
     # TODO(y): remove hardcoding of parameter name
     for layer in model.layers:
+        assert not layer._forward_hooks, f"Some hooks already registered, bug? {layer._forward_hooks}"
+        assert not layer._backward_hooks, f"Some hooks already registered, bug? {layer._backward_hooks}"
+
         layer.register_forward_hook(u.capture_activations)
         layer.register_backward_hook(u.capture_backprops)
-        for param in layer.parameters():
-            param.register_hook(u.save_grad(param))
+        
+    for param in model.parameters():
+        assert not param._backward_hooks, f"Some param hooks already registered, bug? {param._backward_hooks}"
+        param.register_hook(u.save_grad(param))
 
 
 class SimpleFullyConnected(SimpleModel):
