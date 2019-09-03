@@ -7,5 +7,8 @@ setup(install_requires=['torchvision',
                         'attrdict',
                         'tensorboard>=1.14',  # for PyTorch logging
                         'Pillow',
+                        'future',
+                        'chainer',
+                        'torchcontrib',
                         'tensorflow'   # for summary_iterator to extract events
                         ])
