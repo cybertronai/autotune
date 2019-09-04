@@ -915,7 +915,7 @@ def get_unique_logdir(root_logdir: str) -> str:
 #       model.backward(bval)
 
 class HessianSampler:
-    samples: int  # number of samples
+    num_samples: int  # number of samples
 
 
 class HessianExactSqrLoss(HessianSampler):
@@ -938,26 +938,26 @@ class HessianExactSqrLoss(HessianSampler):
 class HessianSampledSqrLoss(HessianSampler):
     """Sampler for loss err*err/2/len(batch), produces exact Hessian."""
 
-    samples: int
+    num_samples: int
 
-    def __init__(self, samples):
+    def __init__(self, num_samples):
         super().__init__()
-        self.samples = samples
+        self.num_samples = num_samples
 
     def __call__(self, output: torch.Tensor):
         assert len(output.shape) == 2
         batch_size, output_size = output.shape
-        assert self.samples <= output_size, f"Requesting more samples than needed for exact Hessian computation " \
-            f"({self.samples}>{output_size})"
+        assert self.num_samples <= output_size, f"Requesting more samples than needed for exact Hessian computation " \
+            f"({self.num_samples}>{output_size})"
 
         # exact sampler provides n samples whose outer products add up to Identity
         # this sampler can provides a single sample where outer product is Identity in expectation
         # therefore must divide each individual vector in outer product by sqrt(samples)
 
-        for out_idx in range(self.samples):
+        for out_idx in range(self.num_samples):
             # sample random vectors of +1/-1's
             bval = torch.LongTensor(batch_size, output_size).to(gl.device).random_(0, 2) * 2 - 1
-            yield bval.float()/math.sqrt(self.samples)
+            yield bval.float()/math.sqrt(self.num_samples)
 
 
 class HessianExactCrossEntropyLoss(HessianSampler):
@@ -1026,10 +1026,13 @@ def per_example_hess(A_t, Bh_t, bias=False):
     out_dim = Bh_t[0].shape[1]
     o = len(Bh_t)
     assert Bh_t[0].shape[0] == n
-    
+
     Amat_t = torch.stack([A_t] * len(Bh_t), dim=0)
     Bmat_t = torch.stack(Bh_t, dim=0)
+    assert Amat_t.shape == (o, n, in_dim)
+    assert Bmat_t.shape == (o, n, out_dim)
 
+    
     # sum out output classes, get batch of per-example jacobians
     Ji = torch.einsum('oni,onj->nij', Bmat_t, Amat_t)
     assert Ji.shape == (n, out_dim, in_dim)
@@ -1039,33 +1042,30 @@ def per_example_hess(A_t, Bh_t, bias=False):
     Jb = u.khatri_rao_t(Bmat_t.reshape(o*n, -1), Amat_t.reshape(o*n, -1))
     Hmean = Jb.t() @ Jb / n
 
+    # method 2: einsum-only version for mean hessian
+    # o,n -> o,n,i,j
     Jb2 = torch.einsum('oni,onj->onij', Bmat_t, Amat_t)
     check_close(Jb2.reshape((o*n, out_dim*in_dim)), Jb)
     Hmean2 = torch.einsum('onij,onkl->ijkl', Jb2, Jb2).reshape((out_dim*in_dim,
                                                                 out_dim*in_dim))/n
     check_close(Hmean, Hmean2)
 
-    # sum out the classes
-    Hindiv = torch.einsum('onij,onkl->nijkl', Jb2, Jb2)
-    Hmean3 = Hindiv.sum(dim=0)/n
+    # method 3: einsum-only for individual hessians
+    # sum over classes, 
+    Hi = torch.einsum('onij,onkl->nijkl', Jb2, Jb2)
+    Hmean3 = Hi.mean(dim=0)
     Hmean3 = Hmean3.reshape((out_dim*in_dim, out_dim*in_dim))
-    check_close(Hmean, Hmean3) # fails
+    check_close(Hmean, Hmean3)
 
-    
-    return Hindiv.reshape(n, out_dim*in_dim, out_dim*in_dim)
-
-    # batch of jacobians -> batch of Hessians
-    H = torch.einsum("ni,nj->nij", J, J)
-    
-    assert H.shape == (n, out_dim*in_dim, out_dim*in_dim)
-    
+    # flatten last two pairs of dimensions for form d^2/dvec dvec
+    Hi = Hi.reshape(n, out_dim*in_dim, out_dim*in_dim)
     if not bias:
-        return H
+        return Hi
     else:
-        # TODO(y): make it work
-        assert False, 'not implemented'
-        Hbias = Bmat_t.t() @ Bmat_t / n
-        return H, Hbias
+        #        assert False, "not tested"
+        Hb_i = torch.einsum('oni,onj->nij', Bmat_t, Bmat_t)
+        #        Hbias = Bmat_t.t() @ Bmat_t / n
+        return Hi, Hb_i
 
 
 def kl_div_cov(mat1, mat2, eps=1e-3):
