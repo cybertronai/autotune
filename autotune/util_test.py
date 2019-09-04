@@ -81,53 +81,5 @@ def test_symsqrt():
     assert torch.allclose(sqrt @ sqrt, cov, atol=1e-5)
 
 
-def kron_quadratic_form(H, dd):
-    """dd @ H @ dd.t(),"""
-    pass
-
-
-def kron_trace(H):
-   """trace(H)"""
-   pass
-
-def kron_matmul(H, sigma):
-    # H @ sigma
-    pass
-
-
-def kron_trace_matmul(H, sigma):
-    # tr(H @ sigma)
-    pass
-
-def kron_pinv(H):
-    # u.kron_pinv(H)
-    pass
-
-
-def kron_nan_check(H):
-    pass
-    # u.kron_nan_check(H)
-
-def kron_fro_norm(H):
-    pass
-    # s.invH_fro = u.kron_fro_norm(invH)
-
-def kron_sym_l2_norm(H):
-    pass
-    #                 s.H_l2 = u.kron_sym_l2_norm(H)
-
-def kron_inv():
-    pass
-   # .kron_inverse(H)
-
-def kron_sigma(G):
-    # compute covariance # kron_sigma(G): computes covariance of gradients in kron form # G.t() @ G / n
-    pass
-
-def kron_batch_sum(G):
-    # sums up over batch dimension to get average gradient
-    pass
-
-
 if __name__ == '__main__':
     u.run_all_tests(sys.modules[__name__])

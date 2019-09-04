@@ -34,7 +34,6 @@ from torchcurv.optim import SecondOrderOptimizer, VIOptimizer
 from torchcurv.utils import Logger
 
 
-
 def main():
     attemp_count = 0
     while os.path.exists(f"{args.logdir}{attemp_count:02d}"):

@@ -64,7 +64,7 @@ def main():
         if skip_forward_hooks:
             return
         assert gl.backward_idx == 0   # no need to forward-prop on Hessian computation
-        assert not hasattr(module, 'activations'), "Seeing results of previous autograd, call util.zero_grad to clear"
+        assert not hasattr(module, 'activations'), "Seeing activations from previous forward, call util.zero_grad to clear"
         assert len(input) == 1, "this works for single input layers only"
         setattr(module, "activations", input[0].detach())
 

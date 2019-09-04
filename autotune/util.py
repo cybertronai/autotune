@@ -5,7 +5,7 @@ import os
 import random
 import sys
 import time
-from typing import Any, Dict, Callable, Optional
+from typing import Any, Dict, Callable, Optional, Tuple
 from typing import List
 
 import globals as gl
@@ -87,8 +87,11 @@ def untvec(a, rows):
     return a.reshape(rows, -1)
 
 
-def kron(a, b):
+def kron(a, b=None):
     """Kronecker product."""
+
+    if isinstance(a, Tuple) and b is None:
+        a, b = a
     result = torch.einsum("ab,cd->acbd", a, b)
     if result.is_contiguous():
         return result.view(a.size(0) * b.size(0), a.size(1) * b.size(1))
@@ -411,10 +414,6 @@ def unfreeze(layer: nn.Module):
     setattr(layer, "frozen", False)
 
 
-if __name__ == '__main__':
-    run_all_tests(sys.modules[__name__])
-
-
 def nest_stats(tag: str, stats) -> Dict:
     """Nest given dict of stats under tag using TensorBoard syntax /nest1/tag"""
     result = {}
@@ -554,7 +553,7 @@ def capture_activations(module: nn.Module, input: List[torch.Tensor], output: to
     if getattr(model, 'skip_forward_hooks', False):
         return
     assert not hasattr(module,
-                       'activations'), "Seeing results of previous autograd, call util.clear_backprops(model) to clear or do 'model.disable_hooks()'"
+                       'activations'), "Seeing results of previous forward, call util.clear_backprops(model) to clear or do 'model.disable_hooks()'"
     assert len(input) == 1, "this was tested for single input layers only"
     setattr(module, "activations", input[0].detach())
     setattr(module, "output", output.detach())
@@ -914,31 +913,28 @@ def get_unique_logdir(root_logdir: str) -> str:
 #       model.zero_grad()
 #       model.backward(bval)
 
-class HessianSampler:
+class HessianBackprop:
     num_samples: int  # number of samples
 
 
-class HessianExactSqrLoss(HessianSampler):
+class HessianExactSqrLoss(HessianBackprop):
     """Sampler for loss err*err/2/len(batch), produces exact Hessian."""
 
     def __init__(self):
         super().__init__()
 
     def __call__(self, output: torch.Tensor):
-
         assert len(output.shape) == 2
         batch_size, output_size = output.shape
-        self.samples = output_size
+        self.num_samples = output_size
         
         id_mat = torch.eye(output_size)
         for out_idx in range(output_size):
             yield torch.stack([id_mat[out_idx]] * batch_size)
 
 
-class HessianSampledSqrLoss(HessianSampler):
+class HessianSampledSqrLoss(HessianBackprop):
     """Sampler for loss err*err/2/len(batch), produces exact Hessian."""
-
-    num_samples: int
 
     def __init__(self, num_samples):
         super().__init__()
@@ -951,8 +947,8 @@ class HessianSampledSqrLoss(HessianSampler):
             f"({self.num_samples}>{output_size})"
 
         # exact sampler provides n samples whose outer products add up to Identity
-        # this sampler can provides a single sample where outer product is Identity in expectation
-        # therefore must divide each individual vector in outer product by sqrt(samples)
+        # here the sum is num_samples*identity in expectation
+        # therefore must divide by sqrt(num_samples)
 
         for out_idx in range(self.num_samples):
             # sample random vectors of +1/-1's
@@ -960,7 +956,7 @@ class HessianSampledSqrLoss(HessianSampler):
             yield bval.float()/math.sqrt(self.num_samples)
 
 
-class HessianExactCrossEntropyLoss(HessianSampler):
+class HessianExactCrossEntropyLoss(HessianBackprop):
     """Sampler for nn.CrossEntropyLoss, produces exact Hessian."""
 
     def __init__(self):
@@ -1013,6 +1009,7 @@ def hessian_from_backprops(A_t, Bh_t, bias=False):
         Hbias = Bmat_t.t() @ Bmat_t / n
         return H, Hbias
 
+
 # TODO: rename to "mean_hess"
 def per_example_hess(A_t, Bh_t, bias=False):
     """Computes Hessian from a batch of forward and backward values.
@@ -1032,7 +1029,6 @@ def per_example_hess(A_t, Bh_t, bias=False):
     assert Amat_t.shape == (o, n, in_dim)
     assert Bmat_t.shape == (o, n, out_dim)
 
-    
     # sum out output classes, get batch of per-example jacobians
     Ji = torch.einsum('oni,onj->nij', Bmat_t, Amat_t)
     assert Ji.shape == (n, out_dim, in_dim)
@@ -1084,3 +1080,72 @@ def kl_div_cov(mat1, mat2, eps=1e-3):
 
     div = torch.trace(mat1@torch.inverse(mat2))-(torch.logdet(mat1)-torch.logdet(mat2))-k
     return div
+
+
+# Functions for kronecker factored representation. Matrix is given as tuple of two matrices
+def kron_quadratic_form(H, dd):
+    """dd @ H @ dd.t(),"""
+    pass
+
+
+def kron_trace(H: Tuple[torch.Tensor, torch.Tensor]):
+   """trace(H)"""
+   A, B = H
+   return torch.trace(A)*torch.trace(B)
+
+
+def test_kron_trace():
+    n = 5
+    m = 4
+    A = torch.rand((m, m))
+    B = torch.rand((n, n))
+    C = kron(A, B)
+    u.check_close(torch.trace(C), u.kron_trace((A, B)))
+
+
+def kron_trace_matmul(H, sigma):
+    """
+    tr(H@sigma)
+    """
+    H = u.kron(H)
+    sigma = u.kron(sigma)
+    return torch.trace(H @ sigma)
+
+
+def kron_pinv(H: Tuple):
+    A, B = H
+    return u.pinv(A), u.pinv(B)
+
+
+def kron_nan_check(H):
+    u.nan_check(H[0])
+    u.nan_check(H[1])
+
+
+def kron_fro_norm(H):
+    return H[0].norm() * H[1].norm()
+
+
+def kron_sym_l2_norm(H):
+    return u.sym_l2_norm(H[0])*u.sym_l2_norm(H[1])
+
+
+def kron_inv(H):
+    return torch.inverse(H[0]), torch.inverse(H[1])
+
+
+def kron_sigma(G):
+    Bt, At = G
+    grad = torch.einsum('nij,nkl->ijkl', Bt, At)
+    cov = torch.eingsum('ij,kl->ijkl', grad, grad)
+
+
+def kron_batch_sum(G: Tuple):
+    """The format of gradient is G={Bt, At} where Bt is (n,do) and At is (n,di)"""
+    Bt, At = G
+    return torch.einsum('ni,nj->ij', Bt, At)
+
+
+if __name__ == '__main__':
+    run_all_tests(sys.modules[__name__])
+
