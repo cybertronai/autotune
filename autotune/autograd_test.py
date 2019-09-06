@@ -13,6 +13,8 @@ import util as u
 
 import numpy as np
 
+import autograd_lib
+
 unfold = torch.nn.functional.unfold
 fold = torch.nn.functional.fold
 
@@ -68,7 +70,7 @@ def test_autoencoder_newton():
     u.seed_random(1)
     model: u.SimpleModel = u.SimpleFullyConnected([d, d])
     model.disable_hooks()
-    
+
     optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
 
     def loss_fn(data, targets):
@@ -185,13 +187,10 @@ def test_main_autograd():
             assert G.shape == (n, d[i+1] * d[i])
             Gbias = B_t
             assert Gbias.shape == (n, d[i + 1])
-            u.check_close(G.reshape((n, d[i+1], d[i])), torch.einsum('ni,nj->nij', B_t, A_t))
 
             # average gradient
             g = G.sum(dim=0, keepdim=True) / n
-            u.check_close(g.reshape(d[i+1], d[i]), torch.einsum('ni,nj->ij', B_t, A_t) / n)
             gb = Gbias.sum(dim=0, keepdim=True) / n
-            u.check_close(torch.einsum('nj->j', B_t) / n, gb.flatten())
             assert g.shape == (1, d[i] * d[i + 1])
             assert gb.shape == (1, d[i + 1])
 
@@ -201,7 +200,7 @@ def test_main_autograd():
                 u.check_close(torch.einsum('nj->j', B_t) / n, layer.bias.saved_grad)
                 u.check_close(torch.mean(B_t, dim=0), layer.bias.saved_grad)
                 u.check_close(torch.einsum('ni,nj->ij', B_t, A_t)/n, layer.weight.saved_grad)
-                
+
             # empirical Fisher
             efisher = G.t() @ G / n
             _sigma = efisher - g.t() @ g
@@ -359,7 +358,7 @@ def test_cross_entropy_hessian_mnist():
         loss = loss_fn(output, targets)
         H_autograd = u.hessian(loss, layer.weight).reshape(d[i] * d[i + 1], d[i] * d[i + 1])
         u.check_close(H, H_autograd)
-        
+
         Hbias_autograd = u.hessian(loss, layer.bias)
         u.check_close(Hbias, Hbias_autograd)
 
@@ -453,7 +452,9 @@ def test_hessian():
 
 
 def test_conv_grad():
-    """Test per-example gradient computation for conv layer."""
+    """Test per-example gradient computation for conv layer.
+
+    """
 
     u.seed_random(1)
     N, Xc, Xh, Xw = 3, 2, 3, 7
@@ -488,12 +489,14 @@ def test_conv_grad():
 
     out_unf = layer.weight.view(layer.weight.size(0), -1) @ unfold(layer.activations, (Kh, Kw))
     assert out_unf.shape == (N, dd[1], Oh * Ow)
-    reshaped_bias = layer.bias.reshape(1, dd[1], 1) # (Co,) -> (1, Co, 1)
+    reshaped_bias = layer.bias.reshape(1, dd[1], 1)  # (Co,) -> (1, Co, 1)
     out_unf = out_unf + reshaped_bias
 
     u.check_equal(fold(out_unf, (Oh, Ow), (1, 1)), output)  # two alternative ways of reshaping
     u.check_equal(out_unf.view(N, dd[1], Oh, Ow), output)
 
+    # Unfold produces patches with output dimension merged, while in backprop they are not merged
+    # Hence merge the output (width/height) dimension
     assert unfold(layer.activations, (Kh, Kw)).shape == (N, Xc * Kh * Kw, Oh * Ow)
     assert layer.backprops_list[0].shape == (N, dd[1], Oh, Ow)
 
@@ -526,14 +529,17 @@ def test_conv_grad():
 def test_conv_hessian():
     """Test per-example gradient computation for conv layer."""
     u.seed_random(1)
-    N, Xc, Xh, Xw = 3, 2, 3, 7
+    n, Xc, Xh, Xw = 3, 2, 3, 7
     dd = [Xc, 2]
 
     Kh, Kw = 2, 3
     Oh, Ow = Xh - Kh + 1, Xw - Kw + 1
     model: u.SimpleModel = u.ReshapedConvolutional(dd, kernel_size=(Kh, Kw), bias=True)
     weight_buffer = model.layers[0].weight.data
-    data = torch.randn((N, Xc, Xh, Xw))
+
+    assert (Kh, Kw) == model.layers[0].kernel_size
+
+    data = torch.randn((n, Xc, Xh, Xw))
 
     # output channels, input channels, height, width
     assert weight_buffer.shape == (dd[1], dd[0], Kh, Kw)
@@ -543,28 +549,31 @@ def test_conv_hessian():
         return torch.sum(err * err) / 2 / len(data)
 
     loss_hessian = u.HessianExactSqrLoss()
-    o = Oh * Ow * dd[1]
+    # o = Oh * Ow * dd[1]
 
     output = model(data)
+    o = output.shape[1]
     for bval in loss_hessian(output):
         output.backward(bval, retain_graph=True)
     assert loss_hessian.num_samples == o
 
     i, layer = next(enumerate(model.layers))
 
-    At = unfold(layer.activations, (Kh, Kw))    # -> N, Xc * Kh * Kw, Oh * Ow
-    assert At.shape == (N, dd[0] * Kh * Kw, Oh*Ow)
+    At = unfold(layer.activations, (Kh, Kw))    # -> n, Xc * Kh * Kw, Oh * Ow
+    assert At.shape == (n, dd[0] * Kh * Kw, Oh*Ow)
 
-    #  o, N, dd[1], Oh, Ow -> o, N, dd[1], Oh*Ow
-    Bh_t = torch.stack([Bt.reshape(N, dd[1], Oh*Ow) for Bt in layer.backprops_list])
-    assert Bh_t.shape == (o, N, dd[1], Oh*Ow)
+    #  o, n, dd[1], Oh, Ow -> o, n, dd[1], Oh*Ow
+    Bh_t = torch.stack([Bt.reshape(n, dd[1], Oh*Ow) for Bt in layer.backprops_list])
+    assert Bh_t.shape == (o, n, dd[1], Oh*Ow)
     Ah_t = torch.stack([At]*o)
-    assert Ah_t.shape == (o, N, dd[0] * Kh * Kw, Oh*Ow)
+    print('hi')
+    assert Ah_t.shape == (o, n, dd[0] * Kh * Kw, Oh*Ow)
 
     # sum out the output patch dimension
-    Jb = torch.einsum('onij,onkj->onik', Bh_t, Ah_t)  # => o, N, dd[1], dd[0] * Kh * Kw
-    Hi = torch.einsum('onij,onkl->nijkl', Jb, Jb)     # => N, dd[1], dd[0]*Kh*Kw, dd[1], dd[0]*Kh*Kw
-    Hb_i = torch.einsum('onip,onjp->nij', Bh_t, Bh_t)
+    Jb = torch.einsum('onij,onkj->onik', Bh_t, Ah_t)  # => o, n, dd[1], dd[0] * Kh * Kw
+    Hi = torch.einsum('onij,onkl->nijkl', Jb, Jb)     # => n, dd[1], dd[0]*Kh*Kw, dd[1], dd[0]*Kh*Kw
+    Jb_bias = torch.einsum('onij->oni', Bh_t)
+    Hb_i = torch.einsum('oni,onj->nij', Jb_bias, Jb_bias)
     H = Hi.mean(dim=0)
     Hb = Hb_i.mean(dim=0)
 
@@ -580,7 +589,7 @@ def test_conv_hessian():
     u.check_close(Hb, Hb_autograd)
 
     assert len(Bh_t) == loss_hessian.num_samples == o
-    for xi in range(N):
+    for xi in range(n):
         loss = loss_fn(model(data[xi:xi + 1, ...]))
         H_autograd = u.hessian(loss, layer.weight)
         u.check_close(Hi[xi], H_autograd.reshape(H.shape))
@@ -589,5 +598,117 @@ def test_conv_hessian():
         assert Hb_i[xi, 0, 0] == Oh*Ow   # each output has curvature 1, bias term adds up Oh*Ow of them
 
 
+def test_kron_tiny():
+    u.seed_random(1)
+
+    d = [2, 2]
+
+    model: u.SimpleModel = u.SimpleFullyConnected2(d, nonlin=False, bias=True)
+    model.layers[0].weight.data.copy_(torch.eye(2))
+
+    loss_fn = torch.nn.CrossEntropyLoss()
+
+    data = u.to_logits(torch.tensor([[0.7, 0.3]]))
+    targets = torch.tensor([0])
+
+    # Hessian computation, saves regular and Kronecker factored versions into .hess and .hess_kron attributes
+    autograd_lib.add_hooks(model)
+    output = model(data)
+    autograd_lib.backprop_hess(output, hess_type='CrossEntropy')
+    #autograd_lib.backprop_hess(output, hess_type='LeastSquares')
+    autograd_lib.compute_hess_kron(model)
+    autograd_lib.compute_hess(model)
+    autograd_lib.disable_hooks()
+
+    i = 0
+    layer = model.layers[i]
+    H: u.KronFactored = layer.weight.hess_kron
+    Hbias: u.KronFactored = layer.bias.hess_kron
+    H, Hbias = u.kron(H), u.kron(Hbias)   # kronecker multiply the factors
+
+    # old approach, using direct computation
+    H2, Hbias2 = layer.weight.hess, layer.bias.hess
+
+    # compute Hessian through autograd
+    model.zero_grad()
+    output = model(data)
+    loss = loss_fn(output, targets)
+    H_autograd = u.hessian(loss, layer.weight)
+    H_bias_autograd = u.hessian(loss, layer.bias)
+
+    # compare autograd with direct approach
+    u.check_close(H2, H_autograd.reshape(H.shape))
+    u.check_close(Hbias2, H_bias_autograd)
+
+    # compare autograd with factored approach
+    u.check_close(Hbias, H_bias_autograd)
+    u.check_close(H, H_autograd.reshape(H.shape))
+
+
+def test_kron_mnist():
+    u.seed_random(1)
+
+    data_width = 3
+    batch_size = 3
+    d = [data_width**2, 10]
+    o = d[-1]
+    n = batch_size
+    train_steps = 1
+
+    model: u.SimpleModel2 = u.SimpleFullyConnected2(d, nonlin=False, bias=True)
+    autograd_lib.add_hooks(model)
+
+    # increase precision
+    model.double()
+    u.dtype = torch.float64
+
+    dataset = u.TinyMNIST(dataset_size=batch_size, data_width=data_width, original_targets=True)
+    trainloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
+    train_iter = iter(trainloader)
+
+    loss_fn = torch.nn.CrossEntropyLoss()
+
+    gl.token_count = 0
+    for train_step in range(train_steps):
+        data, targets = next(train_iter)
+
+        # get gradient values
+        u.clear_backprops(model)
+        autograd_lib.enable_hooks()
+        output = model(data)
+        autograd_lib.backprop_hess(output, hess_type='CrossEntropy')
+
+        i = 0
+        layer = model.layers[i]
+        autograd_lib.compute_hess_kron(model)
+        autograd_lib.compute_hess(model)
+        autograd_lib.disable_hooks()
+
+        # direct Hessian computation
+        H = layer.weight.hess
+        H_bias = layer.bias.hess
+
+        # factored Hessian computation
+        H2 = layer.weight.hess_kron
+        H2_bias = layer.bias.hess_kron
+        H2, H2_bias = u.kron(H2), u.kron(H2_bias)
+
+        # autograd Hessian computation
+        loss = loss_fn(output, targets)
+        H_autograd = u.hessian(loss, layer.weight).reshape(d[i] * d[i + 1], d[i] * d[i + 1])
+        H_bias_autograd = u.hessian(loss, layer.bias)
+
+        # compare direct against autograd
+        u.check_close(H, H_autograd)
+        u.check_close(H_bias, H_bias_autograd)
+
+        # compare direct against factored version
+        u.check_close(H2_bias, H_bias_autograd)
+        u.check_close(H2, H_autograd)
+
+
+
+
 if __name__ == '__main__':
-    u.run_all_tests(sys.modules[__name__])
+    test_kron_mnist()
+#    u.run_all_tests(sys.modules[__name__])

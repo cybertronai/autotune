@@ -90,8 +90,12 @@ def untvec(a, rows):
 def kron(a, b=None):
     """Kronecker product."""
 
-    if isinstance(a, Tuple) and b is None:
+    if isinstance(a, Tuple):
+        assert b is None
         a, b = a
+    if isinstance(a, KronFactored):
+        assert b is None
+        a, b = a.BB, a.AA  # TODO(y): figure out why order needs to be reversed
     result = torch.einsum("ab,cd->acbd", a, b)
     if result.is_contiguous():
         return result.view(a.size(0) * b.size(0), a.size(1) * b.size(1))
@@ -299,7 +303,7 @@ def pinv_square_root(mat: torch.Tensor, eps=1e-4) -> torch.Tensor:
 
 
 def symsqrt(a, cond=None, return_rank=False):
-    """Computes the symmetric square root of a positive definite matrix"""
+    """Computes the symmetric square root of a positive semi-definite matrix"""
 
     s, u = torch.symeig(a, eigenvectors=True)
     cond_dict = {torch.float32: 1e3 * 1.1920929e-07, torch.float64: 1E6 * 2.220446049250313e-16}
@@ -529,6 +533,28 @@ class SimpleModel(nn.Module):
         u.register_hooks(self)
 
 
+class SimpleModel2(nn.Module):
+    """Simple sequential model. Adds layers[] attribute, flags to turn on/off hooks, and lookup mechanism from layer to parent
+    model."""
+
+    layers: List[nn.Module]
+    all_layers: List[nn.Module]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+
+    # TODO(y): make public method
+    def _finalize(self):
+        """Extra logic shared across all SimpleModel instances."""
+        self.type(u.dtype)
+
+        global model_layer_map
+        for module in self.modules():
+            model_layer_map[module] = self
+        for param in self.parameters():
+            model_layer_map[param] = self
+
+
 def get_parent_model(module_or_param) -> Optional[nn.Module]:
     """Returns root model for given parameter."""
     global model_layer_map
@@ -573,7 +599,7 @@ def capture_backprops(module: nn.Module, _input, output):
     assert len(module.backprops_list) < 100, "Possible memory leak, captured more than 100 backprops, comment this assert " \
                                              "out if this is intended."""
 
-    module.backprops_list.append(output[0])
+    module.backprops_list.append(output[0].detach())
 
 
 def save_grad(param: nn.Parameter) -> Callable[[torch.Tensor], None]:
@@ -616,6 +642,40 @@ def register_hooks(model: SimpleModel):
 
 
 class SimpleFullyConnected(SimpleModel):
+    """Simple feedforward network that works on images."""
+
+    def __init__(self, d: List[int], nonlin=False, bias=False, dropout=False):
+        """
+        Feedfoward network of linear layers with optional ReLU nonlinearity. Stores layers in "layers" attr, ie
+        model.layers[0] refers to first linear layer.
+
+        Args:
+            d: list of layer dimensions, ie [768, 20, 10] for MNIST 10-output with hidden layer of 20
+            nonlin: whether to include ReLU nonlinearity
+        """
+        super().__init__()
+        self.layers: List[nn.Module] = []
+        self.all_layers: List[nn.Module] = []
+        self.d: List[int] = d
+        for i in range(len(d) - 1):
+            linear = nn.Linear(d[i], d[i + 1], bias=bias)
+            setattr(linear, 'name', f'{i:02d}-linear')
+            self.layers.append(linear)
+            self.all_layers.append(linear)
+            if nonlin:
+                self.all_layers.append(nn.ReLU())
+            if i <= len(d) - 3 and dropout:
+                self.all_layers.append(nn.Dropout(p=0.5))
+        self.predict = torch.nn.Sequential(*self.all_layers)
+
+        super()._finalize()
+
+    def forward(self, x: torch.Tensor):
+        x = x.reshape((-1, self.d[0]))
+        return self.predict(x)
+
+
+class SimpleFullyConnected2(SimpleModel2):
     """Simple feedforward network that works on images."""
 
     def __init__(self, d: List[int], nonlin=False, bias=False, dropout=False):
@@ -903,9 +963,9 @@ def get_unique_logdir(root_logdir: str) -> str:
 # A sampler provides a representation of hessian of the loss layer
 #
 # For a batch of size n,o, Hessian backward sampler will produce k backward values
-# (k between 1 and o) where each value can be fed into model.backward(value)
+# (k between 1 and o) where each value can be fed as model.backward(value)
 #
-# The gradients corresponding to these k backward will be summed up to form an estimate of Hessian of the network
+# The covariance of gradients corresponding to these k backward will be summed up to form an estimate of Hessian of the network
 # sum_i gg' \approx H
 #
 #   sampler = HessianSamplerMyLoss
@@ -1144,6 +1204,11 @@ def kron_batch_sum(G: Tuple):
     """The format of gradient is G={Bt, At} where Bt is (n,do) and At is (n,di)"""
     Bt, At = G
     return torch.einsum('ni,nj->ij', Bt, At)
+
+
+class KronFactored:
+    AA: torch.Tensor   # forward factor
+    BB: torch.Tensor   # backward factor
 
 
 if __name__ == '__main__':
