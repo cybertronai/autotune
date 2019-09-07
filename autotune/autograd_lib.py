@@ -246,7 +246,8 @@ def compute_hess(model: nn.Module, kron=False) -> None:
                 Jb_bias = torch.einsum('onij->oni', B)
 
                 Hi = torch.einsum('onij,onkl->nijkl', Jb, Jb)     # n, do, di*Kh*Kw, do, di*Kh*Kw
-                Hi_bias = torch.einsum('oni,onj->nij', Jb_bias, Jb_bias)
+                Hi = Hi.reshape(n, do*di*Kh*Kw, do*di*Kh*Kw)      # n, do*di*Kh*Kw, do*di*Kh*Kw
+                Hi_bias = torch.einsum('oni,onj->nij', Jb_bias, Jb_bias)  # n, do, do
                 H = Hi.mean(dim=0)
                 H_bias = Hi_bias.mean(dim=0)
 
