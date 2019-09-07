@@ -1,5 +1,5 @@
 """
-Library for extracting interesting quantites from autograd
+Library for extracting interesting quantites from autograd.
 
 Not thread-safe because of module-level variables
 
@@ -8,16 +8,26 @@ o: number of output classes (exact Hessian), number of Hessian samples (sampled 
 n: batch-size
 do: output dimension (output channels for convolution)
 di: input dimension (input channels for convolution)
-Hi: per-example Hessian of matmul, shaped as matrix of [dim, dim], indices have been row-vectorized
-Hi_bias: per-example Hessian of bias
 Oh, Ow: output height, output width (convolution)
 Kh, Kw: kernel height, kernel width (convolution)
 
-Jb: batch output Jacobian of matmul, output sensitivity for example,class pair, [o, n, ....]
-Jb_bias: as above, but for bias
+Hi: per-example Hessian
+    Linear layer: shape [do*di, do*di]
+    Conv2d layer: shape [do*di*Kh*Kw, do*di*Kh*Kw]
+Hi_bias: per-example Hessian of bias
+H: mean Hessian of matmul
+H_bias: mean Hessian of bias
 
-A, activations: inputs into current layer
-B, backprops: backprop values (aka Lop aka Jacobian-vector product) observed at current layer
+
+Jb: batch output Jacobian of matmul, output sensitivity for each output,example pair, [o, n, ....]
+Jb_bias: output Jacobian of bias
+
+A, activations: inputs into matmul
+    Linear: [n, di]
+    Conv2d: [n, di, Ih, Iw] -> (unfold) -> [n, di, Oh, Ow]
+B, backprops: backprop values (aka Lop aka Jacobian-vector product) for current layer
+    Linear: [n, do]
+    Conv2d: [n, do, Oh, Ow]
 
 """
 
@@ -39,10 +49,11 @@ def add_hooks(model: nn.Module) -> None:
     Adds hooks to model to save activations and backprop values.
 
     The hooks will
-    1. save activations into param.activations during forward pass
-    2. append backprops to params.backprops_list during backward pass.
+    1. assign activations to param.activations during forward pass
+    2. append backprops to param.backprops_list during backward pass
 
-    Call "remove_hooks(model)" to disable this.
+    Call "clear_backprops" to clear backprops_list values for all parameters in the model
+    Call "remove_hooks(model)" to undo this operation.
 
     Args:
         model:
@@ -62,7 +73,7 @@ def add_hooks(model: nn.Module) -> None:
 
 def remove_hooks(model: nn.Module) -> None:
     """
-    Remove hooks added by add_hooks(model)
+    Remove hooks added by add_hooks.
     """
 
     assert model == 0, "not working, remove this after fix to https://github.com/pytorch/pytorch/issues/25723"
@@ -85,14 +96,14 @@ def disable_hooks() -> None:
 
 
 def enable_hooks() -> None:
-    """the opposite of disable_hooks()"""
+    """The opposite of disable_hooks()."""
 
     global _hooks_disabled
     _hooks_disabled = False
 
 
 def is_supported(layer: nn.Module) -> bool:
-    """Check if this layer is supported"""
+    """Check if this layer is supported."""
 
     return _layer_type(layer) in _supported_layers
 
@@ -173,9 +184,15 @@ def compute_grad1(model: nn.Module, loss_type: str = 'mean') -> None:
                 setattr(layer.bias, 'grad1', torch.sum(B, dim=2))
 
 
-def compute_hess(model: nn.Module,) -> None:
-    """Save Hessian under param.hess for each param in the model"""
+def compute_hess(model: nn.Module, kron=False) -> None:
+    """Compute Hessian (torch.Tensor) for each parameter and save it under 'param.hess'.
 
+    If kron is True, instead compute Kronecker-factored Hessian (KronFactored), save under 'param.hess_kron'
+
+    Must be called after backprop_hess().
+    """
+
+    hess_attr = 'hess' if not kron else 'hess_kron'
     for layer in model.modules():
         layer_type = _layer_type(layer)
         if layer_type not in _supported_layers:
@@ -188,67 +205,28 @@ def compute_hess(model: nn.Module,) -> None:
             B = torch.stack(layer.backprops_list)
 
             n = A.shape[0]
+            di = A.shape[1]
+            do = layer.backprops_list[0].shape[1]
             o = B.shape[0]
 
             A = torch.stack([A] * o)
-            Jb = torch.einsum("oni,onj->onij", B, A).reshape(n*o,  -1)
-            H = torch.einsum('ni,nj->ij', Jb, Jb) / n
 
-            setattr(layer.weight, 'hess', H)
+            if not kron:
+                Jb = torch.einsum("oni,onj->onij", B, A).reshape(n*o,  -1)
+                H = torch.einsum('ni,nj->ij', Jb, Jb) / n
 
-            if layer.bias is not None:
-                setattr(layer.bias, 'hess', torch.einsum('oni,onj->ij', B, B)/n)
+                # Alternative way
+                # Jb = torch.einsum("oni,onj->onij", B, A)
+                # H = torch.einsum('onij,onkl->ijkl', Jb, Jb) / n
+                # H = H.reshape(do*di, do*di)
 
-        elif layer_type == 'Conv2d':
-            Kh, Kw = layer.kernel_size
-            di, do = layer.in_channels, layer.out_channels
-
-            A = layer.activations.detach()
-            A = torch.nn.functional.unfold(A, (Kh, Kw))       # n, di * Kh * Kw, Oh * Ow
-            n = A.shape[0]
-            B = torch.stack([Bt.reshape(n, do, -1) for Bt in layer.backprops_list])  # o, n, do, Oh*Ow
-            o = B.shape[0]
-
-            A = torch.stack([A] * o)                          # o, n, di * Kh * Kw, Oh*Ow
-            Jb = torch.einsum('onij,onkj->onik', B, A)        # o, n, do, di * Kh * Kw
-
-            Hi = torch.einsum('onij,onkl->nijkl', Jb, Jb)     # n, do, di*Kh*Kw, do, di*Kh*Kw
-            Jb_bias = torch.einsum('onij->oni', B)
-            Hi_bias = torch.einsum('oni,onj->nij', Jb_bias, Jb_bias)
-
-            setattr(layer.weight, 'hess', Hi.mean(dim=0))
-            if layer.bias is not None:
-                setattr(layer.bias, 'hess', Hi_bias.mean(dim=0))
-
-
-def compute_hess_kron(model: nn.Module,) -> None:
-    """Kronecker factored version of Hessian computation"""
-
-    for layer in model.modules():
-        layer_type = _layer_type(layer)
-        if layer_type not in _supported_layers:
-            continue
-        assert hasattr(layer, 'activations'), "No activations detected, run forward after add_hooks(model)"
-        assert hasattr(layer, 'backprops_list'), "No backprops detected, run backward after add_hooks(model)"
-
-        if layer_type == 'Linear':
-            A = layer.activations
-            B = torch.stack(layer.backprops_list)
-
-            n = A.shape[0]
-            o = B.shape[0]
-            A = torch.stack([A] * o)
-
-            H = u.KronFactored()
-            H.AA = torch.einsum("oni,onj->ij", A, A) / n
-            H.BB = torch.einsum("oni,onj->ij", B, B) / (o*n)
-
-            setattr(layer.weight, 'hess_kron', H)
-
-            if layer.bias is not None:
-                H_bias = u.KronFactored()
-                H_bias.AA = torch.eye(A.shape[1]).type(u.dtype)
-                H_bias.BB = torch.einsum("oni,onj->ij", B, B) / n
+                H_bias = torch.einsum('oni,onj->ij', B, B)/n
+            else:
+                # TODO(y): can optimize this case by not stacking A
+                AA = torch.einsum("oni,onj->ij", A, A) / (o * n)  # remove factor of o because A is repeated o times
+                BB = torch.einsum("oni,onj->ij", B, B) / n
+                H = u.KronFactored(AA, BB)
+                H_bias = u.KronFactored(torch.eye(1), torch.einsum("oni,onj->ij", B, B) / n) # TODO: reuse BB
                 setattr(layer.bias, 'hess_kron', H_bias)
 
         elif layer_type == 'Conv2d':
@@ -262,46 +240,62 @@ def compute_hess_kron(model: nn.Module,) -> None:
             o = B.shape[0]
 
             A = torch.stack([A] * o)                          # o, n, di * Kh * Kw, Oh*Ow
-            Jb = torch.einsum('onij,onkj->onik', B, A)        # o, n, do, di * Kh * Kw
 
-            Hi = torch.einsum('onij,onkl->nijkl', Jb, Jb)     # n, do, di*Kh*Kw, do, di*Kh*Kw
-            Jb_bias = torch.einsum('onij->oni', B)
-            Hi_bias = torch.einsum('oni,onj->nij', Jb_bias, Jb_bias)
+            if not kron:
+                Jb = torch.einsum('onij,onkj->onik', B, A)        # o, n, do, di * Kh * Kw
+                Jb_bias = torch.einsum('onij->oni', B)
 
-            setattr(layer.weight, 'hess', Hi.mean(dim=0))
-            if layer.bias is not None:
-                setattr(layer.bias, 'hess', Hi_bias.mean(dim=0))
+                Hi = torch.einsum('onij,onkl->nijkl', Jb, Jb)     # n, do, di*Kh*Kw, do, di*Kh*Kw
+                Hi_bias = torch.einsum('oni,onj->nij', Jb_bias, Jb_bias)
+                H = Hi.mean(dim=0)
+                H_bias = Hi_bias.mean(dim=0)
+
+            else:
+                AA = torch.einsum("onic,onjc->ij", A, A) / (o * n)  # remove factor of o because A is repeated o times
+                BB = torch.einsum("onic,onjc->ij", B, B) / n
+                H = u.KronFactored(AA, BB)
+                H_bias = u.KronFactored(torch.eye(1), BB)
+
+        setattr(layer.weight, hess_attr, H)
+        if layer.bias is not None:
+            setattr(layer.bias, hess_attr, H_bias)
 
 
 def backprop_hess(output: torch.Tensor, hess_type: str) -> None:
     """
-    Call backprop 1 or more times to get values needed for Hessian computation.
+    Call backprop 1 or more times to accumulate values needed for Hessian computation.
+
+    Values are accumulated under .backprops_list attr of each layer and used by downstream functions (ie, compute_hess, compute_hess_kron)
 
     Args:
         output: prediction of neural network (ie, input of nn.CrossEntropyLoss())
         hess_type: type of Hessian propagation, "CrossEntropy" results in exact Hessian for CrossEntropy
 
-    Returns:
-
     """
 
-    assert hess_type in ('LeastSquares', 'CrossEntropy')
-    global _enforce_fresh_backprop
-    n, o = output.shape
+    global _enforce_fresh_backprop, _hooks_disabled
 
-    _enforce_fresh_backprop = True
+    assert not _hooks_disabled
+    _enforce_fresh_backprop = True   # enforce empty backprops_list on first backprop
+
+    valid_hess_types = ('LeastSquares', 'CrossEntropy', 'DebugLeastSquares')
+    assert hess_type in valid_hess_types, f"Unexpected hessian type: {hess_type}, valid types are {valid_hess_types}"
+    n, o = output.shape
 
     if hess_type == 'CrossEntropy':
         batch = F.softmax(output, dim=1)
 
-        mask = torch.eye(o).expand(n, o, o).type(u.dtype)
+        mask = torch.eye(o).expand(n, o, o)
         diag_part = batch.unsqueeze(2).expand(n, o, o) * mask
         outer_prod_part = torch.einsum('ij,ik->ijk', batch, batch)
         hess = diag_part - outer_prod_part
         assert hess.shape == (n, o, o)
 
         for i in range(n):
-            hess[i, :, :] = u.symsqrt(hess[i, :, :])
+            if torch.get_default_dtype() == torch.float64:
+                hess[i, :, :] = u.symsqrt_svd(hess[i, :, :])  # use more stable method for numerical debugging
+            else:
+                hess[i, :, :] = u.symsqrt(hess[i, :, :])
         hess = hess.transpose(0, 1)
 
     elif hess_type == 'LeastSquares':
@@ -310,6 +304,16 @@ def backprop_hess(output: torch.Tensor, hess_type: str) -> None:
         batch_size, output_size = output.shape
 
         id_mat = torch.eye(output_size)
+        for out_idx in range(output_size):
+            hess.append(torch.stack([id_mat[out_idx]] * batch_size))
+
+    elif hess_type == 'DebugLeastSquares':
+        hess = []
+        assert len(output.shape) == 2
+        batch_size, output_size = output.shape
+
+        id_mat = torch.eye(output_size)
+        id_mat[0, 0] = 10
         for out_idx in range(output_size):
             hess.append(torch.stack([id_mat[out_idx]] * batch_size))
 

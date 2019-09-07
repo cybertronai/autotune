@@ -5,6 +5,7 @@ import sys
 
 import globals as gl
 import torch
+from torch import nn as nn
 import wandb
 from torch import optim
 from torch.utils.tensorboard import SummaryWriter
@@ -566,7 +567,6 @@ def test_conv_hessian():
     Bh_t = torch.stack([Bt.reshape(n, dd[1], Oh*Ow) for Bt in layer.backprops_list])
     assert Bh_t.shape == (o, n, dd[1], Oh*Ow)
     Ah_t = torch.stack([At]*o)
-    print('hi')
     assert Ah_t.shape == (o, n, dd[0] * Kh * Kw, Oh*Ow)
 
     # sum out the output patch dimension
@@ -601,48 +601,56 @@ def test_conv_hessian():
 def test_kron_tiny():
     u.seed_random(1)
 
-    d = [2, 2]
+    d = [2, 3, 3, 4, 5]
+    n = 5
+    # torch.set_default_dtype(torch.float32)
 
+    loss_type = 'CrossEntropy'
     model: u.SimpleModel = u.SimpleFullyConnected2(d, nonlin=False, bias=True)
-    model.layers[0].weight.data.copy_(torch.eye(2))
 
-    loss_fn = torch.nn.CrossEntropyLoss()
+    if loss_type == 'LeastSquares':
+        loss_fn = u.least_squares
+    elif loss_type == 'DebugLeastSquares':
+        loss_fn = u.debug_least_squares
+    else:
+        loss_fn = nn.CrossEntropyLoss()
 
-    data = u.to_logits(torch.tensor([[0.7, 0.3]]))
-    targets = torch.tensor([0])
+    data = torch.randn(n, d[0])
+    data = torch.ones(n, d[0])
+    if loss_type.endswith('LeastSquares'):
+        target = torch.randn(n, d[-1])
+    elif loss_type == 'CrossEntropy':
+        target = torch.LongTensor(n).random_(0, d[-1])
 
     # Hessian computation, saves regular and Kronecker factored versions into .hess and .hess_kron attributes
     autograd_lib.add_hooks(model)
     output = model(data)
-    autograd_lib.backprop_hess(output, hess_type='CrossEntropy')
-    #autograd_lib.backprop_hess(output, hess_type='LeastSquares')
-    autograd_lib.compute_hess_kron(model)
+    autograd_lib.backprop_hess(output, hess_type=loss_type)
+    autograd_lib.compute_hess(model, kron=True)
     autograd_lib.compute_hess(model)
     autograd_lib.disable_hooks()
 
-    i = 0
-    layer = model.layers[i]
-    H: u.KronFactored = layer.weight.hess_kron
-    Hbias: u.KronFactored = layer.bias.hess_kron
-    H, Hbias = u.kron(H), u.kron(Hbias)   # kronecker multiply the factors
+    for layer in model.layers:
+        H: u.KronFactored = layer.weight.hess_kron
+        H_bias: u.KronFactored = layer.bias.hess_kron
+        H, H_bias = u.expand_hess(H, H_bias)   # kronecker multiply the factors
 
-    # old approach, using direct computation
-    H2, Hbias2 = layer.weight.hess, layer.bias.hess
+        # old approach, using direct computation
+        H2, H_bias2 = layer.weight.hess, layer.bias.hess
 
-    # compute Hessian through autograd
-    model.zero_grad()
-    output = model(data)
-    loss = loss_fn(output, targets)
-    H_autograd = u.hessian(loss, layer.weight)
-    H_bias_autograd = u.hessian(loss, layer.bias)
+        # compute Hessian through autograd
+        model.zero_grad()
+        output = model(data)
+        loss = loss_fn(output, target)
+        H_autograd = u.hessian(loss, layer.weight)
+        H_bias_autograd = u.hessian(loss, layer.bias)
 
-    # compare autograd with direct approach
-    u.check_close(H2, H_autograd.reshape(H.shape))
-    u.check_close(Hbias2, H_bias_autograd)
+        # compare autograd with direct approach
+        u.check_close(H2, H_autograd.reshape(H.shape))
+        u.check_close(H_bias2, H_bias_autograd)
 
-    # compare autograd with factored approach
-    u.check_close(Hbias, H_bias_autograd)
-    u.check_close(H, H_autograd.reshape(H.shape))
+        # compare factored with direct approach
+        assert(u.cov_dist(H, H2) < 1e-6)
 
 
 def test_kron_mnist():
@@ -655,12 +663,10 @@ def test_kron_mnist():
     n = batch_size
     train_steps = 1
 
+    # torch.set_default_dtype(torch.float64)
+
     model: u.SimpleModel2 = u.SimpleFullyConnected2(d, nonlin=False, bias=True)
     autograd_lib.add_hooks(model)
-
-    # increase precision
-    model.double()
-    u.dtype = torch.float64
 
     dataset = u.TinyMNIST(dataset_size=batch_size, data_width=data_width, original_targets=True)
     trainloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
@@ -680,7 +686,7 @@ def test_kron_mnist():
 
         i = 0
         layer = model.layers[i]
-        autograd_lib.compute_hess_kron(model)
+        autograd_lib.compute_hess(model, kron=True)
         autograd_lib.compute_hess(model)
         autograd_lib.disable_hooks()
 
@@ -691,7 +697,7 @@ def test_kron_mnist():
         # factored Hessian computation
         H2 = layer.weight.hess_kron
         H2_bias = layer.bias.hess_kron
-        H2, H2_bias = u.kron(H2), u.kron(H2_bias)
+        H2, H2_bias = u.expand_hess(H2, H2_bias)
 
         # autograd Hessian computation
         loss = loss_fn(output, targets)
@@ -702,13 +708,75 @@ def test_kron_mnist():
         u.check_close(H, H_autograd)
         u.check_close(H_bias, H_bias_autograd)
 
-        # compare direct against factored version
-        u.check_close(H2_bias, H_bias_autograd)
-        u.check_close(H2, H_autograd)
+        approx_error = u.cov_dist(H, H2)
+        print(approx_error)
+        print(torch.max((H-H2)/H2))
+        assert approx_error < 1e-2, approx_error
 
+
+def test_kron_conv():
+    """Test per-example gradient computation for conv layer."""
+    u.seed_random(1)
+    n, Xc, Xh, Xw = 3, 2, 3, 7
+    dd = [Xc, 2]
+
+    Kh, Kw = 2, 3
+    Oh, Ow = Xh - Kh + 1, Xw - Kw + 1
+    model: u.SimpleModel = u.ReshapedConvolutional2(dd, kernel_size=(Kh, Kw), bias=True)
+    weight_buffer = model.layers[0].weight.data
+    data = torch.randn((n, Xc, Xh, Xw))
+
+    loss_type = 'CrossEntropy'
+    if loss_type == 'LeastSquares':
+        loss_fn = u.least_squares
+    elif loss_type == 'DebugLeastSquares':
+        loss_fn = u.debug_least_squares
+    else:    # CrossEntropy
+        loss_fn = nn.CrossEntropyLoss()
+
+    sample_output = model(data)
+    if loss_type.endswith('LeastSquares'):
+        targets = torch.randn(sample_output.shape)
+    elif loss_type == 'CrossEntropy':
+        targets = torch.LongTensor(n).random_(0, n)
+
+    autograd_lib.clear_backprops(model)
+    autograd_lib.add_hooks(model)
+    output = model(data)
+    autograd_lib.backprop_hess(output, hess_type=loss_type)
+    autograd_lib.compute_hess(model, kron=True)
+    autograd_lib.compute_hess(model, kron=False)
+    autograd_lib.disable_hooks()
+
+    for i in range(len(model.layers)):
+        layer = model.layers[i]
+
+        # direct Hessian computation
+        H = layer.weight.hess
+        H_bias = layer.bias.hess
+
+        # factored Hessian computation
+        Hk = layer.weight.hess_kron
+        Hk_bias = layer.bias.hess_kron
+        Hk, Hk_bias = u.expand_hess(Hk, Hk_bias)
+
+        # autograd Hessian computation
+        loss = loss_fn(output, targets)
+        print(H.shape)
+        H_autograd = u.hessian(loss, layer.weight).reshape(H.shape)
+        H_bias_autograd = u.hessian(loss, layer.bias)
+
+        # compare direct against autograd
+        u.check_close(H, H_autograd.reshape(H.shape), rtol=1e-3, atol=1e-7)
+        u.check_close(H_bias, H_bias_autograd)
+
+        # approx_error = u.cov_dist(H, Hk)
+        # print(approx_error, torch.max((H-Hk)/Hk))
+        # assert approx_error < 1e-2, approx_error
 
 
 
 if __name__ == '__main__':
-    test_kron_mnist()
+    #    test_conv_hessian()
+    test_kron_conv()
 #    u.run_all_tests(sys.modules[__name__])

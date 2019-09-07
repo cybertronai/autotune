@@ -5,7 +5,7 @@ import os
 import random
 import sys
 import time
-from typing import Any, Dict, Callable, Optional, Tuple
+from typing import Any, Dict, Callable, Optional, Tuple, Union, Sequence
 from typing import List
 
 import globals as gl
@@ -21,7 +21,6 @@ import torch.nn.functional as F
 # to enable referring to functions in its own module as u.func
 u = sys.modules[__name__]
 
-dtype = torch.float32
 
 def v2c(vec):
     """Convert vector to column matrix."""
@@ -87,21 +86,45 @@ def untvec(a, rows):
     return a.reshape(rows, -1)
 
 
-def kron(a, b=None):
-    """Kronecker product."""
+def kron(a: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]], b: Optional[torch.Tensor] = None):
+    """Kronecker product a otimes b."""
 
     if isinstance(a, Tuple):
         assert b is None
         a, b = a
-    if isinstance(a, KronFactored):
-        assert b is None
-        a, b = a.BB, a.AA  # TODO(y): figure out why order needs to be reversed
     result = torch.einsum("ab,cd->acbd", a, b)
     if result.is_contiguous():
         return result.view(a.size(0) * b.size(0), a.size(1) * b.size(1))
     else:
         print("Warning kronecker product not contiguous, using reshape")
         return result.reshape(a.size(0) * b.size(0), a.size(1) * b.size(1))
+
+
+def stable_kron(a, b):
+    a_norm, b_norm = torch.max(a), torch.max(b)
+    return kron(a/a_norm, b/b_norm)*a_norm*b_norm
+
+
+class KronFactored:
+    AA: torch.Tensor   # forward factor
+    BB: torch.Tensor   # backward factor
+
+    def __init__(self, AA: torch.Tensor, BB: torch.Tensor):
+        self.AA = AA
+        self.BB = BB
+
+
+def expand_hess(*v) -> Union[torch.Tensor, List[torch.Tensor]]:
+    """Expands Hessian represented in Kronecker factored form.
+
+    Note: For consistency with PyTorch autograd, we use row-major order. This means the order of Kronecker
+    multiplication needs to be reversed compared to literature which uses column-major order (implied by vec)."""
+    result = [kron(a.BB, a.AA) for a in v]
+
+    if len(result) == 1:
+        return result[0]
+    else:
+        return result
 
 
 def test_kron():
@@ -323,6 +346,25 @@ def symsqrt(a, cond=None, return_rank=False):
         return B
 
 
+def symsqrt_svd(mat: torch.Tensor):
+    """Like symsqrt, but uses more expensive SVD"""
+
+    cond_dict = {torch.float32: 1e3 * 1.1920929e-07, torch.float64: 1E6 * 2.220446049250313e-16}
+    u, s, v = torch.svd(mat)
+    svals: torch.Tensor = torch.sqrt(s)
+    eps = cond_dict[mat.dtype] * torch.max(abs(s))
+    si = torch.where(s > eps, svals, s)
+    return u @ torch.diag(si) @ v.t()
+
+
+def cov_dist(cov1, cov2):
+    """A measure of distance between two covariance matrices."""
+
+    cov1 = symsqrt_svd(cov1)
+    cov2 = symsqrt_svd(cov2)
+    return torch.norm(cov1 - cov2)
+
+
 def check_close(a0, b0, rtol=1e-5, atol=1e-8):
     return check_equal(a0, b0, rtol=rtol, atol=atol)
 
@@ -435,11 +477,16 @@ def seed_random(seed):
 
 
 class TinyMNIST(datasets.MNIST):
-    """Custom-size MNIST autoencoder dataset for debugging. Generates data/target images with reduced resolution.
-    Use original_targets to get original MNIST labels"""
+    """Custom-size MNIST autoencoder dataset for debugging. Generates data/target images with reduced resolution and 0
+    channels. When provided with original 28, 28 resolution, generates standard 1 channel MNIST dataset.
+
+    Use original_targets kwarg to get original MNIST labels instead of autoencoder targets.
+
+
+    """
 
     def __init__(self, dataset_root='/tmp/data', data_width=4, targets_width=4, dataset_size=0,
-                 download=True, train=True, original_targets=False):
+                 train=True, original_targets=False):
         """
 
         Args:
@@ -466,17 +513,17 @@ class TinyMNIST(datasets.MNIST):
                 im = Image.fromarray(arr)
                 im.thumbnail((targets_width, targets_width), Image.ANTIALIAS)
                 new_targets[i, :, :] = np.array(im) / 255
-            self.data = torch.from_numpy(new_data).float()
+            self.data = torch.from_numpy(new_data).type(torch.get_default_dtype())
             if not original_targets:
-                self.targets = torch.from_numpy(new_targets).float()
+                self.targets = torch.from_numpy(new_targets).type(torch.get_default_dtype())
         else:
-            self.data = self.data.float().unsqueeze(1)
+            self.data = self.data.type(torch.get_default_dtype()).unsqueeze(1)
             if not original_targets:
                 self.targets = self.data
                 
-        self.data = self.data.type(u.dtype)
-        if not original_targets:  # don't cast original int labels
-            self.targets = self.targets.type(u.dtype)
+        # self.data = self.data.type(torch.get_default_dtype())
+        # if not original_targets:  # don't cast original int labels
+        #    self.targets = self.targets.type(u.dtype)
         self.data, self.targets = self.data.to(gl.device), self.targets.to(gl.device)
 
     def __getitem__(self, index):
@@ -518,11 +565,10 @@ class SimpleModel(nn.Module):
         self.skip_forward_hooks = False
         self.skip_backward_hooks = False
 
-        
     # TODO(y): make public method
     def _finalize(self):
         """Extra logic shared across all SimpleModel instances."""
-        self.type(u.dtype)
+        # self.type(u.dtype)
         
         global model_layer_map
         for module in self.modules():
@@ -533,6 +579,25 @@ class SimpleModel(nn.Module):
         u.register_hooks(self)
 
 
+def least_squares(data, targets=None):
+    """Least squares loss (like MSELoss, but an extra 1/2 factor."""
+    if targets is None:
+        targets = torch.zeros_like(data)
+    err = data - targets.view(-1, data.shape[1])
+    return torch.sum(err * err) / 2 / len(data)
+
+
+def debug_least_squares(data, targets=None):
+    """Least squares loss which weights one of the coordinates (for testing)."""
+    if targets is None:
+        targets = torch.zeros_like(data)
+    err = data - targets.view(-1, data.shape[1])
+
+    err[:, 0] *= 10
+
+    return torch.sum(err * err) / 2 / len(data)
+
+# Fork of SimpleModel that doesn't automatically register hooks, for autograd_lib.py refactoring
 class SimpleModel2(nn.Module):
     """Simple sequential model. Adds layers[] attribute, flags to turn on/off hooks, and lookup mechanism from layer to parent
     model."""
@@ -546,7 +611,7 @@ class SimpleModel2(nn.Module):
     # TODO(y): make public method
     def _finalize(self):
         """Extra logic shared across all SimpleModel instances."""
-        self.type(u.dtype)
+        # self.type(u.dtype)
 
         global model_layer_map
         for module in self.modules():
@@ -737,8 +802,36 @@ class SimpleConvolutional(SimpleModel):
         return self.predict(x)
 
 
-class ReshapedConvolutional(SimpleConvolutional):
+class SimpleConvolutional2(SimpleModel2):
     """Simple conv network."""
+
+    def __init__(self, d: List[int], kernel_size=(2, 2), nonlin=False, bias=False):
+        """
+
+        Args:
+            d: list of channels, ie [2, 2] to have 2 conv layers with 2 channels
+        """
+        super().__init__()
+        self.layers: List[nn.Module] = []
+        self.all_layers: List[nn.Module] = []
+        self.d: List[int] = d
+        for i in range(len(d) - 1):
+            conv = nn.Conv2d(d[i], d[i + 1], kernel_size, bias=bias)
+            setattr(conv, 'name', f'{i:02d}-conv')
+            self.layers.append(conv)
+            self.all_layers.append(conv)
+            if nonlin:
+                self.all_layers.append(nn.ReLU())
+        self.predict = torch.nn.Sequential(*self.all_layers)
+
+        self._finalize()
+
+    def forward(self, x: torch.Tensor):
+        return self.predict(x)
+
+
+class ReshapedConvolutional2(SimpleConvolutional2):
+    """Simple conv network, output is flattened"""
 
     def __init__(self, *args, **kwargs):
         """
@@ -752,7 +845,25 @@ class ReshapedConvolutional(SimpleConvolutional):
         output = self.predict(x)
         return output.reshape(output.shape[0], -1)
 
-    
+
+
+
+class ReshapedConvolutional(SimpleConvolutional):
+    """Simple conv network, output is flattened"""
+
+    def __init__(self, *args, **kwargs):
+        """
+
+        Args:
+            d: list of channels, ie [2, 2] to have 2 conv layers with 2 channels
+        """
+        super().__init__(*args, **kwargs)
+
+    def forward(self, x: torch.Tensor):
+        output = self.predict(x)
+        return output.reshape(output.shape[0], -1)
+
+
 def log_scalars(metrics: Dict[str, Any]) -> None:
     for tag in metrics:
         gl.event_writer.add_scalar(tag=tag, scalar_value=metrics[tag], global_step=gl.token_count)
@@ -1197,18 +1308,13 @@ def kron_inv(H):
 def kron_sigma(G):
     Bt, At = G
     grad = torch.einsum('nij,nkl->ijkl', Bt, At)
-    cov = torch.eingsum('ij,kl->ijkl', grad, grad)
+    cov = torch.einsum('ij,kl->ijkl', grad, grad)
 
 
 def kron_batch_sum(G: Tuple):
     """The format of gradient is G={Bt, At} where Bt is (n,do) and At is (n,di)"""
     Bt, At = G
     return torch.einsum('ni,nj->ij', Bt, At)
-
-
-class KronFactored:
-    AA: torch.Tensor   # forward factor
-    BB: torch.Tensor   # backward factor
 
 
 if __name__ == '__main__':

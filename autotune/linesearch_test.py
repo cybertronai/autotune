@@ -512,5 +512,4 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-
     u.run_all_tests(sys.modules[__name__])
