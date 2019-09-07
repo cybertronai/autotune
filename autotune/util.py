@@ -846,8 +846,6 @@ class ReshapedConvolutional2(SimpleConvolutional2):
         return output.reshape(output.shape[0], -1)
 
 
-
-
 class ReshapedConvolutional(SimpleConvolutional):
     """Simple conv network, output is flattened"""
 

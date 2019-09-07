@@ -235,9 +235,14 @@ def compute_hess(model: nn.Module, kron=False) -> None:
 
             A = layer.activations.detach()
             A = torch.nn.functional.unfold(A, (Kh, Kw))       # n, di * Kh * Kw, Oh * Ow
-            n = A.shape[0]
+            o = len(layer.backprops_list)
+            n, do, Oh, Ow = layer.backprops_list[0].shape
+            print(layer.backprops_list[0].shape)
+
             B = torch.stack([Bt.reshape(n, do, -1) for Bt in layer.backprops_list])  # o, n, do, Oh*Ow
             o = B.shape[0]
+
+            assert layer.padding == (0, 0)
 
             A = torch.stack([A] * o)                          # o, n, di * Kh * Kw, Oh*Ow
 
@@ -253,7 +258,7 @@ def compute_hess(model: nn.Module, kron=False) -> None:
 
             else:
                 AA = torch.einsum("onic,onjc->ij", A, A) / (o * n)  # remove factor of o because A is repeated o times
-                BB = torch.einsum("onic,onjc->ij", B, B) / n
+                BB = torch.einsum("onic,onjc->ij", B, B) / n  # (n * Oh * Ow)
                 H = u.KronFactored(AA, BB)
                 H_bias = u.KronFactored(torch.eye(1), BB)
 
