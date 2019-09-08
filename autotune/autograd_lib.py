@@ -201,14 +201,14 @@ def compute_grad1(model: nn.Module, loss_type: str = 'mean') -> None:
                 setattr(layer.bias, 'grad1', torch.sum(B, dim=2))
 
 
-def compute_hess(model: nn.Module, factored=False, method='exact') -> None:
-    """Compute Hessian (torch.Tensor) for each parameter and save it under 'param.hess'.
+def compute_hess(model: nn.Module, method='exact') -> None:
+    """Compute Hessian (torch.Tensor) for each parameter and save it under 'param.hess or param.hess_factored'.
 
-    If kron is True, instead compute Kronecker-factored Hessian (KronFactored), save under 'param.hess_factored'
+    If method is exact, saves Tensor hessian under param.hess. Otherwise save u.FactoredMatrix instance under param.hess_factored
 
     method: which method to use for factoring
       kron: kronecker product
-      mean_kron: mean of kronecker products
+      mean_kron: mean of kronecker products, one kronecker product per datapoint
       finegrained: experimental method for Conv2d
 
     Must be called after backprop_hess().
@@ -218,12 +218,8 @@ def compute_hess(model: nn.Module, factored=False, method='exact') -> None:
 
     # TODO: get rid of factored flag
 
-    if factored:
-        assert method != 'exact'
-    if not factored:
-        assert method == 'exact'
+    hess_attr = 'hess' if method == 'exact' else 'hess_factored'
 
-    hess_attr = 'hess' if not factored else 'hess_factored'
     for layer in model.modules():
         layer_type = _layer_type(layer)
         if layer_type not in _supported_layers:
@@ -242,7 +238,7 @@ def compute_hess(model: nn.Module, factored=False, method='exact') -> None:
 
             A = torch.stack([A] * o)
 
-            if not factored or method == 'exact':
+            if method == 'exact':
                 Jo = torch.einsum("oni,onj->onij", B, A).reshape(n * o, -1)
                 H = torch.einsum('ni,nj->ij', Jo, Jo) / n
 
@@ -253,6 +249,7 @@ def compute_hess(model: nn.Module, factored=False, method='exact') -> None:
 
                 H_bias = torch.einsum('oni,onj->ij', B, B) / n
             else:  # TODO(y): can optimize this case by not stacking A
+                assert method == 'kron'
                 AA = torch.einsum("oni,onj->ij", A, A) / (o * n)  # remove factor of o because A is repeated o times
                 BB = torch.einsum("oni,onj->ij", B, B) / n
                 H = u.KronFactored(AA, BB)
@@ -280,7 +277,7 @@ def compute_hess(model: nn.Module, factored=False, method='exact') -> None:
             #print("A1", A[1,...])
             #print("B1", B[:,1,...])
 
-            if not factored or method == 'exact':
+            if method == 'exact':
                 Jo = torch.einsum('onis,onks->onik', B, A)  # o, n, do, di * Kh * Kw
                 Jo_bias = torch.einsum('onis->oni', B)
 
@@ -289,47 +286,48 @@ def compute_hess(model: nn.Module, factored=False, method='exact') -> None:
                 Hi_bias = torch.einsum('oni,onj->nij', Jo_bias, Jo_bias)  # n, do, do
                 H = Hi.mean(dim=0)
                 H_bias = Hi_bias.mean(dim=0)
-            else:
-                if method == 'kron':
-                    AA = torch.einsum("onis->oni", A) / (Oh * Ow)  # group input channels
-                    AA = torch.einsum("oni,onj->onij", AA, AA) / (o * n)  # remove factor of o because A is repeated o times
+            elif method == 'kron':
+                AA = torch.einsum("onis->oni", A) / (Oh * Ow)  # group input channels
+                AA = torch.einsum("oni,onj->onij", AA, AA) / (o * n)  # remove factor of o because A is repeated o times
 
-                    AA = torch.einsum("onij->ij", AA)  # sum out outputs/classes
+                AA = torch.einsum("onij->ij", AA)  # sum out outputs/classes
 
-                    BB = torch.einsum("onip->oni", B)  # group output channels
-                    BB = torch.einsum("oni,onj->ij", BB, BB) / n
-                elif method == 'mean_kron':
-                    AA = torch.einsum("onis->oni", A) / (Oh * Ow)  # group input channels
-                    AA = torch.einsum("oni,onj->onij", AA, AA) / (o)  # remove factor of o because A is repeated o times
+                BB = torch.einsum("onip->oni", B)  # group output channels
+                BB = torch.einsum("oni,onj->ij", BB, BB) / n
+            elif method == 'mean_kron':
+                AA = torch.einsum("onis->oni", A) / (Oh * Ow)  # group input channels
+                AA = torch.einsum("oni,onj->onij", AA, AA) / (o)  # remove factor of o because A is repeated o times
 
-                    AA = torch.einsum("onij->nij", AA)  # sum out outputs/classes
+                AA = torch.einsum("onij->nij", AA)  # sum out outputs/classes
 
-                    BB = torch.einsum("onip->oni", B)  # group output channels
-                    BB = torch.einsum("oni,onj->nij", BB, BB)
+                BB = torch.einsum("onip->oni", B)  # group output channels
+                BB = torch.einsum("oni,onj->nij", BB, BB)
 
-                    # kron1 = u.KronFactored(AA[0,...], BB[0,...])
-                    # kron2 = u.KronFactored(AA[1,...], BB[1,...])
-                    # print("hess1", kron1.expand())
-                    # print("hess2", kron2.expand())
-                    # print('hess_mean', u.MeanKronFactored(AA, BB).expand())
-                    #AA = AA.sum(0)
-                    #BB = BB.sum(0)
+                # kron1 = u.KronFactored(AA[0,...], BB[0,...])
+                # kron2 = u.KronFactored(AA[1,...], BB[1,...])
+                # print("hess1", kron1.expand())
+                # print("hess2", kron2.expand())
+                # print('hess_mean', u.MeanKronFactored(AA, BB).expand())
+                #AA = AA.sum(0)
+                #BB = BB.sum(0)
 
-                elif method == 'finegrained':
-                    AA = torch.einsum("onis,onjs->onijs", A, A)
-                    AA = torch.einsum("onijs->onij", AA) / (Oh * Oh)
-                    AA = torch.einsum("onij->oij", AA) / n
-                    AA = torch.einsum("oij->ij", AA) / o
+            elif method == 'finegrained':
+                AA = torch.einsum("onis,onjs->onijs", A, A)
+                AA = torch.einsum("onijs->onij", AA) / (Oh * Oh)
+                AA = torch.einsum("onij->oij", AA) / n
+                AA = torch.einsum("oij->ij", AA) / o
 
-                    BB = torch.einsum("onip,onjp->onijp", B, B) / n
-                    BB = torch.einsum("onijp->onij", BB)
-                    BB = torch.einsum("onij->nij", BB)
-                    BB = torch.einsum("nij->ij", BB)
+                BB = torch.einsum("onip,onjp->onijp", B, B) / n
+                BB = torch.einsum("onijp->onij", BB)
+                BB = torch.einsum("onij->nij", BB)
+                BB = torch.einsum("nij->ij", BB)
 
+            if method != 'exact':
                 if method == 'mean_kron':
                     H = u.MeanKronFactored(AA, BB)
                     # H = u.KronFactored(AA[0,...], BB[0,...])
                 else:
+                    assert method == 'kron'
                     H = u.KronFactored(AA, BB)
 
                 BB_bias = torch.einsum("onip->oni", B)  # group output channels
@@ -346,7 +344,7 @@ def backprop_hess(output: torch.Tensor, hess_type: str) -> None:
     """
     Call backprop 1 or more times to accumulate values needed for Hessian computation.
 
-    Values are accumulated under .backprops_list attr of each layer and used by downstream functions (ie, compute_hess, compute_hess_factored)
+    Values are accumulated under .backprops_list attr of each layer and used by downstream functions like compute_hess
 
     Args:
         output: prediction of neural network (ie, input of nn.CrossEntropyLoss())
@@ -374,7 +372,7 @@ def backprop_hess(output: torch.Tensor, hess_type: str) -> None:
 
         for i in range(n):
             if torch.get_default_dtype() == torch.float64:
-                hess[i, :, :] = u.symsqrt_svd(hess[i, :, :])  # use more stable method for numerical debugging
+                hess[i, :, :] = u.symsqrt_svd(hess[i, :, :])  # more stable method since we don't care about speed with float64
             else:
                 hess[i, :, :] = u.symsqrt(hess[i, :, :])
         hess = hess.transpose(0, 1)

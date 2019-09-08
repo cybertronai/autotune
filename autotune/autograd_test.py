@@ -740,7 +740,7 @@ def test_kron_nano():
     autograd_lib.add_hooks(model)
     output = model(data)
     autograd_lib.backprop_hess(output, hess_type=loss_type)
-    autograd_lib.compute_hess(model, factored=True, method='kron')
+    autograd_lib.compute_hess(model, method='kron')
     autograd_lib.compute_hess(model)
     autograd_lib.disable_hooks()
 
@@ -796,7 +796,7 @@ def test_kron_tiny():
     autograd_lib.add_hooks(model)
     output = model(data)
     autograd_lib.backprop_hess(output, hess_type=loss_type)
-    autograd_lib.compute_hess(model, factored=True, method='kron')
+    autograd_lib.compute_hess(model, method='kron')
     autograd_lib.compute_hess(model)
     autograd_lib.disable_hooks()
 
@@ -856,7 +856,7 @@ def test_kron_mnist():
 
         i = 0
         layer = model.layers[i]
-        autograd_lib.compute_hess(model, factored=True, method='kron')
+        autograd_lib.compute_hess(model, method='kron')
         autograd_lib.compute_hess(model)
         autograd_lib.disable_hooks()
 
@@ -918,8 +918,8 @@ def test_kron_conv_exact():
     autograd_lib.add_hooks(model)
     output = model(data)
     autograd_lib.backprop_hess(output, hess_type=loss_type)
-    autograd_lib.compute_hess(model, factored=True, method='mean_kron')
-    autograd_lib.compute_hess(model, factored=False)
+    autograd_lib.compute_hess(model, method='mean_kron')
+    autograd_lib.compute_hess(model, method='exact')
     autograd_lib.disable_hooks()
 
     for i in range(len(model.layers)):

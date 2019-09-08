@@ -110,7 +110,16 @@ def stable_kron(a, b):
     return kron(a/a_norm, b/b_norm)*a_norm*b_norm
 
 
-class KronFactored:
+class FactoredMatrix:
+    """Factored representation of a matrix"""
+    pass
+
+    def expand(self) -> torch.Tensor:
+        """Returns expanded representation (row-major form)"""
+        raise NotImplemented
+
+
+class KronFactored(FactoredMatrix):
     AA: torch.Tensor   # forward factor
     BB: torch.Tensor   # backward factor
 
@@ -123,10 +132,10 @@ class KronFactored:
         return kron(self.BB, self.AA)
 
 
-class MeanKronFactored:
+class MeanKronFactored(FactoredMatrix):
     """Factored representation as a mean of kronecker products"""
-    AA: torch.Tensor   # forward factor
-    BB: torch.Tensor   # backward factor
+    AA: torch.Tensor   # stacked forward factors
+    BB: torch.Tensor   # stacked backward factor
 
     def __init__(self, AA: torch.Tensor, BB: torch.Tensor):
         # AA: n, di, di
@@ -144,7 +153,6 @@ class MeanKronFactored:
         self.do = do
 
     def expand(self):
-        """Returns expanded representation (row-major form)"""
 
         result = torch.einsum('nij,nkl->nikjl', self.BB, self.AA)
         # print(result)
@@ -160,7 +168,6 @@ class MeanKronFactored:
 
         result = result.sum(dim=0)/self.n
         return result.view(self.do*self.di, self.do*self.di)
-
 
 
 def expand_hess(*v) -> Union[torch.Tensor, List[torch.Tensor]]:
@@ -872,6 +879,7 @@ class SimpleConvolutional2(SimpleModel2):
         self.layers: List[nn.Module] = []
         self.all_layers: List[nn.Module] = []
         self.d: List[int] = d
+        assert len(d) >= 2
         for i in range(len(d) - 1):
             conv = nn.Conv2d(d[i], d[i + 1], kernel_size, bias=bias)
             setattr(conv, 'name', f'{i:02d}-conv')
