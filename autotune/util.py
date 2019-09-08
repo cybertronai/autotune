@@ -904,13 +904,13 @@ class ReshapedConvolutional2(SimpleConvolutional2):
 
 
 class PooledConvolutional2(SimpleConvolutional2):
-    """Simple conv network, output is flattened"""
+    """Simple conv network, output is pooled across spatial dimension. Num-channels = num_outputs"""
 
     def __init__(self, *args, **kwargs):
         """
 
         Args:
-            d: list of channels, ie [2, 2] to have 2 conv layers with 2 channels
+            d: list of channels, ie [2, 2, 2] to have 2 conv layers with 2 channels
         """
         super().__init__(*args, **kwargs)
 

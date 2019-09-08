@@ -42,7 +42,9 @@ import torch.nn.functional as F
 
 import util as u
 
-_supported_layers = ['Linear', 'Conv2d']  # Supported layer class types
+_supported_layers = ['Linear', 'Conv2d']  # Supported layer class types  TODO(y): make non-private
+_supported_methods = ['exact', 'kron', 'mean_kron', 'finegrained']  # supported approximation methods
+_supported_losses = ['LeastSquares', 'CrossEntropy']
 _hooks_disabled: bool = False  # work-around for https://github.com/pytorch/pytorch/issues/25723
 _enforce_fresh_backprop: bool = False  # global switch to catch double backprop errors on Hessian computation
 
@@ -199,7 +201,7 @@ def compute_grad1(model: nn.Module, loss_type: str = 'mean') -> None:
                 setattr(layer.bias, 'grad1', torch.sum(B, dim=2))
 
 
-def compute_hess(model: nn.Module, factored=False, method='kron') -> None:
+def compute_hess(model: nn.Module, factored=False, method='exact') -> None:
     """Compute Hessian (torch.Tensor) for each parameter and save it under 'param.hess'.
 
     If kron is True, instead compute Kronecker-factored Hessian (KronFactored), save under 'param.hess_factored'
@@ -212,7 +214,14 @@ def compute_hess(model: nn.Module, factored=False, method='kron') -> None:
     Must be called after backprop_hess().
     """
 
-    assert method in ['kron', 'mean_kron', 'finegrained']
+    assert method in _supported_methods
+
+    # TODO: get rid of factored flag
+
+    if factored:
+        assert method != 'exact'
+    if not factored:
+        assert method == 'exact'
 
     hess_attr = 'hess' if not factored else 'hess_factored'
     for layer in model.modules():
@@ -233,7 +242,7 @@ def compute_hess(model: nn.Module, factored=False, method='kron') -> None:
 
             A = torch.stack([A] * o)
 
-            if not factored:
+            if not factored or method == 'exact':
                 Jo = torch.einsum("oni,onj->onij", B, A).reshape(n * o, -1)
                 H = torch.einsum('ni,nj->ij', Jo, Jo) / n
 
@@ -271,7 +280,7 @@ def compute_hess(model: nn.Module, factored=False, method='kron') -> None:
             #print("A1", A[1,...])
             #print("B1", B[:,1,...])
 
-            if not factored:
+            if not factored or method == 'exact':
                 Jo = torch.einsum('onis,onks->onik', B, A)  # o, n, do, di * Kh * Kw
                 Jo_bias = torch.einsum('onis->oni', B)
 
