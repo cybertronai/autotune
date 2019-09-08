@@ -45,6 +45,8 @@ def test_lyapunov():
     """Test that scipy lyapunov solver works correctly."""
     d = 2
     n = 3
+    torch.set_default_dtype(torch.float32)
+
     model = Net(d)
 
     w0 = torch.tensor([[1, 2]]).float()

@@ -24,6 +24,8 @@ class Net(nn.Module):
 def test_simple_hessian():
     # Compare against manual calculations in
     # https://www.wolframcloud.com/obj/yaroslavvb/newton/linear-jacobians-and-hessians.nb
+    torch.set_default_dtype(torch.float32)
+
     d = [2, 3, 4, 2]
     n = d[0]
     c = d[-1]

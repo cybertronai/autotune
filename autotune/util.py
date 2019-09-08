@@ -226,11 +226,14 @@ def to_scalar(x):
 def to_numpy(x, dtype=np.float32) -> np.ndarray:
     """Convert numeric object to numpy array."""
     if hasattr(x, 'numpy'):  # PyTorch tensor
-        return x.detach().numpy().astype(dtype)
+        result = x.detach().numpy().astype(dtype)
     elif type(x) == np.ndarray:
-        return x.astype(dtype)
+        result = x.astype(dtype)
     else:  # Some Python type
-        return np.array(x).astype(dtype)
+        result = np.array(x).astype(dtype)
+
+    assert np.issubdtype(result.dtype, np.number), f"Converting non-numeric result (type={result.dtype}): {result}"
+    return result
 
 
 def khatri_rao(A: torch.Tensor, B: torch.Tensor):
@@ -325,16 +328,19 @@ def pinv_square_root(mat: torch.Tensor, eps=1e-4) -> torch.Tensor:
     return u @ torch.diag(si) @ v.t()
 
 
-def symsqrt(a, cond=None, return_rank=False):
+def symsqrt(mat, cond=None, return_rank=False):
     """Computes the symmetric square root of a positive semi-definite matrix"""
 
-    s, u = torch.symeig(a, eigenvectors=True)
+    s, u = torch.symeig(mat, eigenvectors=True)
     cond_dict = {torch.float32: 1e3 * 1.1920929e-07, torch.float64: 1E6 * 2.220446049250313e-16}
 
     if cond in [None, -1]:
-        cond = cond_dict[a.dtype]
+        cond = cond_dict[mat.dtype]
 
     above_cutoff = (abs(s) > cond * torch.max(abs(s)))
+
+    if torch.sum(above_cutoff) == 0:
+        return torch.zeros_like(mat)
 
     psigma_diag = torch.sqrt(s[above_cutoff])
     u = u[:, above_cutoff]
@@ -348,12 +354,13 @@ def symsqrt(a, cond=None, return_rank=False):
 
 def symsqrt_svd(mat: torch.Tensor):
     """Like symsqrt, but uses more expensive SVD"""
-
     cond_dict = {torch.float32: 1e3 * 1.1920929e-07, torch.float64: 1E6 * 2.220446049250313e-16}
     u, s, v = torch.svd(mat)
     svals: torch.Tensor = torch.sqrt(s)
     eps = cond_dict[mat.dtype] * torch.max(abs(s))
     si = torch.where(s > eps, svals, s)
+    if len(si) == 0:
+        return torch.zeros_like(mat)
     return u @ torch.diag(si) @ v.t()
 
 
@@ -365,14 +372,15 @@ def cov_dist(cov1, cov2):
     return torch.norm(cov1 - cov2)
 
 
-def check_close(a0, b0, rtol=1e-5, atol=1e-8):
+def check_close(a0: torch.Tensor, b0: torch.Tensor, rtol=1e-5, atol=1e-8) -> None:
     return check_equal(a0, b0, rtol=rtol, atol=atol)
 
 
 # todo: replace with torch.allclose
-def check_equal(observed, truth, rtol=1e-9, atol=1e-12):
+def check_equal(observed, truth, rtol=1e-9, atol=1e-12) -> None:
     truth = to_numpy(truth)
     observed = to_numpy(observed)
+
     assert truth.shape == observed.shape, f"Observed shape {observed.shape}, expected shape {truth.shape}"
     if not np.allclose(observed, truth, rtol=rtol, atol=atol, equal_nan=True):
         np.testing.assert_allclose(truth, observed, rtol=rtol, atol=atol, equal_nan=True)
@@ -846,6 +854,110 @@ class ReshapedConvolutional2(SimpleConvolutional2):
         return output.reshape(output.shape[0], -1)
 
 
+class PooledConvolutional2(SimpleConvolutional2):
+    """Simple conv network, output is flattened"""
+
+    def __init__(self, *args, **kwargs):
+        """
+
+        Args:
+            d: list of channels, ie [2, 2] to have 2 conv layers with 2 channels
+        """
+        super().__init__(*args, **kwargs)
+
+    def forward(self, x: torch.Tensor):
+        x = self.predict(x)
+        x = F.adaptive_avg_pool2d(x, [1, 1])
+        return x.reshape(x.shape[0], -1)
+
+
+class StridedConvolutional2(SimpleModel2):
+    """Convolutional net without overlapping, single output, squeezes singleton spatial dimensions, rank-2 result"""
+
+    def __init__(self, d: List[int], kernel_size=(2, 2), nonlin=False, bias=False):
+        """
+
+        Args:
+            d: list of channels, ie [2, 2] to have 2 conv layers with 2 channels in each group
+            o: number of output classes used in final classification layer
+            input channels of input must by d[0]*o
+        """
+        super().__init__()
+        self.layers: List[nn.Module] = []
+        self.all_layers: List[nn.Module] = []
+        self.d: List[int] = d
+        for i in range(len(d) - 1):
+
+            # each group considers o filters independently
+            conv = nn.Conv2d(d[i], d[i + 1], kernel_size=kernel_size, stride=kernel_size, bias=bias)
+            setattr(conv, 'name', f'{i:02d}-conv')
+            self.layers.append(conv)
+            self.all_layers.append(conv)
+            if nonlin:
+                self.all_layers.append(nn.ReLU())
+        # average out all groups of o filters
+
+        self.final_chan = d[-1]
+        self.predict = torch.nn.Sequential(*self.all_layers)
+
+        self._finalize()
+
+    def forward(self, x: torch.Tensor):
+        # x = self.predict(x)
+        for i, layer in enumerate(self.all_layers):
+            x = layer(x)
+        # x = F.adaptive_avg_pool2d(x, [1, 1])
+        assert x.shape[2] == 1 and x.shape[3] == 1
+        return x.reshape(x.shape[0], 1)
+
+
+class GroupedConvolutional2(SimpleModel2):
+    """Conv network without mixing of output dimension, applies convolution to o independent groups of d channels
+    Each group is only affected by 1 output
+    """
+
+    def __init__(self, d: List[int], kernel_size=(2, 2), o=None, nonlin=False, bias=False):
+        """
+
+        Args:
+            d: list of channels, ie [2, 2] to have 2 conv layers with 2 channels in each group
+            o: number of output classes used in final classification layer
+            input channels of input must by d[0]*o
+        """
+        super().__init__()
+        self.layers: List[nn.Module] = []
+        self.all_layers: List[nn.Module] = []
+        self.d: List[int] = d
+        self.o = o
+        for i in range(len(d) - 1):
+
+            # each group considers o filters independently
+            conv = nn.Conv2d(d[i]*o, d[i + 1]*o, kernel_size, bias=bias, groups=o)
+            setattr(conv, 'name', f'{i:02d}-conv')
+            self.layers.append(conv)
+            self.all_layers.append(conv)
+            if nonlin:
+                self.all_layers.append(nn.ReLU())
+        # average out all groups of o filters
+
+        self.final_chan = d[-1]
+        self.predict = torch.nn.Sequential(*self.all_layers)
+
+        self._finalize()
+
+    def forward(self, x: torch.Tensor):
+        x = self.predict(x)
+        x = F.adaptive_avg_pool2d(x, (1, 1))  # n, o*do, 1, 1
+        n, out_dim, Oh, Ow = x.shape
+        assert (Oh, Ow) == (1, 1)
+        assert out_dim == self.final_chan * self.o
+        x = x.reshape(n, self.o, self.final_chan)
+        x = torch.einsum('noc->no', x)   # average across groups
+        assert x.shape == (n, self.o)
+        return x
+
+
+
 class ReshapedConvolutional(SimpleConvolutional):
     """Simple conv network, output is flattened"""
 
@@ -1313,6 +1425,14 @@ def kron_batch_sum(G: Tuple):
     """The format of gradient is G={Bt, At} where Bt is (n,do) and At is (n,di)"""
     Bt, At = G
     return torch.einsum('ni,nj->ij', Bt, At)
+
+
+def chop(mat: torch.Tensor, eps=1e-7) -> torch.Tensor:
+    """Set values below max(mat)*eps to zero"""
+
+    cutoff = eps*torch.max(mat)
+    zeros = torch.zeros_like(mat)
+    return torch.where(mat < eps*cutoff, zeros, mat)
 
 
 if __name__ == '__main__':

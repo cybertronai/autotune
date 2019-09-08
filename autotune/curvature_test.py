@@ -25,6 +25,8 @@ def test_singlelayer():
     # Reproduce Linear Regression example
     # https://www.wolframcloud.com/obj/yaroslavvb/newton/curvature-unit-tests.nb
 
+    torch.set_default_dtype(torch.float32)
+
     d = 2
     n = 3
     model = Net(d)
@@ -247,6 +249,8 @@ class Net2(nn.Module):
 def test_multilayer():
     # Reproduce multilayer example
     # https://www.wolframcloud.com/obj/yaroslavvb/newton/curvature-unit-tests.nb
+
+    torch.set_default_dtype(torch.float32)
 
     d1 = 2
     d2 = 4

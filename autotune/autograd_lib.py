@@ -19,7 +19,7 @@ H: mean Hessian of matmul
 H_bias: mean Hessian of bias
 
 
-Jb: batch output Jacobian of matmul, output sensitivity for each output,example pair, [o, n, ....]
+Jb: batch output Jacobian of matmul, gradient of output for each output,example pair, [o, n, ....]
 Jb_bias: output Jacobian of bias
 
 A, activations: inputs into matmul
@@ -28,6 +28,8 @@ A, activations: inputs into matmul
 B, backprops: backprop values (aka Lop aka Jacobian-vector product) for current layer
     Linear: [n, do]
     Conv2d: [n, do, Oh, Ow]
+
+weight: matmul part of layer, Linear [di, do], Conv [do, di, Kh, Kw]
 
 """
 
@@ -40,8 +42,8 @@ import torch.nn.functional as F
 import util as u
 
 _supported_layers = ['Linear', 'Conv2d']  # Supported layer class types
-_hooks_disabled: bool = False           # work-around for https://github.com/pytorch/pytorch/issues/25723
-_enforce_fresh_backprop: bool = False   # global switch to catch double backprop errors on Hessian computation
+_hooks_disabled: bool = False  # work-around for https://github.com/pytorch/pytorch/issues/25723
+_enforce_fresh_backprop: bool = False  # global switch to catch double backprop errors on Hessian computation
 
 
 def add_hooks(model: nn.Module) -> None:
@@ -129,7 +131,8 @@ def _capture_backprops(layer: nn.Module, _input, output):
         return
 
     if _enforce_fresh_backprop:
-        assert not hasattr(layer, 'backprops_list'), "Seeing result of previous backprop, use clear_backprops(model) to clear"
+        assert not hasattr(layer,
+                           'backprops_list'), "Seeing result of previous backprop, use clear_backprops(model) to clear"
         _enforce_fresh_backprop = False
 
     if not hasattr(layer, 'backprops_list'):
@@ -175,11 +178,22 @@ def compute_grad1(model: nn.Module, loss_type: str = 'mean') -> None:
                 setattr(layer.bias, 'grad1', B)
 
         elif layer_type == 'Conv2d':
-            A = torch.nn.functional.unfold(A, layer.kernel_size)
-            B = B.reshape(n, -1, A.shape[-1])
-            grad1 = torch.einsum('ijk,ilk->ijl', B, A)
-            shape = [n] + list(layer.weight.shape)
-            setattr(layer.weight, 'grad1', grad1.reshape(shape))
+            Kh, Kw = layer.kernel_size
+            di, do = layer.in_channels, layer.out_channels
+            Oh, Ow = layer.backprops_list[0].shape[2:]
+            weight_shape = [n] + list(layer.weight.shape)  # n, do, di, Kh, Kw
+            assert weight_shape == [n, do, di, Kh, Kw]
+            A = torch.nn.functional.unfold(A, layer.kernel_size)  # n, di * Kh * Kw, Oh * Ow
+
+            assert A.shape == (n, di * Kh * Kw, Oh * Ow)
+            assert layer.backprops_list[0].shape == (n, do, Oh, Ow)
+
+            # B = B.reshape(n, -1, A.shape[-1])
+            B = B.reshape(n, do, Oh * Ow)
+            grad1 = torch.einsum('ijk,ilk->ijl', B, A)  # n, do, di * Kh * Kw
+            assert grad1.shape == (n, do, di * Kh * Kw)
+
+            setattr(layer.weight, 'grad1', grad1.reshape(weight_shape))
             if layer.bias is not None:
                 setattr(layer.bias, 'grad1', torch.sum(B, dim=2))
 
@@ -212,7 +226,7 @@ def compute_hess(model: nn.Module, kron=False) -> None:
             A = torch.stack([A] * o)
 
             if not kron:
-                Jb = torch.einsum("oni,onj->onij", B, A).reshape(n*o,  -1)
+                Jb = torch.einsum("oni,onj->onij", B, A).reshape(n * o, -1)
                 H = torch.einsum('ni,nj->ij', Jb, Jb) / n
 
                 # Alternative way
@@ -220,47 +234,57 @@ def compute_hess(model: nn.Module, kron=False) -> None:
                 # H = torch.einsum('onij,onkl->ijkl', Jb, Jb) / n
                 # H = H.reshape(do*di, do*di)
 
-                H_bias = torch.einsum('oni,onj->ij', B, B)/n
-            else:
-                # TODO(y): can optimize this case by not stacking A
+                H_bias = torch.einsum('oni,onj->ij', B, B) / n
+            else:  # TODO(y): can optimize this case by not stacking A
                 AA = torch.einsum("oni,onj->ij", A, A) / (o * n)  # remove factor of o because A is repeated o times
                 BB = torch.einsum("oni,onj->ij", B, B) / n
                 H = u.KronFactored(AA, BB)
-                H_bias = u.KronFactored(torch.eye(1), torch.einsum("oni,onj->ij", B, B) / n) # TODO: reuse BB
+                H_bias = u.KronFactored(torch.eye(1), torch.einsum("oni,onj->ij", B, B) / n)  # TODO: reuse BB
                 setattr(layer.bias, 'hess_kron', H_bias)
 
         elif layer_type == 'Conv2d':
             Kh, Kw = layer.kernel_size
             di, do = layer.in_channels, layer.out_channels
-
-            A = layer.activations.detach()
-            A = torch.nn.functional.unfold(A, (Kh, Kw))       # n, di * Kh * Kw, Oh * Ow
-            o = len(layer.backprops_list)
             n, do, Oh, Ow = layer.backprops_list[0].shape
-            print(layer.backprops_list[0].shape)
+            o = len(layer.backprops_list)
 
-            B = torch.stack([Bt.reshape(n, do, -1) for Bt in layer.backprops_list])  # o, n, do, Oh*Ow
-            o = B.shape[0]
+            A = layer.activations
+            A = torch.nn.functional.unfold(A, kernel_size=layer.kernel_size,
+                                           stride=layer.stride,
+                                           padding=layer.padding,
+                                           dilation=layer.dilation)  # n, di * Kh * Kw, Oh * Ow
+            assert A.shape == (n, di * Kh * Kw, Oh * Ow)
+            B = torch.stack([Bh.reshape(n, do, -1) for Bh in layer.backprops_list])  # o, n, do, Oh*Ow
 
-            assert layer.padding == (0, 0)
-
-            A = torch.stack([A] * o)                          # o, n, di * Kh * Kw, Oh*Ow
+            A = torch.stack([A] * o)  # o, n, di * Kh * Kw, Oh*Ow
+            if kron and B.numel() > 1:
+                pass
 
             if not kron:
-                Jb = torch.einsum('onij,onkj->onik', B, A)        # o, n, do, di * Kh * Kw
+                Jb = torch.einsum('onij,onkj->onik', B, A)  # o, n, do, di * Kh * Kw
+                # print('Jb', Jb)
                 Jb_bias = torch.einsum('onij->oni', B)
 
-                Hi = torch.einsum('onij,onkl->nijkl', Jb, Jb)     # n, do, di*Kh*Kw, do, di*Kh*Kw
-                Hi = Hi.reshape(n, do*di*Kh*Kw, do*di*Kh*Kw)      # n, do*di*Kh*Kw, do*di*Kh*Kw
+                Hi = torch.einsum('onij,onkl->nijkl', Jb, Jb)  # n, do, di*Kh*Kw, do, di*Kh*Kw
+                Hi = Hi.reshape(n, do * di * Kh * Kw, do * di * Kh * Kw)  # n, do*di*Kh*Kw, do*di*Kh*Kw
                 Hi_bias = torch.einsum('oni,onj->nij', Jb_bias, Jb_bias)  # n, do, do
                 H = Hi.mean(dim=0)
                 H_bias = Hi_bias.mean(dim=0)
 
             else:
-                AA = torch.einsum("onic,onjc->ij", A, A) / (o * n)  # remove factor of o because A is repeated o times
-                BB = torch.einsum("onic,onjc->ij", B, B) / n  # (n * Oh * Ow)
+                AA = torch.einsum("onip->oni", A) / (Oh * Ow)  # group input channels
+                AA = torch.einsum("oni,onj->onij", AA, AA) / (o * n)  # remove factor of o because A is repeated o times
+                AA = torch.einsum("onij->ij", AA)  # sum out outputs/classes
+
+                BB = torch.einsum("onip->oni", B)  # group output channels
+                BB = torch.einsum("oni,onj->ij", BB, BB) / n
+
                 H = u.KronFactored(AA, BB)
-                H_bias = u.KronFactored(torch.eye(1), BB)
+
+                BB_bias = torch.einsum("onip->oni", B)  # group output channels
+                BB_bias = torch.einsum("oni,onj->onij", BB_bias, BB_bias) / n  # covariance
+                BB_bias = torch.einsum("onij->ij", BB_bias)  # sum out outputs + examples
+                H_bias = u.KronFactored(torch.eye(1), BB_bias)
 
         setattr(layer.weight, hess_attr, H)
         if layer.bias is not None:
@@ -282,7 +306,7 @@ def backprop_hess(output: torch.Tensor, hess_type: str) -> None:
     global _enforce_fresh_backprop, _hooks_disabled
 
     assert not _hooks_disabled
-    _enforce_fresh_backprop = True   # enforce empty backprops_list on first backprop
+    _enforce_fresh_backprop = True  # enforce empty backprops_list on first backprop
 
     valid_hess_types = ('LeastSquares', 'CrossEntropy', 'DebugLeastSquares')
     assert hess_type in valid_hess_types, f"Unexpected hessian type: {hess_type}, valid types are {valid_hess_types}"
@@ -325,4 +349,3 @@ def backprop_hess(output: torch.Tensor, hess_type: str) -> None:
 
     for o in range(o):
         output.backward(hess[o], retain_graph=True)
-

@@ -10,12 +10,16 @@ import torch.nn.functional as F
 
 
 def test_to_logits():
+    torch.set_default_dtype(torch.float32)
+
     p = torch.tensor([0.2, 0.5, 0.3])
     u.check_close(p, F.softmax(u.to_logits(p), dim=0))
     u.check_close(p.unsqueeze(0), F.softmax(u.to_logits(p.unsqueeze(0)), dim=1))
 
 
 def test_cross_entropy_soft():
+    torch.set_default_dtype(torch.float32)
+
     q = torch.tensor([0.4, 0.6]).unsqueeze(0).float()
     p = torch.tensor([0.7, 0.3]).unsqueeze(0).float()
     observed_logit = u.to_logits(p)
@@ -51,7 +55,8 @@ def test_cross_entropy_soft():
 
 def test_symsqrt():
     u.seed_random(1)
-    
+    torch.set_default_dtype(torch.float32)
+
     mat = torch.reshape(torch.arange(9) + 1, (3, 3)).float() + torch.eye(3) * 5
     mat = mat + mat.t()  # make symmetric
     smat = u.symsqrt(mat)

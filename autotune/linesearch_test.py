@@ -188,6 +188,8 @@ def test_lineasearch():
     global logger, stats_data, stats_targets, args
     run_name = 'default'  # name of run in
 
+    torch.set_default_dtype(torch.float32)
+
     # Copy this file & config to args.out
     out = '/tmp'
     if not os.path.isdir(out):
