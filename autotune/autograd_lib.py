@@ -8,6 +8,7 @@ o: number of output classes (exact Hessian), number of Hessian samples (sampled 
 n: batch-size
 do: output dimension (output channels for convolution)
 di: input dimension (input channels for convolution)
+s: spatial dimension (height * width)
 Oh, Ow: output height, output width (convolution)
 Kh, Kw: kernel height, kernel width (convolution)
 
@@ -19,8 +20,8 @@ H: mean Hessian of matmul
 H_bias: mean Hessian of bias
 
 
-Jb: batch output Jacobian of matmul, gradient of output for each output,example pair, [o, n, ....]
-Jb_bias: output Jacobian of bias
+Jo: batch output Jacobian of matmul, gradient of output for each output,example pair, [o, n, ....]
+Jo_bias: output Jacobian of bias
 
 A, activations: inputs into matmul
     Linear: [n, di]
@@ -198,15 +199,22 @@ def compute_grad1(model: nn.Module, loss_type: str = 'mean') -> None:
                 setattr(layer.bias, 'grad1', torch.sum(B, dim=2))
 
 
-def compute_hess(model: nn.Module, kron=False) -> None:
+def compute_hess(model: nn.Module, factored=False, method='kron') -> None:
     """Compute Hessian (torch.Tensor) for each parameter and save it under 'param.hess'.
 
-    If kron is True, instead compute Kronecker-factored Hessian (KronFactored), save under 'param.hess_kron'
+    If kron is True, instead compute Kronecker-factored Hessian (KronFactored), save under 'param.hess_factored'
+
+    method: which method to use for factoring
+      kron: kronecker product
+      mean_kron: mean of kronecker products
+      finegrained: experimental method for Conv2d
 
     Must be called after backprop_hess().
     """
 
-    hess_attr = 'hess' if not kron else 'hess_kron'
+    assert method in ['kron', 'mean_kron', 'finegrained']
+
+    hess_attr = 'hess' if not factored else 'hess_factored'
     for layer in model.modules():
         layer_type = _layer_type(layer)
         if layer_type not in _supported_layers:
@@ -225,13 +233,13 @@ def compute_hess(model: nn.Module, kron=False) -> None:
 
             A = torch.stack([A] * o)
 
-            if not kron:
-                Jb = torch.einsum("oni,onj->onij", B, A).reshape(n * o, -1)
-                H = torch.einsum('ni,nj->ij', Jb, Jb) / n
+            if not factored:
+                Jo = torch.einsum("oni,onj->onij", B, A).reshape(n * o, -1)
+                H = torch.einsum('ni,nj->ij', Jo, Jo) / n
 
                 # Alternative way
-                # Jb = torch.einsum("oni,onj->onij", B, A)
-                # H = torch.einsum('onij,onkl->ijkl', Jb, Jb) / n
+                # Jo = torch.einsum("oni,onj->onij", B, A)
+                # H = torch.einsum('onij,onkl->ijkl', Jo, Jo) / n
                 # H = H.reshape(do*di, do*di)
 
                 H_bias = torch.einsum('oni,onj->ij', B, B) / n
@@ -240,7 +248,7 @@ def compute_hess(model: nn.Module, kron=False) -> None:
                 BB = torch.einsum("oni,onj->ij", B, B) / n
                 H = u.KronFactored(AA, BB)
                 H_bias = u.KronFactored(torch.eye(1), torch.einsum("oni,onj->ij", B, B) / n)  # TODO: reuse BB
-                setattr(layer.bias, 'hess_kron', H_bias)
+                setattr(layer.bias, 'hess_factored', H_bias)
 
         elif layer_type == 'Conv2d':
             Kh, Kw = layer.kernel_size
@@ -257,29 +265,63 @@ def compute_hess(model: nn.Module, kron=False) -> None:
             B = torch.stack([Bh.reshape(n, do, -1) for Bh in layer.backprops_list])  # o, n, do, Oh*Ow
 
             A = torch.stack([A] * o)  # o, n, di * Kh * Kw, Oh*Ow
-            if kron and B.numel() > 1:
-                pass
+            #print("A0", A[0,...])
+            #print("B0", B[:,0,...])
 
-            if not kron:
-                Jb = torch.einsum('onij,onkj->onik', B, A)  # o, n, do, di * Kh * Kw
-                # print('Jb', Jb)
-                Jb_bias = torch.einsum('onij->oni', B)
+            #print("A1", A[1,...])
+            #print("B1", B[:,1,...])
 
-                Hi = torch.einsum('onij,onkl->nijkl', Jb, Jb)  # n, do, di*Kh*Kw, do, di*Kh*Kw
+            if not factored:
+                Jo = torch.einsum('onis,onks->onik', B, A)  # o, n, do, di * Kh * Kw
+                Jo_bias = torch.einsum('onis->oni', B)
+
+                Hi = torch.einsum('onij,onkl->nijkl', Jo, Jo)  # n, do, di*Kh*Kw, do, di*Kh*Kw
                 Hi = Hi.reshape(n, do * di * Kh * Kw, do * di * Kh * Kw)  # n, do*di*Kh*Kw, do*di*Kh*Kw
-                Hi_bias = torch.einsum('oni,onj->nij', Jb_bias, Jb_bias)  # n, do, do
+                Hi_bias = torch.einsum('oni,onj->nij', Jo_bias, Jo_bias)  # n, do, do
                 H = Hi.mean(dim=0)
                 H_bias = Hi_bias.mean(dim=0)
-
             else:
-                AA = torch.einsum("onip->oni", A) / (Oh * Ow)  # group input channels
-                AA = torch.einsum("oni,onj->onij", AA, AA) / (o * n)  # remove factor of o because A is repeated o times
-                AA = torch.einsum("onij->ij", AA)  # sum out outputs/classes
+                if method == 'kron':
+                    AA = torch.einsum("onis->oni", A) / (Oh * Ow)  # group input channels
+                    AA = torch.einsum("oni,onj->onij", AA, AA) / (o * n)  # remove factor of o because A is repeated o times
 
-                BB = torch.einsum("onip->oni", B)  # group output channels
-                BB = torch.einsum("oni,onj->ij", BB, BB) / n
+                    AA = torch.einsum("onij->ij", AA)  # sum out outputs/classes
 
-                H = u.KronFactored(AA, BB)
+                    BB = torch.einsum("onip->oni", B)  # group output channels
+                    BB = torch.einsum("oni,onj->ij", BB, BB) / n
+                elif method == 'mean_kron':
+                    AA = torch.einsum("onis->oni", A) / (Oh * Ow)  # group input channels
+                    AA = torch.einsum("oni,onj->onij", AA, AA) / (o)  # remove factor of o because A is repeated o times
+
+                    AA = torch.einsum("onij->nij", AA)  # sum out outputs/classes
+
+                    BB = torch.einsum("onip->oni", B)  # group output channels
+                    BB = torch.einsum("oni,onj->nij", BB, BB)
+
+                    # kron1 = u.KronFactored(AA[0,...], BB[0,...])
+                    # kron2 = u.KronFactored(AA[1,...], BB[1,...])
+                    # print("hess1", kron1.expand())
+                    # print("hess2", kron2.expand())
+                    # print('hess_mean', u.MeanKronFactored(AA, BB).expand())
+                    #AA = AA.sum(0)
+                    #BB = BB.sum(0)
+
+                elif method == 'finegrained':
+                    AA = torch.einsum("onis,onjs->onijs", A, A)
+                    AA = torch.einsum("onijs->onij", AA) / (Oh * Oh)
+                    AA = torch.einsum("onij->oij", AA) / n
+                    AA = torch.einsum("oij->ij", AA) / o
+
+                    BB = torch.einsum("onip,onjp->onijp", B, B) / n
+                    BB = torch.einsum("onijp->onij", BB)
+                    BB = torch.einsum("onij->nij", BB)
+                    BB = torch.einsum("nij->ij", BB)
+
+                if method == 'mean_kron':
+                    H = u.MeanKronFactored(AA, BB)
+                    # H = u.KronFactored(AA[0,...], BB[0,...])
+                else:
+                    H = u.KronFactored(AA, BB)
 
                 BB_bias = torch.einsum("onip->oni", B)  # group output channels
                 BB_bias = torch.einsum("oni,onj->onij", BB_bias, BB_bias) / n  # covariance
@@ -295,7 +337,7 @@ def backprop_hess(output: torch.Tensor, hess_type: str) -> None:
     """
     Call backprop 1 or more times to accumulate values needed for Hessian computation.
 
-    Values are accumulated under .backprops_list attr of each layer and used by downstream functions (ie, compute_hess, compute_hess_kron)
+    Values are accumulated under .backprops_list attr of each layer and used by downstream functions (ie, compute_hess, compute_hess_factored)
 
     Args:
         output: prediction of neural network (ie, input of nn.CrossEntropyLoss())

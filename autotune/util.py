@@ -92,7 +92,12 @@ def kron(a: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]], b: Optional[
     if isinstance(a, Tuple):
         assert b is None
         a, b = a
+    #print('inside a', a)
+    #print('inside b', b)
     result = torch.einsum("ab,cd->acbd", a, b)
+    #print('kron', result)
+    # TODO: use tensor.continuous
+
     if result.is_contiguous():
         return result.view(a.size(0) * b.size(0), a.size(1) * b.size(1))
     else:
@@ -112,6 +117,50 @@ class KronFactored:
     def __init__(self, AA: torch.Tensor, BB: torch.Tensor):
         self.AA = AA
         self.BB = BB
+
+    def expand(self):
+        """Returns expanded representation (row-major form)"""
+        return kron(self.BB, self.AA)
+
+
+class MeanKronFactored:
+    """Factored representation as a mean of kronecker products"""
+    AA: torch.Tensor   # forward factor
+    BB: torch.Tensor   # backward factor
+
+    def __init__(self, AA: torch.Tensor, BB: torch.Tensor):
+        # AA: n, di, di
+        # BB: n, do, do
+
+        assert AA.shape[0] == BB.shape[0]
+        assert AA.shape[1] == AA.shape[2]
+        assert BB.shape[1] == BB.shape[2]
+        n, di, _ = AA.shape
+        n, do, _ = BB.shape
+        self.AA = AA
+        self.BB = BB
+        self.n = n
+        self.di = di
+        self.do = do
+
+    def expand(self):
+        """Returns expanded representation (row-major form)"""
+
+        result = torch.einsum('nij,nkl->nikjl', self.BB, self.AA)
+        # print(result)
+        # result = kron(self.BB[0,...], self.AA[0,...]).unsqueeze(0)  # torch.einsum("ab,cd->acbd", a, b)
+        # result = torch.einsum("ab,cd->acbd", a, b)
+        # print('outside left', self.BB[0,...])
+        # print('outside right', self.AA[0,...])
+        # print('outside', torch.einsum('ab,cd->abcd', self.BB[0,...], self.AA[0,...]))
+        # result = kron(self.BB[0,...], self.AA[0,...])  # torch.einsum("ab,cd->acbd", a, b)
+#        if not result.is_contiguous():
+#            print("Warning, using contiguous")
+#            result = result.contiguous()   # needed for .view
+
+        result = result.sum(dim=0)/self.n
+        return result.view(self.do*self.di, self.do*self.di)
+
 
 
 def expand_hess(*v) -> Union[torch.Tensor, List[torch.Tensor]]:
