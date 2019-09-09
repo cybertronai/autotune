@@ -891,13 +891,16 @@ def test_kron_conv_exact():
     """
     u.seed_random(1)
 
-    n, Xh, Xw = 2, 2, 3
+    n, Xh, Xw = 2, 2, 2
     Kh, Kw = 1, 1
-    dd = [3, 2, 2]
+    dd = [2, 2, 2]
     o = dd[-1]
 
     model: u.SimpleModel = u.PooledConvolutional2(dd, kernel_size=(Kh, Kw), nonlin=False, bias=True)
     data = torch.randn((n, dd[0], Xh, Xw))
+
+    print(model)
+    print(data)
 
     loss_type = 'CrossEntropy'    #  loss_type = 'LeastSquares'
     if loss_type == 'LeastSquares':

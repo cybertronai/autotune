@@ -218,7 +218,7 @@ def compute_hess(model: nn.Module, method='exact') -> None:
 
     # TODO: get rid of factored flag
 
-    hess_attr = 'hess' if method == 'exact' else 'hess_factored'
+    hess_attr = 'hess' if (method == 'exact' or method == 'autograd') else 'hess_factored'
 
     for layer in model.modules():
         layer_type = _layer_type(layer)
