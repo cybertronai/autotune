@@ -43,7 +43,7 @@ import torch.nn.functional as F
 import util as u
 
 _supported_layers = ['Linear', 'Conv2d']  # Supported layer class types  TODO(y): make non-private
-_supported_methods = ['exact', 'kron', 'mean_kron', 'finegrained']  # supported approximation methods
+_supported_methods = ['exact', 'kron', 'mean_kron', 'experimental_kfac']  # supported approximation methods
 _supported_losses = ['LeastSquares', 'CrossEntropy']
 _hooks_disabled: bool = False  # work-around for https://github.com/pytorch/pytorch/issues/25723
 _enforce_fresh_backprop: bool = False  # global switch to catch double backprop errors on Hessian computation
@@ -209,7 +209,7 @@ def compute_hess(model: nn.Module, method='exact', attr_name=None) -> None:
     method: which method to use for factoring
       kron: kronecker product
       mean_kron: mean of kronecker products, one kronecker product per datapoint
-      finegrained: experimental method for Conv2d
+      experimental_kfac: experimental method for Conv2d
     field_name: If None, will save hessian to "hess" for exact computation and to "hess_factored" for factored, otherwise use this attr name
 
     Must be called after backprop_hess().
@@ -307,15 +307,7 @@ def compute_hess(model: nn.Module, method='exact', attr_name=None) -> None:
                 BB = torch.einsum("onip->oni", B)  # group output channels
                 BB = torch.einsum("oni,onj->nij", BB, BB)
 
-                # kron1 = u.KronFactored(AA[0,...], BB[0,...])
-                # kron2 = u.KronFactored(AA[1,...], BB[1,...])
-                # print("hess1", kron1.expand())
-                # print("hess2", kron2.expand())
-                # print('hess_mean', u.MeanKronFactored(AA, BB).expand())
-                #AA = AA.sum(0)
-                #BB = BB.sum(0)
-
-            elif method == 'finegrained':
+            elif method == 'experimental_kfac':
                 AA = torch.einsum("onis,onjs->onijs", A, A)
                 AA = torch.einsum("onijs->onij", AA) / (Oh * Oh)
                 AA = torch.einsum("onij->oij", AA) / n
@@ -331,7 +323,6 @@ def compute_hess(model: nn.Module, method='exact', attr_name=None) -> None:
                     H = u.MeanKronFactored(AA, BB)
                     # H = u.KronFactored(AA[0,...], BB[0,...])
                 else:
-                    assert method == 'kron'
                     H = u.KronFactored(AA, BB)
 
                 BB_bias = torch.einsum("onip->oni", B)  # group output channels
