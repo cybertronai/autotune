@@ -110,6 +110,7 @@ def stable_kron(a, b):
     return kron(a/a_norm, b/b_norm)*a_norm*b_norm
 
 
+# TODO(y): rename to factored covariance?
 class FactoredMatrix:
     """Factored representation of a matrix"""
     pass
@@ -260,7 +261,7 @@ def lyapunov_svd(A, C, rtol=1e-4, use_svd=False):
     if relative_error > rtol:
         # TODO(y): currently spams with errors, implement another method based on Newton iteration
         pass
-        # print(f"Warning, error {relative_error} encountered in lyapunov_svd")
+        print(f"Warning, error {relative_error} encountered in lyapunov_svd")
 
     return X
 
@@ -429,35 +430,26 @@ def cov_dist(cov1: torch.Tensor, cov2: torch.Tensor) -> float:
 
 
 def check_close(a0: torch.Tensor, b0: torch.Tensor, rtol=1e-5, atol=1e-8) -> None:
+    """Convenience method for check_equal with tolerances defaulting to typical errors observed in neural network
+    ops in float32 precision."""
     return check_equal(a0, b0, rtol=rtol, atol=atol)
 
 
-# todo: replace with torch.allclose
 def check_equal(observed, truth, rtol=1e-9, atol=1e-12) -> None:
+    """
+    Assert fail any entries in two arrays are not close to each to desired tolerance. See np.allclose for meaning of rtol, atol
+
+    """
     truth = to_numpy(truth)
     observed = to_numpy(observed)
 
     assert truth.shape == observed.shape, f"Observed shape {observed.shape}, expected shape {truth.shape}"
+    # run np.testing.assert_allclose for extra info on discrepancies
     if not np.allclose(observed, truth, rtol=rtol, atol=atol, equal_nan=True):
         np.testing.assert_allclose(truth, observed, rtol=rtol, atol=atol, equal_nan=True)
 
-    # try:
-    #     np.testing.assert_allclose(truth, observed, rtol=rtol, atol=atol)
-    # except Exception as _e:
-    #     print("Error" + "-" * 60)
-    #     for line in traceback.format_stack():
-    #         print(line.strip())
-    #
-    #     exc_type, exc_value, exc_traceback = sys.exc_info()
-    #     print("*** print_tb:")
-    #     traceback.print_tb(exc_traceback, limit=10, file=sys.stdout)
-    #     efmt = traceback.format_exc()
-    #     print(efmt)
-    #     import pdb
-    #     pdb.set_trace()
 
-
-def get_param(layer):
+def get_param(layer): # TODO(y): deprecate?
     """Extract parameter out of layer, assumes there's just one parameter in a layer."""
     named_params = [(name, param) for (name, param) in layer.named_parameters()]
     assert len(named_params) == 1, named_params
@@ -965,7 +957,10 @@ class StridedConvolutional2(SimpleModel2):
     def forward(self, x: torch.Tensor):
         # x = self.predict(x)
         for i, layer in enumerate(self.all_layers):
+            print(i, x)
             x = layer(x)
+
+        print(i+1, x)
         # x = F.adaptive_avg_pool2d(x, [1, 1])
         assert x.shape[2] == 1 and x.shape[3] == 1
         return x.reshape(x.shape[0], 1)

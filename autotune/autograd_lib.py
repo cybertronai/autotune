@@ -1,14 +1,14 @@
 """
 Library for extracting interesting quantites from autograd.
 
-Not thread-safe because of module-level variables
+Not thread-safe because of module-level variables affecting state of autograd
 
 Notation:
 o: number of output classes (exact Hessian), number of Hessian samples (sampled Hessian)
 n: batch-size
 do: output dimension (output channels for convolution)
 di: input dimension (input channels for convolution)
-s: spatial dimension (height * width)
+s: spatial dimension (Oh*Ow)
 Oh, Ow: output height, output width (convolution)
 Kh, Kw: kernel height, kernel width (convolution)
 
@@ -41,12 +41,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 import util as u
+import globals as gl
 
 _supported_layers = ['Linear', 'Conv2d']  # Supported layer class types  TODO(y): make non-private
 _supported_methods = ['exact', 'kron', 'mean_kron', 'experimental_kfac']  # supported approximation methods
 _supported_losses = ['LeastSquares', 'CrossEntropy']
+
+# module-level variables affecting state of autograd
 _hooks_disabled: bool = False  # work-around for https://github.com/pytorch/pytorch/issues/25723
 _enforce_fresh_backprop: bool = False  # global switch to catch double backprop errors on Hessian computation
+_backprops_prefix = ''    # hooks save backprops to, ie param.{_backprops_prefix}backprops_list
 
 
 def add_hooks(model: nn.Module) -> None:
@@ -133,14 +137,14 @@ def _capture_backprops(layer: nn.Module, _input, output):
     if _hooks_disabled:
         return
 
+    backprops_list_attr = _backprops_prefix+'backprops_list'
     if _enforce_fresh_backprop:
-        assert not hasattr(layer,
-                           'backprops_list'), "Seeing result of previous backprop, use clear_backprops(model) to clear"
+        assert not hasattr(layer, backprops_list_attr), f"Seeing result of previous backprop in {backprops_list_attr}, use {_backprops_prefix}clear_backprops(model) to clear"
         _enforce_fresh_backprop = False
 
-    if not hasattr(layer, 'backprops_list'):
-        setattr(layer, 'backprops_list', [])
-    layer.backprops_list.append(output[0].detach())
+    if not hasattr(layer, backprops_list_attr):
+        setattr(layer, backprops_list_attr, [])
+    getattr(layer, backprops_list_attr).append(output[0].detach())
 
 
 def clear_backprops(model: nn.Module) -> None:
@@ -148,6 +152,13 @@ def clear_backprops(model: nn.Module) -> None:
     for layer in model.modules():
         if hasattr(layer, 'backprops_list'):
             del layer.backprops_list
+
+
+def clear_hess_backprops(model: nn.Module) -> None:
+    """Delete layer.backprops_list in every layer."""
+    for layer in model.modules():
+        if hasattr(layer, 'hess_backprops_list'):
+            del layer.hess_backprops_list
 
 
 def compute_grad1(model: nn.Module, loss_type: str = 'mean') -> None:
@@ -224,20 +235,21 @@ def compute_hess(model: nn.Module, method='exact', attr_name=None) -> None:
     else:
         hess_attr = attr_name
 
+    li = 0
     for layer in model.modules():
         layer_type = _layer_type(layer)
         if layer_type not in _supported_layers:
             continue
         assert hasattr(layer, 'activations'), "No activations detected, run forward after add_hooks(model)"
-        assert hasattr(layer, 'backprops_list'), "No backprops detected, run backward after add_hooks(model)"
+        assert hasattr(layer, 'hess_backprops_list'), "No backprops detected, run hess_backprop"
 
         if layer_type == 'Linear':
             A = layer.activations
-            B = torch.stack(layer.backprops_list)
+            B = torch.stack(layer.hess_backprops_list)
 
             n = A.shape[0]
             di = A.shape[1]
-            do = layer.backprops_list[0].shape[1]
+            do = layer.hess_backprops_list[0].shape[1]
             o = B.shape[0]
 
             A = torch.stack([A] * o)
@@ -263,8 +275,8 @@ def compute_hess(model: nn.Module, method='exact', attr_name=None) -> None:
         elif layer_type == 'Conv2d':
             Kh, Kw = layer.kernel_size
             di, do = layer.in_channels, layer.out_channels
-            n, do, Oh, Ow = layer.backprops_list[0].shape
-            o = len(layer.backprops_list)
+            n, do, Oh, Ow = layer.hess_backprops_list[0].shape
+            o = len(layer.hess_backprops_list)
 
             A = layer.activations
             A = torch.nn.functional.unfold(A, kernel_size=layer.kernel_size,
@@ -272,14 +284,12 @@ def compute_hess(model: nn.Module, method='exact', attr_name=None) -> None:
                                            padding=layer.padding,
                                            dilation=layer.dilation)  # n, di * Kh * Kw, Oh * Ow
             assert A.shape == (n, di * Kh * Kw, Oh * Ow)
-            B = torch.stack([Bh.reshape(n, do, -1) for Bh in layer.backprops_list])  # o, n, do, Oh*Ow
+            B = torch.stack([Bh.reshape(n, do, -1) for Bh in layer.hess_backprops_list])  # o, n, do, Oh*Ow
 
             A = torch.stack([A] * o)  # o, n, di * Kh * Kw, Oh*Ow
-            #print("A0", A[0,...])
-            #print("B0", B[:,0,...])
-
-            #print("A1", A[1,...])
-            #print("B1", B[:,1,...])
+            if gl.debug_dump_stats:
+                print(f'layerA {li}', A)
+                print(f'layerB {li}', B)
 
             if method == 'exact':
                 Jo = torch.einsum('onis,onks->onik', B, A)  # o, n, do, di * Kh * Kw
@@ -333,6 +343,7 @@ def compute_hess(model: nn.Module, method='exact', attr_name=None) -> None:
         setattr(layer.weight, hess_attr, H)
         if layer.bias is not None:
             setattr(layer.bias, hess_attr, H_bias)
+        li+=1
 
 
 def backprop_hess(output: torch.Tensor, hess_type: str) -> None:
@@ -347,10 +358,13 @@ def backprop_hess(output: torch.Tensor, hess_type: str) -> None:
 
     """
 
-    global _enforce_fresh_backprop, _hooks_disabled
+    global _enforce_fresh_backprop, _hooks_disabled, _backprops_prefix
 
     assert not _hooks_disabled
     _enforce_fresh_backprop = True  # enforce empty backprops_list on first backprop
+
+    old_backprops_prefix = _backprops_prefix
+    _backprops_prefix = 'hess_'    # backprops go into hess_backprops_list
 
     valid_hess_types = ('LeastSquares', 'CrossEntropy', 'DebugLeastSquares')
     assert hess_type in valid_hess_types, f"Unexpected hessian type: {hess_type}, valid types are {valid_hess_types}"
@@ -393,3 +407,6 @@ def backprop_hess(output: torch.Tensor, hess_type: str) -> None:
 
     for o in range(o):
         output.backward(hess[o], retain_graph=True)
+
+    _backprops_prefix = old_backprops_prefix
+

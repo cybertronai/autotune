@@ -695,7 +695,7 @@ def subtest_hess_type(hess_type):
         loss_fn = nn.CrossEntropyLoss()
 
     autograd_lib.backprop_hess(output, hess_type=hess_type)
-    autograd_lib.clear_backprops(model)
+    autograd_lib.clear_hess_backprops(model)
     autograd_lib.backprop_hess(output, hess_type=hess_type)
 
     autograd_lib.compute_hess(model)
@@ -765,7 +765,6 @@ def test_kron_nano():
 
         # compare factored with direct approach
         assert(u.cov_dist(Hk, H2) < 1e-6)
-
 
 
 def test_kron_tiny():
@@ -954,6 +953,63 @@ def test_kron_conv_exact():
         u.check_close(H, Hk)
 
 
+def test_kron_1x2_conv():
+    """Minimal example of a 1x2 convolution whose Hessian/grad covariance doesn't factor as Kronecker.
+
+    Two convolutional layers stacked on top of each other, followed by least squares loss.
+
+        Outputs:
+        0 tensor([[[[0., 1., 1., 1.]]]])
+        1 tensor([[[[2., 3.]]]])
+        2 tensor([[[[8.]]]])
+
+        Activations/backprops:
+        layerA 0 tensor([[[[0., 1.],
+                           [1., 1.]]]])
+        layerB 0 tensor([[[[1., 2.]]]])
+
+        layerA 1 tensor([[[[2.],
+                           [3.]]]])
+        layerB 1 tensor([[[[1.]]]])
+
+        layer 0 discrepancy: 0.6597963571548462
+        layer 1 discrepancy: 0.0
+
+     """
+    u.seed_random(1)
+
+    n, Xh, Xw = 1, 1, 4
+    Kh, Kw = 1, 2
+    dd = [1, 1, 1]
+    o = dd[-1]
+
+    model: u.SimpleModel = u.StridedConvolutional2(dd, kernel_size=(Kh, Kw), nonlin=False, bias=True)
+    data = torch.tensor([0, 1., 1, 1]).reshape((n, dd[0], Xh, Xw))
+
+    model.layers[0].bias.data.zero_()
+    model.layers[0].weight.data.copy_(torch.tensor([1, 2]))
+
+    model.layers[1].bias.data.zero_()
+    model.layers[1].weight.data.copy_(torch.tensor([1, 2]))
+
+    sample_output = model(data)
+
+    autograd_lib.clear_backprops(model)
+    autograd_lib.add_hooks(model)
+    output = model(data)
+    autograd_lib.backprop_hess(output, hess_type='LeastSquares')
+    autograd_lib.compute_hess(model, method='kron', attr_name='hess_kron')
+    autograd_lib.compute_hess(model, method='exact')
+    autograd_lib.disable_hooks()
+
+    for i in range(len(model.layers)):
+        layer = model.layers[i]
+        H = layer.weight.hess
+        Hk = layer.weight.hess_kron
+        Hk = Hk.expand()
+        print(u.cov_dist(H, Hk))
+
+
 def test_kron_conv_golden():
     """Hardcoded error values to detect unexpected numeric changes."""
     u.seed_random(1)
@@ -1041,5 +1097,5 @@ if __name__ == '__main__':
     # test_kron_conv_exact1()
     # test_kron_conv_exact2()
     # test_kron_conv_exact()
-    test_kron_conv_golden()
-    # u.run_all_tests(sys.modules[__name__])
+    #    test_kron_1x2_conv()
+    u.run_all_tests(sys.modules[__name__])
