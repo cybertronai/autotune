@@ -899,8 +899,8 @@ def test_kron_conv_exact():
     model: u.SimpleModel = u.PooledConvolutional2(dd, kernel_size=(Kh, Kw), nonlin=False, bias=True)
     data = torch.randn((n, dd[0], Xh, Xw))
 
-    print(model)
-    print(data)
+    #print(model)
+    #print(data)
 
     loss_type = 'CrossEntropy'    #  loss_type = 'LeastSquares'
     if loss_type == 'LeastSquares':
@@ -954,8 +954,92 @@ def test_kron_conv_exact():
         u.check_close(H, Hk)
 
 
+def test_kron_conv_golden():
+    """Hardcoded error values to detect unexpected numeric changes."""
+    u.seed_random(1)
+
+    n, Xh, Xw = 2, 8, 8
+    Kh, Kw = 2, 2
+    dd = [3, 3, 3, 3]
+    o = dd[-1]
+
+    model: u.SimpleModel = u.PooledConvolutional2(dd, kernel_size=(Kh, Kw), nonlin=False, bias=True)
+    data = torch.randn((n, dd[0], Xh, Xw))
+
+    # print(model)
+    # print(data)
+
+    loss_type = 'CrossEntropy'    #  loss_type = 'LeastSquares'
+    if loss_type == 'LeastSquares':
+        loss_fn = u.least_squares
+    elif loss_type == 'DebugLeastSquares':
+        loss_fn = u.debug_least_squares
+    else:    # CrossEntropy
+        loss_fn = nn.CrossEntropyLoss()
+
+    sample_output = model(data)
+
+    if loss_type.endswith('LeastSquares'):
+        targets = torch.randn(sample_output.shape)
+    elif loss_type == 'CrossEntropy':
+        targets = torch.LongTensor(n).random_(0, o)
+
+    autograd_lib.clear_backprops(model)
+    autograd_lib.add_hooks(model)
+    output = model(data)
+    autograd_lib.backprop_hess(output, hess_type=loss_type)
+    autograd_lib.compute_hess(model, method='kron', attr_name='hess_kron')
+    autograd_lib.compute_hess(model, method='mean_kron', attr_name='hess_mean_kron')
+    autograd_lib.compute_hess(model, method='exact')
+    autograd_lib.disable_hooks()
+
+    errors1 = []
+    errors2 = []
+    for i in range(len(model.layers)):
+        layer = model.layers[i]
+
+        # direct Hessian computation
+        H = layer.weight.hess
+        H_bias = layer.bias.hess
+
+        # factored Hessian computation
+        Hk = layer.weight.hess_kron
+        Hk_bias = layer.bias.hess_kron
+        Hk = Hk.expand()
+        Hk_bias = Hk_bias.expand()
+
+        Hk2 = layer.weight.hess_mean_kron
+        Hk2_bias = layer.bias.hess_mean_kron
+        Hk2 = Hk2.expand()
+        Hk2_bias = Hk2_bias.expand()
+
+        # autograd Hessian computation
+        loss = loss_fn(output, targets)
+        Ha = u.hessian(loss, layer.weight).reshape(H.shape)
+        Ha_bias = u.hessian(loss, layer.bias)
+
+        # compare direct against autograd
+        Ha = Ha.reshape(H.shape)
+        # rel_error = torch.max((H-Ha)/Ha)
+
+        u.check_close(H, Ha, rtol=1e-5, atol=1e-7)
+        u.check_close(Ha_bias, H_bias, rtol=1e-5, atol=1e-7)
+
+        errors1.extend([u.cov_dist(H, Hk), u.cov_dist(H_bias, Hk_bias)])
+        errors2.extend([u.cov_dist(H, Hk2), u.cov_dist(H_bias, Hk2_bias)])
+
+    errors1 = torch.tensor(errors1)
+    errors2 = torch.tensor(errors2)
+    golden_errors1 = torch.tensor([0.09458080679178238, 0.0, 0.13416489958763123, 0.0, 0.0003909761435352266, 0.0])
+    golden_errors2 = torch.tensor([0.0945773795247078, 0.0, 0.13418318331241608, 0.0, 4.478318658129865e-07, 0.0])
+
+    u.check_equal(golden_errors1, errors1)
+    u.check_equal(golden_errors2, errors2)
+
+
 if __name__ == '__main__':
     # test_kron_conv_exact1()
     # test_kron_conv_exact2()
     # test_kron_conv_exact()
-    u.run_all_tests(sys.modules[__name__])
+    test_kron_conv_golden()
+    # u.run_all_tests(sys.modules[__name__])

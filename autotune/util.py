@@ -420,12 +420,12 @@ def symsqrt_svd(mat: torch.Tensor):
     return u @ torch.diag(si) @ v.t()
 
 
-def cov_dist(cov1, cov2):
+def cov_dist(cov1: torch.Tensor, cov2: torch.Tensor) -> float:
     """A measure of distance between two covariance matrices."""
 
     cov1 = symsqrt_svd(cov1)
     cov2 = symsqrt_svd(cov2)
-    return torch.norm(cov1 - cov2)
+    return torch.norm(cov1 - cov2).item()
 
 
 def check_close(a0: torch.Tensor, b0: torch.Tensor, rtol=1e-5, atol=1e-8) -> None:
@@ -880,6 +880,9 @@ class SimpleConvolutional2(SimpleModel2):
         self.all_layers: List[nn.Module] = []
         self.d: List[int] = d
         assert len(d) >= 2
+        for di in d:
+            assert di>0
+
         for i in range(len(d) - 1):
             conv = nn.Conv2d(d[i], d[i + 1], kernel_size, bias=bias)
             setattr(conv, 'name', f'{i:02d}-conv')
@@ -1495,3 +1498,7 @@ def chop(mat: torch.Tensor, eps=1e-7) -> torch.Tensor:
 if __name__ == '__main__':
     run_all_tests(sys.modules[__name__])
 
+
+def format_list(ll: List) -> str:
+    formatted = ["%.2f"%(d,) for d in ll]
+    return ', '.join(formatted)

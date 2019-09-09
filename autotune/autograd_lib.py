@@ -201,7 +201,7 @@ def compute_grad1(model: nn.Module, loss_type: str = 'mean') -> None:
                 setattr(layer.bias, 'grad1', torch.sum(B, dim=2))
 
 
-def compute_hess(model: nn.Module, method='exact') -> None:
+def compute_hess(model: nn.Module, method='exact', attr_name=None) -> None:
     """Compute Hessian (torch.Tensor) for each parameter and save it under 'param.hess or param.hess_factored'.
 
     If method is exact, saves Tensor hessian under param.hess. Otherwise save u.FactoredMatrix instance under param.hess_factored
@@ -210,6 +210,7 @@ def compute_hess(model: nn.Module, method='exact') -> None:
       kron: kronecker product
       mean_kron: mean of kronecker products, one kronecker product per datapoint
       finegrained: experimental method for Conv2d
+    field_name: If None, will save hessian to "hess" for exact computation and to "hess_factored" for factored, otherwise use this attr name
 
     Must be called after backprop_hess().
     """
@@ -218,7 +219,10 @@ def compute_hess(model: nn.Module, method='exact') -> None:
 
     # TODO: get rid of factored flag
 
-    hess_attr = 'hess' if (method == 'exact' or method == 'autograd') else 'hess_factored'
+    if attr_name is None:
+        hess_attr = 'hess' if (method == 'exact' or method == 'autograd') else 'hess_factored'
+    else:
+        hess_attr = attr_name
 
     for layer in model.modules():
         layer_type = _layer_type(layer)
