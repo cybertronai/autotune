@@ -16,6 +16,8 @@ import wandb
 from attrdict import AttrDefault
 from torch.utils.tensorboard import SummaryWriter
 
+import autograd_lib
+
 import util as u
 
 
@@ -35,7 +37,20 @@ def main():
     o = d1
     n = args.stats_batch_size
     d = [d1, 30, 30, 30, 20, 30, 30, 30, d1]
-    model = u.SimpleFullyConnected(d, nonlin=args.nonlin)
+
+    # small values for debugging
+    args.stats_steps = 10
+    args.train_steps = 10
+    args.data_width = 2
+    args.targets_width = 2
+    d1 = args.data_width ** 2
+    d2 = 10
+    d3 = args.targets_width ** 2
+    o = d3
+    n = args.stats_batch_size
+    d = [d1, d2, d3]
+
+    model = u.SimpleFullyConnected2(d, nonlin=args.nonlin)
     model = model.to(gl.device)
 
     try:
@@ -53,71 +68,33 @@ def main():
     #optimizer = torch.optim.SGD(model.parameters(), lr=0.03, momentum=0.9)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.003)
 
-    dataset = u.TinyMNIST(data_width=args.data_width, targets_width=args.targets_width)
+    dataset = u.TinyMNIST(data_width=args.data_width, targets_width=args.targets_width) #original_targets=True)
 
     train_loader = torch.utils.data.DataLoader(dataset, batch_size=args.train_batch_size, shuffle=False, drop_last=True)
     train_iter = u.infinite_iter(train_loader)
 
+    stats_iter = None
     if not args.full_batch:
         stats_loader = torch.utils.data.DataLoader(dataset, batch_size=args.stats_batch_size, shuffle=False, drop_last=True)
         stats_iter = u.infinite_iter(stats_loader)
 
-    test_dataset = u.TinyMNIST(data_width=args.data_width, targets_width=args.targets_width,
-                               train=False)
+    test_dataset = u.TinyMNIST(data_width=args.data_width, targets_width=args.targets_width, train=False)
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.train_batch_size, shuffle=False, drop_last=True)
     test_iter = u.infinite_iter(test_loader)
-
-    skip_forward_hooks = False
-    skip_backward_hooks = False
-
-    def capture_activations(module: nn.Module, input: List[torch.Tensor], output: torch.Tensor):
-        if skip_forward_hooks:
-            return
-        assert gl.backward_idx == 0  # no need to forward-prop on Hessian computation
-        assert not hasattr(module, 'activations'), "Seeing results of previous autograd, call util.zero_grad to clear"
-        assert len(input) == 1, "this was tested for single input layers only"
-        setattr(module, "activations", input[0].detach())
-        setattr(module, "output", output.detach())
-
-    def capture_backprops(module: nn.Module, _input, output):
-        if skip_backward_hooks:
-            return
-        assert len(output) == 1, "this works for single variable layers only"
-        if gl.backward_idx == 0:
-            assert not hasattr(module, 'backprops'), "Seeing results of previous autograd, call util.zero_grad to clear"
-            setattr(module, 'backprops', [])
-        assert gl.backward_idx == len(module.backprops)
-        module.backprops.append(output[0])
-
-    def save_grad(param: nn.Parameter) -> Callable[[torch.Tensor], None]:
-        """Hook to save gradient into 'param.saved_grad', so it can be accessed after model.zero_grad(). Only stores gradient
-        if the value has not been set, call util.zero_grad to clear it."""
-
-        def save_grad_fn(grad):
-            if not hasattr(param, 'saved_grad'):
-                setattr(param, 'saved_grad', grad)
-
-        return save_grad_fn
-
-    for layer in model.layers:
-        layer.register_forward_hook(capture_activations)
-        layer.register_backward_hook(capture_backprops)
-        layer.weight.register_hook(save_grad(layer.weight))
 
     def loss_fn(data, targets):
         err = data - targets.view(-1, data.shape[1])
         assert len(data) == len(targets)
         return torch.sum(err * err) / 2 / len(data) / d1 / d1
 
+    autograd_lib.add_hooks(model)
     gl.token_count = 0
     last_outer = 0
     for step in range(args.stats_steps):
         if last_outer:
             u.log_scalars({"time/outer": 1000*(time.perf_counter() - last_outer)})
         last_outer = time.perf_counter()
-        # compute validation loss
-        skip_forward_hooks = True
-        skip_backward_hooks = True
+
         with u.timeit("val_loss"):
             test_data, test_targets = next(test_iter)
             test_output = model(test_data)
@@ -130,40 +107,23 @@ def main():
             data, targets = dataset.data, dataset.targets
         else:
             data, targets = next(stats_iter)
-        skip_forward_hooks = False
-        skip_backward_hooks = False
 
-        # get gradient values
+        # Capture Hessian and gradient stats
+        autograd_lib.enable_hooks()
+        autograd_lib.clear_backprops(model)
+        autograd_lib.clear_hess_backprops(model)
         with u.timeit("backprop_g"):
-            gl.backward_idx = 0
-            u.zero_grad(model)
             output = model(data)
             loss = loss_fn(output, targets)
             loss.backward(retain_graph=True)
-
-        # get Hessian values
-        skip_forward_hooks = True
-        id_mat = torch.eye(o).to(gl.device)
-
-        u.log_scalar(loss=loss.item())
-
         with u.timeit("backprop_H"):
-            # optionally use randomized low-rank approximation of Hessian
-            hess_rank = args.hess_samples if args.hess_samples else o
+            autograd_lib.backprop_hess(output, hess_type='LeastSquares')
+        autograd_lib.disable_hooks()   # TODO(y): use remove_hooks
 
-            for out_idx in range(hess_rank):
-                model.zero_grad()
-                # backprop to get section of batch output jacobian for output at position out_idx
-                output = model(data)  # opt: using autograd.grad means I don't have to zero_grad
-                if args.hess_samples:
-                    bval = torch.LongTensor(n, o).to(gl.device).random_(0, 2) * 2 - 1
-                    bval = bval.float()
-                else:
-                    ei = id_mat[out_idx]
-                    bval = torch.stack([ei] * n)
-                gl.backward_idx = out_idx + 1
-                output.backward(bval)
-            skip_backward_hooks = True  #
+        with u.timeit("compute_grad1"):
+            autograd_lib.compute_grad1(model)
+        with u.timeit("compute_hess"):
+            autograd_lib.compute_hess(model)
 
         for (i, layer) in enumerate(model.layers):
 
@@ -192,11 +152,13 @@ def main():
             g = G.sum(dim=0, keepdim=True) / n  # average gradient
             assert g.shape == (1, d[i] * d[i + 1])
 
+            u.check_equal(G, layer.grad1)
+
             if args.autograd_check:
                 u.check_close(B_t.t() @ A_t / n, layer.weight.saved_grad)
                 u.check_close(g.reshape(d[i + 1], d[i]), layer.weight.saved_grad)
 
-            s.sparsity = torch.sum(layer.output <= 0) / layer.output.numel()
+            s.sparsity = torch.sum(layer.output <= 0) / layer.output.numel()  # proportion of activations that are zero
             s.mean_activation = torch.mean(A_t)
             s.mean_backprop = torch.mean(B_t)
 
@@ -207,23 +169,8 @@ def main():
                 s.sigma_l2 = u.sym_l2_norm(sigma)
                 s.sigma_erank = torch.trace(sigma)/s.sigma_l2
 
-            #############################
-            # Hessian stats
-            #############################
-            A_t = layer.activations
-            Bh_t = [layer.backprops[out_idx + 1] for out_idx in range(hess_rank)]
-            Amat_t = torch.cat([A_t] * hess_rank, dim=0)
-            Bmat_t = torch.cat(Bh_t, dim=0)
-
-            assert Amat_t.shape == (n * hess_rank, d[i])
-            assert Bmat_t.shape == (n * hess_rank, d[i + 1])
-
-            lambda_regularizer = args.lmb * torch.eye(d[i] * d[i + 1]).to(gl.device)
-            with u.timeit(f"khatri_H-{i}"):
-                Jb = u.khatri_rao_t(Bmat_t, Amat_t)  # batch Jacobian, in row-vec format
-
-            with u.timeit(f"H-{i}"):
-                H = Jb.t() @ Jb / n
+            lambda_regularizer = args.lmb * torch.eye(d[i + 1]*d[i]).to(gl.device)
+            H = layer.hess
 
             with u.timeit(f"invH-{i}"):
                 invH = torch.cholesky_inverse(H+lambda_regularizer)
@@ -235,7 +182,6 @@ def main():
             with u.timeit(f"norms-{i}"):
                 s.H_fro = H.flatten().norm()
                 s.iH_fro = invH.flatten().norm()
-                s.jacobian_fro = Jb.flatten().norm()
                 s.grad_fro = g.flatten().norm()
                 s.param_fro = layer.weight.data.flatten().norm()
 
@@ -261,22 +207,22 @@ def main():
                 pinvH = u.pinv(H)
 
             with u.timeit(f'curv-{i}'):
-                s.regret_newton = u.to_scalar(g @ pinvH @ g.t() / 2)
                 s.grad_curv = curv_direction(g)
                 ndir = g @ pinvH  # newton direction
                 s.newton_curv = curv_direction(ndir)
                 setattr(layer.weight, 'pre', pinvH)  # save Newton preconditioner
-                s.step_openai = 1 / s.grad_curv if s.grad_curv else 999
+                s.step_openai = s.grad_fro**2 / s.grad_curv if s.grad_curv else 999
                 s.step_max = 2 / s.H_l2
                 s.step_min = torch.tensor(2) / torch.trace(H)
 
                 s.newton_fro = ndir.flatten().norm()  # frobenius norm of Newton update
+                s.regret_newton = u.to_scalar(g @ pinvH @ g.t() / 2)   # replace with "quadratic_form"
                 s.regret_gradient = loss_direction(g, s.step_openai)
 
             with u.timeit(f'rho-{i}'):
                 p_sigma = u.lyapunov_svd(H, sigma)
                 if u.has_nan(p_sigma) and args.compute_rho:  # use expensive method
-                    H0 = H.cpu().detach().numpy()
+                    H0 = H.cpu().detach().numpy()   # use u.to_numpy
                     sigma0 = sigma.cpu().detach().numpy()
                     p_sigma = scipy.linalg.solve_lyapunov(H0, sigma0)
                     p_sigma = torch.tensor(p_sigma).to(gl.device)
@@ -290,8 +236,9 @@ def main():
 
             with u.timeit(f"batch-{i}"):
                 s.batch_openai = torch.trace(H @ sigma) / (g @ H @ g.t())
-                s.diversity = torch.norm(G, "fro") ** 2 / torch.norm(g) ** 2
+                s.diversity = torch.norm(G, "fro") ** 2 / torch.norm(g) ** 2 / n
 
+                # Faster approaches for noise variance computation
                 # s.noise_variance = torch.trace(H.inverse() @ sigma)
                 # try:
                 #     # this fails with singular sigma

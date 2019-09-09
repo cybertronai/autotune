@@ -48,9 +48,9 @@ _supported_methods = ['exact', 'kron', 'mean_kron', 'experimental_kfac']  # supp
 _supported_losses = ['LeastSquares', 'CrossEntropy']
 
 # module-level variables affecting state of autograd
-_hooks_disabled: bool = False  # work-around for https://github.com/pytorch/pytorch/issues/25723
-_enforce_fresh_backprop: bool = False  # global switch to catch double backprop errors on Hessian computation
-_backprops_prefix = ''    # hooks save backprops to, ie param.{_backprops_prefix}backprops_list
+_global_hooks_disabled: bool = False  # work-around for https://github.com/pytorch/pytorch/issues/25723
+_global_enforce_fresh_backprop: bool = False  # global switch to catch double backprop errors on Hessian computation
+_global_backprops_prefix = ''    # hooks save backprops to, ie param.{_backprops_prefix}backprops_list
 
 
 def add_hooks(model: nn.Module) -> None:
@@ -68,8 +68,8 @@ def add_hooks(model: nn.Module) -> None:
         model:
     """
 
-    global _hooks_disabled
-    _hooks_disabled = False
+    global _global_hooks_disabled
+    _global_hooks_disabled = False
 
     handles = []
     for layer in model.modules():
@@ -100,15 +100,15 @@ def disable_hooks() -> None:
     Globally disable all hooks installed by this library.
     """
 
-    global _hooks_disabled
-    _hooks_disabled = True
+    global _global_hooks_disabled
+    _global_hooks_disabled = True
 
 
 def enable_hooks() -> None:
     """The opposite of disable_hooks()."""
 
-    global _hooks_disabled
-    _hooks_disabled = False
+    global _global_hooks_disabled
+    _global_hooks_disabled = False
 
 
 def is_supported(layer: nn.Module) -> bool:
@@ -124,7 +124,7 @@ def _layer_type(layer: nn.Module) -> str:
 def _capture_activations(layer: nn.Module, input: List[torch.Tensor], output: torch.Tensor):
     """Save activations into layer.activations in forward pass"""
 
-    if _hooks_disabled:
+    if _global_hooks_disabled:
         return
     assert _layer_type(layer) in _supported_layers, "Hook installed on unsupported layer, this shouldn't happen"
     setattr(layer, "activations", input[0].detach())
@@ -132,15 +132,15 @@ def _capture_activations(layer: nn.Module, input: List[torch.Tensor], output: to
 
 def _capture_backprops(layer: nn.Module, _input, output):
     """Append backprop to layer.backprops_list in backward pass."""
-    global _enforce_fresh_backprop
+    global _global_enforce_fresh_backprop
 
-    if _hooks_disabled:
+    if _global_hooks_disabled:
         return
 
-    backprops_list_attr = _backprops_prefix+'backprops_list'
-    if _enforce_fresh_backprop:
-        assert not hasattr(layer, backprops_list_attr), f"Seeing result of previous backprop in {backprops_list_attr}, use {_backprops_prefix}clear_backprops(model) to clear"
-        _enforce_fresh_backprop = False
+    backprops_list_attr = _global_backprops_prefix + 'backprops_list'
+    if _global_enforce_fresh_backprop:
+        assert not hasattr(layer, backprops_list_attr), f"Seeing result of previous backprop in {backprops_list_attr}, use {_global_backprops_prefix}clear_backprops(model) to clear"
+        _global_enforce_fresh_backprop = False
 
     if not hasattr(layer, backprops_list_attr):
         setattr(layer, backprops_list_attr, [])
@@ -358,13 +358,13 @@ def backprop_hess(output: torch.Tensor, hess_type: str) -> None:
 
     """
 
-    global _enforce_fresh_backprop, _hooks_disabled, _backprops_prefix
+    global _global_enforce_fresh_backprop, _global_hooks_disabled, _global_backprops_prefix
 
-    assert not _hooks_disabled
-    _enforce_fresh_backprop = True  # enforce empty backprops_list on first backprop
+    assert not _global_hooks_disabled
+    _global_enforce_fresh_backprop = True  # enforce empty backprops_list on first backprop
 
-    old_backprops_prefix = _backprops_prefix
-    _backprops_prefix = 'hess_'    # backprops go into hess_backprops_list
+    old_backprops_prefix = _global_backprops_prefix
+    _global_backprops_prefix = 'hess_'    # backprops go into hess_backprops_list
 
     valid_hess_types = ('LeastSquares', 'CrossEntropy', 'DebugLeastSquares')
     assert hess_type in valid_hess_types, f"Unexpected hessian type: {hess_type}, valid types are {valid_hess_types}"
@@ -408,5 +408,5 @@ def backprop_hess(output: torch.Tensor, hess_type: str) -> None:
     for o in range(o):
         output.backward(hess[o], retain_graph=True)
 
-    _backprops_prefix = old_backprops_prefix
+    _global_backprops_prefix = old_backprops_prefix
 
