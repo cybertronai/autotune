@@ -16,20 +16,20 @@ from torch import nn as nn
 
 # for line profiling
 try:
-  # noinspection PyUnboundLocalVariable
-  profile  # throws an exception when profile isn't defined
+    # noinspection PyUnboundLocalVariable
+    profile  # throws an exception when profile isn't defined
 except NameError:
-  profile = lambda x: x   # if it's not defined simply ignore the decorator.
+    profile = lambda x: x  # if it's not defined simply ignore the decorator.
 
 
 @profile
-def main():
-
+def main_test():
     u.seed_random(1)
     logdir = u.create_local_logdir(args.logdir)
     run_name = os.path.basename(logdir)
-    gl.event_writer = SummaryWriter(logdir)
-    print(f"Logging to {run_name}")
+    #gl.event_writer = SummaryWriter(logdir)
+    gl.event_writer = u.NoOp()
+    # print(f"Logging to {run_name}")
 
     d1 = args.data_width ** 2
     assert args.data_width == args.targets_width
@@ -57,7 +57,7 @@ def main():
     o = d3
     n = args.stats_batch_size
     d = [d1, d2, d3]
-    dsize = max(args.train_batch_size, args.stats_batch_size)+1
+    dsize = max(args.train_batch_size, args.stats_batch_size) + 1
 
     model = u.SimpleFullyConnected2(d, bias=True, nonlin=args.nonlin)
     model = model.to(gl.device)
@@ -74,20 +74,24 @@ def main():
     except Exception as e:
         print(f"wandb crash with {e}")
 
-    #optimizer = torch.optim.SGD(model.parameters(), lr=0.03, momentum=0.9)
+    # optimizer = torch.optim.SGD(model.parameters(), lr=0.03, momentum=0.9)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.03)  # make 10x smaller for least-squares loss
-    dataset = u.TinyMNIST(data_width=args.data_width, targets_width=args.targets_width, dataset_size=dsize, original_targets=True)
+    dataset = u.TinyMNIST(data_width=args.data_width, targets_width=args.targets_width, dataset_size=dsize,
+                          original_targets=True)
 
     train_loader = torch.utils.data.DataLoader(dataset, batch_size=args.train_batch_size, shuffle=False, drop_last=True)
     train_iter = u.infinite_iter(train_loader)
 
     stats_iter = None
     if not args.full_batch:
-        stats_loader = torch.utils.data.DataLoader(dataset, batch_size=args.stats_batch_size, shuffle=False, drop_last=True)
+        stats_loader = torch.utils.data.DataLoader(dataset, batch_size=args.stats_batch_size, shuffle=False,
+                                                   drop_last=True)
         stats_iter = u.infinite_iter(stats_loader)
 
-    test_dataset = u.TinyMNIST(data_width=args.data_width, targets_width=args.targets_width, train=False, dataset_size=dsize, original_targets=True)
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.train_batch_size, shuffle=False, drop_last=True)
+    test_dataset = u.TinyMNIST(data_width=args.data_width, targets_width=args.targets_width, train=False,
+                               dataset_size=dsize, original_targets=True)
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.train_batch_size, shuffle=False,
+                                              drop_last=True)
     test_iter = u.infinite_iter(test_loader)
 
     if loss_type == 'LeastSquares':
@@ -101,14 +105,14 @@ def main():
     val_losses = []
     for step in range(args.stats_steps):
         if last_outer:
-            u.log_scalars({"time/outer": 1000*(time.perf_counter() - last_outer)})
+            u.log_scalars({"time/outer": 1000 * (time.perf_counter() - last_outer)})
         last_outer = time.perf_counter()
 
         with u.timeit("val_loss"):
             test_data, test_targets = next(test_iter)
             test_output = model(test_data)
             val_loss = loss_fn(test_output, test_targets)
-            print("val_loss", val_loss.item())
+            # print("val_loss", val_loss.item())
             val_losses.append(val_loss.item())
             u.log_scalar(val_loss=val_loss.item())
 
@@ -128,7 +132,7 @@ def main():
             loss.backward(retain_graph=True)
         with u.timeit("backprop_H"):
             autograd_lib.backprop_hess(output, hess_type=loss_type)
-        autograd_lib.disable_hooks()   # TODO(y): use remove_hooks
+        autograd_lib.disable_hooks()  # TODO(y): use remove_hooks
 
         with u.timeit("compute_grad1"):
             autograd_lib.compute_grad1(model)
@@ -138,8 +142,8 @@ def main():
         for (i, layer) in enumerate(model.layers):
 
             # input/output layers are unreasonably expensive if not using Kronecker factoring
-            if d[i]>50 or d[i+1]>50:
-                print(f'layer {i} is too big ({d[i],d[i+1]}), skipping stats')
+            if d[i] > 50 or d[i + 1] > 50:
+                print(f'layer {i} is too big ({d[i], d[i + 1]}), skipping stats')
                 continue
 
             if args.skip_stats:
@@ -178,13 +182,13 @@ def main():
                 efisher = G.t() @ G / n
                 sigma = efisher - g.t() @ g
                 s.sigma_l2 = u.sym_l2_norm(sigma)
-                s.sigma_erank = torch.trace(sigma)/s.sigma_l2
+                s.sigma_erank = torch.trace(sigma) / s.sigma_l2
 
-            lambda_regularizer = args.lmb * torch.eye(d[i + 1]*d[i]).to(gl.device)
+            lambda_regularizer = args.lmb * torch.eye(d[i + 1] * d[i]).to(gl.device)
             H = layer.weight.hess
 
             with u.timeit(f"invH-{i}"):
-                invH = torch.cholesky_inverse(H+lambda_regularizer)
+                invH = torch.cholesky_inverse(H + lambda_regularizer)
 
             with u.timeit(f"H_l2-{i}"):
                 s.H_l2 = u.sym_l2_norm(H)
@@ -222,19 +226,20 @@ def main():
                 ndir = g @ pinvH  # newton direction
                 s.newton_curv = curv_direction(ndir)
                 setattr(layer.weight, 'pre', pinvH)  # save Newton preconditioner
-                s.step_openai = s.grad_fro**2 / s.grad_curv if s.grad_curv else 999
+                s.step_openai = s.grad_fro ** 2 / s.grad_curv if s.grad_curv else 999
                 s.step_max = 2 / s.H_l2
                 s.step_min = torch.tensor(2) / torch.trace(H)
 
                 s.newton_fro = ndir.flatten().norm()  # frobenius norm of Newton update
-                s.regret_newton = u.to_scalar(g @ pinvH @ g.t() / 2)   # replace with "quadratic_form"
+                s.regret_newton = u.to_scalar(g @ pinvH @ g.t() / 2)  # replace with "quadratic_form"
                 s.regret_gradient = loss_direction(g, s.step_openai)
 
             with u.timeit(f'rho-{i}'):
                 p_sigma = u.lyapunov_svd(H, sigma)
                 if u.has_nan(p_sigma) and args.compute_rho:  # use expensive method
                     print('using expensive method')
-                    import pdb; pdb.set_trace()
+                    import pdb;
+                    pdb.set_trace()
                     H0, sigma0 = u.to_numpy_multiple(H, sigma)
                     p_sigma = scipy.linalg.solve_lyapunov(H0, sigma0)
                     p_sigma = torch.tensor(p_sigma).to(gl.device)
@@ -284,7 +289,7 @@ def main():
                     if args.weight_decay:
                         for group in optimizer.param_groups:
                             for param in group['params']:
-                                param.data.mul_(1-args.weight_decay)
+                                param.data.mul_(1 - args.weight_decay)
                 else:
                     for (layer_idx, layer) in enumerate(model.layers):
                         param: torch.nn.Parameter = layer.weight
@@ -302,6 +307,9 @@ def main():
                 gl.token_count += data.shape[0]
 
     gl.event_writer.close()
+
+    assert val_losses[0] > 2.4  # 2.459578037261963
+    assert val_losses[-1] < 2.2  # 2.134408950805664
 
 
 if __name__ == '__main__':
@@ -339,7 +347,8 @@ if __name__ == '__main__':
     parser.add_argument('--data_width', type=int, default=28)
     parser.add_argument('--targets_width', type=int, default=28)
     parser.add_argument('--lmb', type=float, default=1e-3)
-    parser.add_argument('--hess_samples', type=int, default=1, help='number of samples when sub-sampling outputs, 0 for exact hessian')
+    parser.add_argument('--hess_samples', type=int, default=1,
+                        help='number of samples when sub-sampling outputs, 0 for exact hessian')
     parser.add_argument('--hess_kfac', type=int, default=0, help='whether to use KFAC approximation for hessian')
     parser.add_argument('--compute_rho', type=int, default=1, help='use expensive method to compute rho')
     parser.add_argument('--skip_stats', type=int, default=0, help='skip all stats collection')
@@ -348,4 +357,4 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    main()
+    main_test()

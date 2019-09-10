@@ -246,8 +246,9 @@ def sym_erank(mat):
 
 
 def regularize_mat(mat, eps):
-    coef = l2_norm(mat)*eps
-    return mat+torch.eye(mat.shape[0])*coef
+    rtol = l2_norm(mat)*eps
+    atol = 1e-12
+    return mat+torch.eye(mat.shape[0])*(rtol+atol)
 
 
 def lyapunov_svd(A, C, rtol=1e-4, eps=1e-7, use_svd=False):
@@ -648,6 +649,7 @@ class SimpleModel(nn.Module):
         u.register_hooks(self)
 
 
+# TODO(y): rename to LeastSquaresLoss
 def least_squares(data, targets=None):
     """Least squares loss (like MSELoss, but an extra 1/2 factor."""
     if targets is None:
@@ -1510,3 +1512,20 @@ if __name__ == '__main__':
 def format_list(ll: List) -> str:
     formatted = ["%.2f"%(d,) for d in ll]
     return ', '.join(formatted)
+
+
+def create_local_logdir(logdir) -> str:
+    """Dedupes logdir by appending a number to avoid conflict with existing folder at logdir, ie logdir, logdir01"""
+    attemp_count = 0
+    while os.path.exists(f"{logdir}{attemp_count:02d}"):
+        attemp_count += 1
+    logdir = f"{logdir}{attemp_count:02d}"
+    return logdir
+
+
+# no_op method/object that accept every signature
+class NoOp:
+    def __getattr__(self, *_args):
+        def no_op(*_args, **_kwargs): pass
+
+        return no_op
