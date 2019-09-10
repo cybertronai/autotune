@@ -58,8 +58,9 @@ def add_hooks(model: nn.Module) -> None:
     Adds hooks to model to save activations and backprop values.
 
     The hooks will
-    1. assign activations to param.activations during forward pass
-    2. append backprops to param.backprops_list during backward pass
+    1. assign activations to layer.activations during forward pass
+    2. assign layer output to layer.output during forward pass
+    2. append backprops to layer.backprops_list during backward pass
 
     Call "clear_backprops" to clear backprops_list values for all parameters in the model
     Call "remove_hooks(model)" to undo this operation.
@@ -75,6 +76,7 @@ def add_hooks(model: nn.Module) -> None:
     for layer in model.modules():
         if _layer_type(layer) in _supported_layers:
             handles.append(layer.register_forward_hook(_capture_activations))
+            handles.append(layer.register_forward_hook(_capture_output))
             handles.append(layer.register_backward_hook(_capture_backprops))
 
     model.__dict__.setdefault('autograd_hacks_hooks', []).extend(handles)
@@ -128,6 +130,15 @@ def _capture_activations(layer: nn.Module, input: List[torch.Tensor], output: to
         return
     assert _layer_type(layer) in _supported_layers, "Hook installed on unsupported layer, this shouldn't happen"
     setattr(layer, "activations", input[0].detach())
+
+
+def _capture_output(layer: nn.Module, input: List[torch.Tensor], output: torch.Tensor):
+    """Save activations into layer.activations in forward pass"""
+
+    if _global_hooks_disabled:
+        return
+    assert _layer_type(layer) in _supported_layers, "Hook installed on unsupported layer, this shouldn't happen"
+    setattr(layer, "output", output.detach())
 
 
 def _capture_backprops(layer: nn.Module, _input, output):

@@ -5,7 +5,7 @@ import os
 import random
 import sys
 import time
-from typing import Any, Dict, Callable, Optional, Tuple, Union, Sequence
+from typing import Any, Dict, Callable, Optional, Tuple, Union, Sequence, Iterable
 from typing import List
 
 import globals as gl
@@ -245,8 +245,18 @@ def sym_erank(mat):
     return torch.trace(mat) / sym_l2_norm(mat)
 
 
-def lyapunov_svd(A, C, rtol=1e-4, use_svd=False):
+def regularize_mat(mat, eps):
+    coef = l2_norm(mat)*eps
+    return mat+torch.eye(mat.shape[0])*coef
+
+
+def lyapunov_svd(A, C, rtol=1e-4, eps=1e-7, use_svd=False):
     """Solve AX+XA=C using SVD"""
+
+    # This method doesn't work for singular matrices, so regularize it
+    # TODO: can optimize performance by reusing eigenvalues from regularization computations
+    A = regularize_mat(A, eps)
+    C = regularize_mat(C, eps)
 
     assert A.shape[0] == A.shape[1]
     assert len(A.shape) == 2
@@ -280,16 +290,19 @@ def to_scalar(x):
     return x[0]
 
 
+def to_numpy_multiple(*xs, dtype=np.float32):
+    return (to_numpy(x, dtype) for x in xs)
+
+
 def to_numpy(x, dtype=np.float32) -> np.ndarray:
     """Convert numeric object to numpy array."""
+
     if hasattr(x, 'numpy'):  # PyTorch tensor
         result = x.detach().numpy().astype(dtype)
     elif type(x) == np.ndarray:
         result = x.astype(dtype)
     else:  # Some Python type
         result = np.array(x).astype(dtype)
-
-    assert np.issubdtype(result.dtype, np.number), f"Converting non-numeric result (type={result.dtype}): {result}"
     return result
 
 
@@ -449,7 +462,7 @@ def check_equal(observed, truth, rtol=1e-9, atol=1e-12) -> None:
         np.testing.assert_allclose(truth, observed, rtol=rtol, atol=atol, equal_nan=True)
 
 
-def get_param(layer): # TODO(y): deprecate?
+def get_param(layer):  # TODO(y): deprecate?
     """Extract parameter out of layer, assumes there's just one parameter in a layer."""
     named_params = [(name, param) for (name, param) in layer.named_parameters()]
     assert len(named_params) == 1, named_params

@@ -3,24 +3,27 @@
 
 import argparse
 import os
-import sys
 import time
-from typing import Callable, List
 
+import autograd_lib
 import globals as gl
 # import torch
 import scipy
 import torch
-import torch.nn as nn
+import util as u
 import wandb
 from attrdict import AttrDefault
 from torch.utils.tensorboard import SummaryWriter
 
-import autograd_lib
+# for line profiling
+try:
+  # noinspection PyUnboundLocalVariable
+  profile  # throws an exception when profile isn't defined
+except NameError:
+  profile = lambda x: x   # if it's not defined simply ignore the decorator.
 
-import util as u
 
-
+@profile
 def main():
     attemp_count = 0
     while os.path.exists(f"{args.logdir}{attemp_count:02d}"):
@@ -39,16 +42,19 @@ def main():
     d = [d1, 30, 30, 30, 20, 30, 30, 30, d1]
 
     # small values for debugging
+    args.wandb = 1
     args.stats_steps = 10
     args.train_steps = 10
+    args.stats_batch_size = 10
     args.data_width = 2
     args.targets_width = 2
     d1 = args.data_width ** 2
-    d2 = 10
+    d2 = 2
     d3 = args.targets_width ** 2
     o = d3
     n = args.stats_batch_size
     d = [d1, d2, d3]
+    dsize = max(args.train_batch_size, args.stats_batch_size)+1
 
     model = u.SimpleFullyConnected2(d, nonlin=args.nonlin)
     model = model.to(gl.device)
@@ -67,8 +73,7 @@ def main():
 
     #optimizer = torch.optim.SGD(model.parameters(), lr=0.03, momentum=0.9)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.003)
-
-    dataset = u.TinyMNIST(data_width=args.data_width, targets_width=args.targets_width) #original_targets=True)
+    dataset = u.TinyMNIST(data_width=args.data_width, targets_width=args.targets_width, dataset_size=dsize) #original_targets=True)
 
     train_loader = torch.utils.data.DataLoader(dataset, batch_size=args.train_batch_size, shuffle=False, drop_last=True)
     train_iter = u.infinite_iter(train_loader)
@@ -78,7 +83,7 @@ def main():
         stats_loader = torch.utils.data.DataLoader(dataset, batch_size=args.stats_batch_size, shuffle=False, drop_last=True)
         stats_iter = u.infinite_iter(stats_loader)
 
-    test_dataset = u.TinyMNIST(data_width=args.data_width, targets_width=args.targets_width, train=False)
+    test_dataset = u.TinyMNIST(data_width=args.data_width, targets_width=args.targets_width, train=False, dataset_size=dsize)
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.train_batch_size, shuffle=False, drop_last=True)
     test_iter = u.infinite_iter(test_loader)
 
@@ -128,7 +133,8 @@ def main():
         for (i, layer) in enumerate(model.layers):
 
             # input/output layers are unreasonably expensive if not using Kronecker factoring
-            if i == 0 or i == len(d) - 2:
+            if d[i]>50 or d[i+1]>50:
+                print(f'layer {i} is too big ({d[i],d[i+1]}), skipping stats')
                 continue
 
             if args.skip_stats:
@@ -143,7 +149,7 @@ def main():
             assert A_t.shape == (n, d[i])
 
             # add factor of n because backprop takes loss averaged over batch, while we need per-example loss
-            B_t = layer.backprops[0] * n
+            B_t = layer.backprops_list[0] * n
             assert B_t.shape == (n, d[i + 1])
 
             with u.timeit(f"khatri_g-{i}"):
@@ -152,7 +158,7 @@ def main():
             g = G.sum(dim=0, keepdim=True) / n  # average gradient
             assert g.shape == (1, d[i] * d[i + 1])
 
-            u.check_equal(G, layer.grad1)
+            u.check_equal(G.reshape(layer.weight.grad1.shape), layer.weight.grad1)
 
             if args.autograd_check:
                 u.check_close(B_t.t() @ A_t / n, layer.weight.saved_grad)
@@ -170,7 +176,7 @@ def main():
                 s.sigma_erank = torch.trace(sigma)/s.sigma_l2
 
             lambda_regularizer = args.lmb * torch.eye(d[i + 1]*d[i]).to(gl.device)
-            H = layer.hess
+            H = layer.weight.hess
 
             with u.timeit(f"invH-{i}"):
                 invH = torch.cholesky_inverse(H+lambda_regularizer)
@@ -222,12 +228,13 @@ def main():
             with u.timeit(f'rho-{i}'):
                 p_sigma = u.lyapunov_svd(H, sigma)
                 if u.has_nan(p_sigma) and args.compute_rho:  # use expensive method
-                    H0 = H.cpu().detach().numpy()   # use u.to_numpy
-                    sigma0 = sigma.cpu().detach().numpy()
+                    print('using expensive method')
+                    H0, sigma0 = u.to_numpy_multiple(H, sigma)
                     p_sigma = scipy.linalg.solve_lyapunov(H0, sigma0)
                     p_sigma = torch.tensor(p_sigma).to(gl.device)
 
                 if u.has_nan(p_sigma):
+                    # import pdb; pdb.set_trace()
                     s.psigma_erank = H.shape[0]
                     s.rho = 1
                 else:
@@ -255,50 +262,44 @@ def main():
             u.log_scalars(u.nest_stats(layer.name, s))
 
         # gradient steps
-        last_inner = 0
-        for i in range(args.train_steps):
-            if last_inner:
-                u.log_scalars({"time/inner": 1000*(time.perf_counter() - last_inner)})
-            last_inner = time.perf_counter()
+        with u.timeit('inner'):
+            for i in range(args.train_steps):
+                optimizer.zero_grad()
+                data, targets = next(train_iter)
+                model.zero_grad()
+                output = model(data)
+                loss = loss_fn(output, targets)
+                loss.backward()
 
-            optimizer.zero_grad()
-            data, targets = next(train_iter)
-            model.zero_grad()
-            output = model(data)
-            loss = loss_fn(output, targets)
-            loss.backward()
+                #            u.log_scalar(train_loss=loss.item())
 
-            #            u.log_scalar(train_loss=loss.item())
+                if args.method != 'newton':
+                    optimizer.step()
+                    if args.weight_decay:
+                        for group in optimizer.param_groups:
+                            for param in group['params']:
+                                param.data.mul_(1-args.weight_decay)
+                else:
+                    for (layer_idx, layer) in enumerate(model.layers):
+                        param: torch.nn.Parameter = layer.weight
+                        param_data: torch.Tensor = param.data
+                        param_data.copy_(param_data - 0.1 * param.grad)
+                        if layer_idx != 1:  # only update 1 layer with Newton, unstable otherwise
+                            continue
+                        u.nan_check(layer.weight.pre)
+                        u.nan_check(param.grad.flatten())
+                        u.nan_check(u.v2r(param.grad.flatten()) @ layer.weight.pre)
+                        param_new_flat = u.v2r(param_data.flatten()) - u.v2r(param.grad.flatten()) @ layer.weight.pre
+                        u.nan_check(param_new_flat)
+                        param_data.copy_(param_new_flat.reshape(param_data.shape))
 
-            if args.method != 'newton':
-                optimizer.step()
-                if args.weight_decay:
-                    for group in optimizer.param_groups:
-                        for param in group['params']:
-                            param.data.mul_(1-args.weight_decay)
-            else:
-                for (layer_idx, layer) in enumerate(model.layers):
-                    param: torch.nn.Parameter = layer.weight
-                    param_data: torch.Tensor = param.data
-                    param_data.copy_(param_data - 0.1 * param.grad)
-                    if layer_idx != 1:  # only update 1 layer with Newton, unstable otherwise
-                        continue
-                    u.nan_check(layer.weight.pre)
-                    u.nan_check(param.grad.flatten())
-                    u.nan_check(u.v2r(param.grad.flatten()) @ layer.weight.pre)
-                    param_new_flat = u.v2r(param_data.flatten()) - u.v2r(param.grad.flatten()) @ layer.weight.pre
-                    u.nan_check(param_new_flat)
-                    param_data.copy_(param_new_flat.reshape(param_data.shape))
-
-            gl.token_count += data.shape[0]
+                gl.token_count += data.shape[0]
 
     gl.event_writer.close()
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
-    parser.add_argument('--batch-size', type=int, default=64, metavar='N',
-                        help='input batch size for training (default: 64)')
     parser.add_argument('--test-batch-size', type=int, default=1000, metavar='N',
                         help='input batch size for testing (default: 1000)')
     parser.add_argument('--epochs', type=int, default=10, metavar='N',
@@ -334,9 +335,9 @@ if __name__ == '__main__':
     parser.add_argument('--lmb', type=float, default=1e-3)
     parser.add_argument('--hess_samples', type=int, default=1, help='number of samples when sub-sampling outputs, 0 for exact hessian')
     parser.add_argument('--hess_kfac', type=int, default=0, help='whether to use KFAC approximation for hessian')
-    parser.add_argument('--compute_rho', type=int, default=0, help='use expensive method to compute rho')
+    parser.add_argument('--compute_rho', type=int, default=1, help='use expensive method to compute rho')
     parser.add_argument('--skip_stats', type=int, default=0, help='skip all stats collection')
-    parser.add_argument('--full_batch', type=int, default=1, help='do stats on the whole dataset')
+    parser.add_argument('--full_batch', type=int, default=0, help='do stats on the whole dataset')
     parser.add_argument('--weight_decay', type=float, default=1e-4)
 
     args = parser.parse_args()
