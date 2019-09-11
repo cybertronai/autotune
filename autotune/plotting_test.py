@@ -181,7 +181,7 @@ logger = None
 def log_scalars(metrics: Dict[str, Any], parent_tag: str = '') -> None:
     for tag in metrics:
         g.event_writer.add_scalar(tag=tag, scalar_value=metrics[tag], global_step=g.token_count)
-    #    g.event_writer.add_scalars(main_tag=tag, tag_scalar_dict=metrics, global_step=g.token_count)
+    #    g.event_writer.add_scalars(main_tag=tag, tag_scalar_dict=metrics, get_global_step=g.token_count)
     #    try:
     #        wandb.log(metrics, step=step)
     #    except:

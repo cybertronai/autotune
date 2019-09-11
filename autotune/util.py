@@ -92,10 +92,10 @@ def kron(a: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]], b: Optional[
     if isinstance(a, Tuple):
         assert b is None
         a, b = a
-    #print('inside a', a)
-    #print('inside b', b)
+    # print('inside a', a)
+    # print('inside b', b)
     result = torch.einsum("ab,cd->acbd", a, b)
-    #print('kron', result)
+    # print('kron', result)
     # TODO: use tensor.continuous
 
     if result.is_contiguous():
@@ -107,7 +107,7 @@ def kron(a: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]], b: Optional[
 
 def stable_kron(a, b):
     a_norm, b_norm = torch.max(a), torch.max(b)
-    return kron(a/a_norm, b/b_norm)*a_norm*b_norm
+    return kron(a / a_norm, b / b_norm) * a_norm * b_norm
 
 
 # TODO(y): rename to factored covariance?
@@ -121,8 +121,8 @@ class FactoredMatrix:
 
 
 class KronFactored(FactoredMatrix):
-    AA: torch.Tensor   # forward factor
-    BB: torch.Tensor   # backward factor
+    AA: torch.Tensor  # forward factor
+    BB: torch.Tensor  # backward factor
 
     def __init__(self, AA: torch.Tensor, BB: torch.Tensor):
         self.AA = AA
@@ -135,8 +135,8 @@ class KronFactored(FactoredMatrix):
 
 class MeanKronFactored(FactoredMatrix):
     """Factored representation as a mean of kronecker products"""
-    AA: torch.Tensor   # stacked forward factors
-    BB: torch.Tensor   # stacked backward factor
+    AA: torch.Tensor  # stacked forward factors
+    BB: torch.Tensor  # stacked backward factor
 
     def __init__(self, AA: torch.Tensor, BB: torch.Tensor):
         # AA: n, di, di
@@ -154,7 +154,6 @@ class MeanKronFactored(FactoredMatrix):
         self.do = do
 
     def expand(self):
-
         result = torch.einsum('nij,nkl->nikjl', self.BB, self.AA)
         # print(result)
         # result = kron(self.BB[0,...], self.AA[0,...]).unsqueeze(0)  # torch.einsum("ab,cd->acbd", a, b)
@@ -163,12 +162,12 @@ class MeanKronFactored(FactoredMatrix):
         # print('outside right', self.AA[0,...])
         # print('outside', torch.einsum('ab,cd->abcd', self.BB[0,...], self.AA[0,...]))
         # result = kron(self.BB[0,...], self.AA[0,...])  # torch.einsum("ab,cd->acbd", a, b)
-#        if not result.is_contiguous():
-#            print("Warning, using contiguous")
-#            result = result.contiguous()   # needed for .view
+        #        if not result.is_contiguous():
+        #            print("Warning, using contiguous")
+        #            result = result.contiguous()   # needed for .view
 
-        result = result.sum(dim=0)/self.n
-        return result.view(self.do*self.di, self.do*self.di)
+        result = result.sum(dim=0) / self.n
+        return result.view(self.do * self.di, self.do * self.di)
 
 
 def expand_hess(*v) -> Union[torch.Tensor, List[torch.Tensor]]:
@@ -207,7 +206,15 @@ def has_nan(mat):
 
 def l2_norm(mat: torch.Tensor):
     """Largest eigenvalue."""
-    u, s, v = torch.svd(mat)
+    try:
+        u, s, v = reg_svd(mat)
+    except RuntimeError as e:
+        if gl.debug_linalg_crashes:
+            print(e)
+            dump(mat, '/tmp/l2_norm.txt')
+            assert False, f"svd failed with {e}"
+        else:
+            return -1
     return torch.max(s)
 
 
@@ -220,7 +227,17 @@ def test_l2_norm():
 
 def sym_l2_norm(mat: torch.Tensor):
     """Largest eigenvalue assuming that matrix is symmetric."""
-    evals, _evecs = torch.symeig(mat)
+
+    if gl.debug_linalg_crashes:
+        try:
+            evals, _evecs = torch.symeig(mat)
+        except RuntimeError as e:
+            print(e)
+            dump(mat, '/tmp/sym_l2_norm.txt')
+            sys.exit()
+    else:
+        evals, _evecs = torch.symeig(mat)
+
     return torch.max(evals)
 
 
@@ -246,9 +263,9 @@ def sym_erank(mat):
 
 
 def regularize_mat(mat, eps):
-    rtol = l2_norm(mat)*eps
+    rtol = l2_norm(mat) * eps
     atol = 1e-12
-    return mat+torch.eye(mat.shape[0])*(rtol+atol)
+    return mat + torch.eye(mat.shape[0]) * (rtol + atol)
 
 
 def lyapunov_svd(A, C, rtol=1e-4, eps=1e-7, use_svd=False):
@@ -262,7 +279,7 @@ def lyapunov_svd(A, C, rtol=1e-4, eps=1e-7, use_svd=False):
     assert A.shape[0] == A.shape[1]
     assert len(A.shape) == 2
     if use_svd:
-        U, S, V = torch.svd(A)
+        U, S, V = reg_svd(A)
     else:
         S, U = torch.symeig(A, eigenvectors=True)
     S = S.diag() @ torch.ones_like(A)
@@ -330,7 +347,7 @@ def khatri_rao_t(A: torch.Tensor, B: torch.Tensor):
     """Transposed Khatri-Rao, inputs and outputs are transposed.
 
     i'th row of result C_i is a Kronecker product of corresponding rows of A and B"""
-    
+
     assert A.shape[0] == B.shape[0]
     # noinspection PyTypeChecker
     return torch.einsum("ki,kj->kij", A, B).reshape(A.shape[0], A.shape[1] * B.shape[1])
@@ -380,7 +397,7 @@ def pinv(mat: torch.Tensor, cond=None) -> torch.Tensor:
     # https://github.com/ilayn/scipy/blob/0f4c793601ecdd74fc9826ac02c9b953de99403a/scipy/linalg/basic.py#L1307
 
     nan_check(mat)
-    u, s, v = torch.svd(mat)
+    u, s, v = reg_svd(mat)
     if cond in [None, -1]:
         cond = torch.max(s) * max(mat.shape) * np.finfo(np.dtype('float32')).eps
     rank = torch.sum(s > cond)
@@ -392,22 +409,44 @@ def pinv(mat: torch.Tensor, cond=None) -> torch.Tensor:
 
 def pinv_square_root(mat: torch.Tensor, eps=1e-4) -> torch.Tensor:
     nan_check(mat)
-    u, s, v = torch.svd(mat)
+    u, s, v = reg_svd(mat)
     one = torch.from_numpy(np.array(1))
     ivals: torch.Tensor = one / torch.sqrt(s)
     si = torch.where(s > eps, ivals, s)
     return u @ torch.diag(si) @ v.t()
 
 
+def symeig_pos_evals(mat):
+    """Returns positive eigenvalues from symeig in reversed order (decreasing order, to match order of .svd())"""
+
+    s, u = torch.symeig(mat, eigenvectors=False)
+    cond_dict = {torch.float32: 1e3 * 1.1920929e-07, torch.float64: 1E6 * 2.220446049250313e-16}
+    cond = cond_dict[mat.dtype]
+    above_cutoff = (s > cond * torch.max(abs(s)))
+    return torch.flip(s[above_cutoff], dims=[0])
+
+
+def svd_pos_svals(mat):
+    """Returns positive singular values of a matrix."""
+
+    s = reg_svd(mat).S
+    cond_dict = {torch.float32: 1e3 * 1.1920929e-07, torch.float64: 1E6 * 2.220446049250313e-16}
+    cond = cond_dict[mat.dtype]
+    above_cutoff = (s > cond * torch.max(abs(s)))
+    return s[above_cutoff]
+
+
 def symsqrt(mat, cond=None, return_rank=False):
     """Computes the symmetric square root of a positive semi-definite matrix"""
 
+    nan_check(mat)
     s, u = torch.symeig(mat, eigenvectors=True)
     cond_dict = {torch.float32: 1e3 * 1.1920929e-07, torch.float64: 1E6 * 2.220446049250313e-16}
 
     if cond in [None, -1]:
         cond = cond_dict[mat.dtype]
 
+    # Note, this can include negative values, see https://github.com/pytorch/pytorch/issues/25972
     above_cutoff = (abs(s) > cond * torch.max(abs(s)))
 
     if torch.sum(above_cutoff) == 0:
@@ -417,16 +456,40 @@ def symsqrt(mat, cond=None, return_rank=False):
     u = u[:, above_cutoff]
 
     B = u @ torch.diag(psigma_diag) @ u.t()
+
+    if torch.sum(torch.isnan(B)) > 0:
+        if gl.debug_linalg_crashes:
+            dump(mat, '/tmp/symsqrt.txt')
+            assert False
+
     if return_rank:
         return B, len(psigma_diag)
     else:
         return B
 
 
+cond_dict = {torch.float32: 1e3 * 1.1920929e-07, torch.float64: 1E6 * 2.220446049250313e-16}
+
+
+def reg_svd(mat: torch.Tensor, eps=None):
+    """Regularize the matrix to get around the fact that gesdd fails sometimes
+    https://github.com/pytorch/pytorch/issues/25978
+    """
+    
+    if mat.shape[0] != mat.shape[1]:
+        return torch.svd(mat)    # don't know how to regularize non-square matrices, so use regular SVD
+    s = torch.symeig(mat).eigenvalues
+    if eps is None:
+        eps = cond_dict[mat.dtype] * torch.max(abs(s))
+
+    mat = mat + torch.eye(mat.shape[0])*eps
+    return torch.svd(mat)
+
+
 def symsqrt_svd(mat: torch.Tensor):
     """Like symsqrt, but uses more expensive SVD"""
-    cond_dict = {torch.float32: 1e3 * 1.1920929e-07, torch.float64: 1E6 * 2.220446049250313e-16}
-    u, s, v = torch.svd(mat)
+
+    u, s, v = reg_svd(mat)
     svals: torch.Tensor = torch.sqrt(s)
     eps = cond_dict[mat.dtype] * torch.max(abs(s))
     si = torch.where(s > eps, svals, s)
@@ -556,7 +619,7 @@ class TinyMNIST(datasets.MNIST):
     """
 
     def __init__(self, dataset_root='/tmp/data', data_width=4, targets_width=4, dataset_size=0,
-                 train=True, original_targets=False):
+                 train=True, original_targets=None, loss_type=None):
         """
 
         Args:
@@ -564,8 +627,17 @@ class TinyMNIST(datasets.MNIST):
             targets_width: dimension of target images
             dataset_size: number of examples, use for smaller subsets and running locally
             original_targets: if False, replaces original classification targets with image reconstruction targets
+            loss_type: if LeastSquares, then convert classes to one-hot format
         """
         super().__init__(dataset_root, download=True, train=train)
+
+        assert loss_type is None or original_targets is None    # can't specify both loss type and original targets
+        assert loss_type in [None, 'LeastSquares', 'CrossEntropy']
+
+        if loss_type is None and original_targets is None:
+            original_targets = False    # default to LeastSquares targets
+        if loss_type is not None:
+            original_targets = True
 
         if dataset_size > 0:
             # assert dataset_size <= self.data.shape[0]
@@ -590,10 +662,15 @@ class TinyMNIST(datasets.MNIST):
             self.data = self.data.type(torch.get_default_dtype()).unsqueeze(1)
             if not original_targets:
                 self.targets = self.data
-                
+
         # self.data = self.data.type(torch.get_default_dtype())
         # if not original_targets:  # don't cast original int labels
         #    self.targets = self.targets.type(u.dtype)
+        if loss_type == 'LeastSquares':  # convert to one-hot format
+            new_targets = torch.zeros((self.targets.shape[0], 10))
+            new_targets.scatter(1, self.targets.unsqueeze(1), 1)
+            self.targets = new_targets
+
         self.data, self.targets = self.data.to(gl.device), self.targets.to(gl.device)
 
     def __getitem__(self, index):
@@ -639,7 +716,7 @@ class SimpleModel(nn.Module):
     def _finalize(self):
         """Extra logic shared across all SimpleModel instances."""
         # self.type(u.dtype)
-        
+
         global model_layer_map
         for module in self.modules():
             model_layer_map[module] = self
@@ -667,6 +744,7 @@ def debug_least_squares(data, targets=None):
     err[:, 0] *= 10
 
     return torch.sum(err * err) / 2 / len(data)
+
 
 # Fork of SimpleModel that doesn't automatically register hooks, for autograd_lib.py refactoring
 class SimpleModel2(nn.Module):
@@ -732,8 +810,9 @@ def capture_backprops(module: nn.Module, _input, output):
     assert len(output) == 1, "this works for single variable layers only"
     if not hasattr(module, 'backprops_list'):
         setattr(module, 'backprops_list', [])
-    assert len(module.backprops_list) < 100, "Possible memory leak, captured more than 100 backprops, comment this assert " \
-                                             "out if this is intended."""
+    assert len(
+        module.backprops_list) < 100, "Possible memory leak, captured more than 100 backprops, comment this assert " \
+                                      "out if this is intended."""
 
     module.backprops_list.append(output[0].detach())
 
@@ -771,7 +850,7 @@ def register_hooks(model: SimpleModel):
 
         layer.register_forward_hook(u.capture_activations)
         layer.register_backward_hook(u.capture_backprops)
-        
+
     for param in model.parameters():
         assert not param._backward_hooks, f"Some param hooks already registered, bug? {param._backward_hooks}"
         param.register_hook(u.save_grad(param))
@@ -814,7 +893,7 @@ class SimpleFullyConnected(SimpleModel):
 class SimpleFullyConnected2(SimpleModel2):
     """Simple feedforward network that works on images."""
 
-    def __init__(self, d: List[int], nonlin=False, bias=False, dropout=False):
+    def __init__(self, d: List[int], nonlin=False, bias=False, last_layer_linear=False, dropout=False):
         """
         Feedfoward network of linear layers with optional ReLU nonlinearity. Stores layers in "layers" attr, ie
         model.layers[0] refers to first linear layer.
@@ -822,6 +901,7 @@ class SimpleFullyConnected2(SimpleModel2):
         Args:
             d: list of layer dimensions, ie [768, 20, 10] for MNIST 10-output with hidden layer of 20
             nonlin: whether to include ReLU nonlinearity
+            last_layer_linear: don't apply nonlinearity to loast layer
         """
         super().__init__()
         self.layers: List[nn.Module] = []
@@ -833,7 +913,8 @@ class SimpleFullyConnected2(SimpleModel2):
             self.layers.append(linear)
             self.all_layers.append(linear)
             if nonlin:
-                self.all_layers.append(nn.ReLU())
+                if not last_layer_linear or i < len(d) - 2:
+                    self.all_layers.append(nn.ReLU())
             if i <= len(d) - 3 and dropout:
                 self.all_layers.append(nn.Dropout(p=0.5))
         self.predict = torch.nn.Sequential(*self.all_layers)
@@ -888,7 +969,7 @@ class SimpleConvolutional2(SimpleModel2):
         self.d: List[int] = d
         assert len(d) >= 2
         for di in d:
-            assert di>0
+            assert di > 0
 
         for i in range(len(d) - 1):
             conv = nn.Conv2d(d[i], d[i + 1], kernel_size, bias=bias)
@@ -975,7 +1056,7 @@ class StridedConvolutional2(SimpleModel2):
             print(i, x)
             x = layer(x)
 
-        print(i+1, x)
+        print(i + 1, x)
         # x = F.adaptive_avg_pool2d(x, [1, 1])
         assert x.shape[2] == 1 and x.shape[3] == 1
         return x.reshape(x.shape[0], 1)
@@ -1002,7 +1083,7 @@ class GroupedConvolutional2(SimpleModel2):
         for i in range(len(d) - 1):
 
             # each group considers o filters independently
-            conv = nn.Conv2d(d[i]*o, d[i + 1]*o, kernel_size, bias=bias, groups=o)
+            conv = nn.Conv2d(d[i] * o, d[i + 1] * o, kernel_size, bias=bias, groups=o)
             setattr(conv, 'name', f'{i:02d}-conv')
             self.layers.append(conv)
             self.all_layers.append(conv)
@@ -1022,10 +1103,9 @@ class GroupedConvolutional2(SimpleModel2):
         assert (Oh, Ow) == (1, 1)
         assert out_dim == self.final_chan * self.o
         x = x.reshape(n, self.o, self.final_chan)
-        x = torch.einsum('noc->no', x)   # average across groups
+        x = torch.einsum('noc->no', x)  # average across groups
         assert x.shape == (n, self.o)
         return x
-
 
 
 class ReshapedConvolutional(SimpleConvolutional):
@@ -1046,12 +1126,24 @@ class ReshapedConvolutional(SimpleConvolutional):
 
 def log_scalars(metrics: Dict[str, Any]) -> None:
     for tag in metrics:
-        gl.event_writer.add_scalar(tag=tag, scalar_value=metrics[tag], global_step=gl.token_count)
+        gl.event_writer.add_scalar(tag=tag, scalar_value=metrics[tag], global_step=gl.get_global_step())
 
 
 def log_scalar(**metrics) -> None:
     for tag in metrics:
-        gl.event_writer.add_scalar(tag=tag, scalar_value=metrics[tag], global_step=gl.token_count)
+        gl.event_writer.add_scalar(tag=tag, scalar_value=metrics[tag], global_step=gl.get_global_step())
+
+
+def log_spectrum(tag, vals):
+    """Given eigenvalues or singular values in decreasing order, log this plg."""
+
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots()
+    y = torch.log10(vals)
+    x = torch.log10(torch.arange(len(vals), dtype=y.dtype) + 1.)
+    markerline, stemlines, baseline = ax.stem(x, y, markerfmt='bo', basefmt='r-', bottom=min(y))
+    plt.setp(baseline, color='r', linewidth=2)
+    gl.event_writer.add_figure(tag=tag, figure=fig, global_step=gl.get_global_step())
 
 
 def get_events(fname, x_axis='step'):
@@ -1145,6 +1237,7 @@ def print_version_info():
 
     print("Scipy version: ", scipy.version.full_version)
     print("Numpy version: ", np.version.full_version)
+    print("Python version: ", sys.version, sys.platform)
     print_cpu_info()
 
 
@@ -1278,7 +1371,7 @@ class HessianExactSqrLoss(HessianBackprop):
         assert len(output.shape) == 2
         batch_size, output_size = output.shape
         self.num_samples = output_size
-        
+
         id_mat = torch.eye(output_size)
         for out_idx in range(output_size):
             yield torch.stack([id_mat[out_idx]] * batch_size)
@@ -1295,7 +1388,7 @@ class HessianSampledSqrLoss(HessianBackprop):
         assert len(output.shape) == 2
         batch_size, output_size = output.shape
         assert self.num_samples <= output_size, f"Requesting more samples than needed for exact Hessian computation " \
-            f"({self.num_samples}>{output_size})"
+                                                f"({self.num_samples}>{output_size})"
 
         # exact sampler provides n samples whose outer products add up to Identity
         # here the sum is num_samples*identity in expectation
@@ -1304,7 +1397,7 @@ class HessianSampledSqrLoss(HessianBackprop):
         for out_idx in range(self.num_samples):
             # sample random vectors of +1/-1's
             bval = torch.LongTensor(batch_size, output_size).to(gl.device).random_(0, 2) * 2 - 1
-            yield bval.float()/math.sqrt(self.num_samples)
+            yield bval.float() / math.sqrt(self.num_samples)
 
 
 class HessianExactCrossEntropyLoss(HessianBackprop):
@@ -1383,29 +1476,29 @@ def per_example_hess(A_t, Bh_t, bias=False):
     # sum out output classes, get batch of per-example jacobians
     Ji = torch.einsum('oni,onj->nij', Bmat_t, Amat_t)
     assert Ji.shape == (n, out_dim, in_dim)
-    Ji = Ji.reshape((n, out_dim*in_dim))  # individual jacobians
+    Ji = Ji.reshape((n, out_dim * in_dim))  # individual jacobians
 
     # original Hessian computation
-    Jb = u.khatri_rao_t(Bmat_t.reshape(o*n, -1), Amat_t.reshape(o*n, -1))
+    Jb = u.khatri_rao_t(Bmat_t.reshape(o * n, -1), Amat_t.reshape(o * n, -1))
     Hmean = Jb.t() @ Jb / n
 
     # method 2: einsum-only version for mean hessian
     # o,n -> o,n,i,j
     Jb2 = torch.einsum('oni,onj->onij', Bmat_t, Amat_t)
-    check_close(Jb2.reshape((o*n, out_dim*in_dim)), Jb)
-    Hmean2 = torch.einsum('onij,onkl->ijkl', Jb2, Jb2).reshape((out_dim*in_dim,
-                                                                out_dim*in_dim))/n
+    check_close(Jb2.reshape((o * n, out_dim * in_dim)), Jb)
+    Hmean2 = torch.einsum('onij,onkl->ijkl', Jb2, Jb2).reshape((out_dim * in_dim,
+                                                                out_dim * in_dim)) / n
     check_close(Hmean, Hmean2)
 
     # method 3: einsum-only for individual hessians
     # sum over classes, 
     Hi = torch.einsum('onij,onkl->nijkl', Jb2, Jb2)
     Hmean3 = Hi.mean(dim=0)
-    Hmean3 = Hmean3.reshape((out_dim*in_dim, out_dim*in_dim))
+    Hmean3 = Hmean3.reshape((out_dim * in_dim, out_dim * in_dim))
     check_close(Hmean, Hmean3)
 
     # flatten last two pairs of dimensions for form d^2/dvec dvec
-    Hi = Hi.reshape(n, out_dim*in_dim, out_dim*in_dim)
+    Hi = Hi.reshape(n, out_dim * in_dim, out_dim * in_dim)
     if not bias:
         return Hi
     else:
@@ -1425,11 +1518,11 @@ def kl_div_cov(mat1, mat2, eps=1e-3):
     l1 = torch.max(evals1) * k
     l2 = torch.max(evals2) * k
     l = max(l1, l2)
-    reg = torch.eye(mat1.shape[0])*l*eps
+    reg = torch.eye(mat1.shape[0]) * l * eps
     mat1 = mat1 + reg
     mat2 = mat2 + reg
 
-    div = torch.trace(mat1@torch.inverse(mat2))-(torch.logdet(mat1)-torch.logdet(mat2))-k
+    div = torch.trace(mat1 @ torch.inverse(mat2)) - (torch.logdet(mat1) - torch.logdet(mat2)) - k
     return div
 
 
@@ -1440,9 +1533,9 @@ def kron_quadratic_form(H, dd):
 
 
 def kron_trace(H: Tuple[torch.Tensor, torch.Tensor]):
-   """trace(H)"""
-   A, B = H
-   return torch.trace(A)*torch.trace(B)
+    """trace(H)"""
+    A, B = H
+    return torch.trace(A) * torch.trace(B)
 
 
 def test_kron_trace():
@@ -1478,7 +1571,7 @@ def kron_fro_norm(H):
 
 
 def kron_sym_l2_norm(H):
-    return u.sym_l2_norm(H[0])*u.sym_l2_norm(H[1])
+    return u.sym_l2_norm(H[0]) * u.sym_l2_norm(H[1])
 
 
 def kron_inv(H):
@@ -1500,9 +1593,9 @@ def kron_batch_sum(G: Tuple):
 def chop(mat: torch.Tensor, eps=1e-7) -> torch.Tensor:
     """Set values below max(mat)*eps to zero"""
 
-    cutoff = eps*torch.max(mat)
+    cutoff = eps * torch.max(mat)
     zeros = torch.zeros_like(mat)
-    return torch.where(mat < eps*cutoff, zeros, mat)
+    return torch.where(mat < eps * cutoff, zeros, mat)
 
 
 if __name__ == '__main__':
@@ -1510,7 +1603,7 @@ if __name__ == '__main__':
 
 
 def format_list(ll: List) -> str:
-    formatted = ["%.2f"%(d,) for d in ll]
+    formatted = ["%.2f" % (d,) for d in ll]
     return ', '.join(formatted)
 
 
@@ -1529,3 +1622,36 @@ class NoOp:
         def no_op(*_args, **_kwargs): pass
 
         return no_op
+
+
+def install_pdb_handler():
+  """Signals to automatically start pdb:
+      1. CTRL+\\ breaks into pdb.
+      2. pdb gets launched on exception.
+  """
+
+  import signal
+  import pdb
+
+  def handler(_signum, _frame):
+    pdb.set_trace()
+  signal.signal(signal.SIGQUIT, handler)
+
+  # Drop into PDB on exception
+  # from https://stackoverflow.com/questions/13174412
+  def info(type_, value, tb):
+   if hasattr(sys, 'ps1') or not sys.stderr.isatty():
+      # we are in interactive mode or we don't have a tty-like
+      # device, so we call the default hook
+      sys.__excepthook__(type_, value, tb)
+   else:
+      import traceback
+      import pdb
+      # we are NOT in interactive mode, print the exception...
+      traceback.print_exception(type_, value, tb)
+      print()
+      # ...then start the debugger in post-mortem mode.
+      pdb.pm()
+
+  sys.excepthook = info
+

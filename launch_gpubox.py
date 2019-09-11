@@ -9,7 +9,7 @@ import ncluster
 parser = argparse.ArgumentParser()
 parser.add_argument('--image_name', type=str, default='pytorch-efa01')
 parser.add_argument('--instance_type', type=str, default="p3.16xlarge")
-parser.add_argument('--name', type=str, default='kfac00', help="job name")
+parser.add_argument('--name', type=str, default='large_gpubox', help="job name")
 parser.add_argument('--run_name', type=str, default='kfac-pytorch',
                     help="name of run for loggin")
 

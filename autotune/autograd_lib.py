@@ -394,7 +394,8 @@ def backprop_hess(output: torch.Tensor, hess_type: str) -> None:
             if torch.get_default_dtype() == torch.float64:
                 hess[i, :, :] = u.symsqrt_svd(hess[i, :, :])  # more stable method since we don't care about speed with float64
             else:
-                hess[i, :, :] = u.symsqrt(hess[i, :, :])
+                hess[i, :, :] = u.symsqrt_svd(hess[i, :, :])   # workaround for https://github.com/pytorch/pytorch/issues/25972, TODO(y), fix symsqrt
+            u.nan_check(hess[i, :, :])
         hess = hess.transpose(0, 1)
 
     elif hess_type == 'LeastSquares':
