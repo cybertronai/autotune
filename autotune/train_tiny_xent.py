@@ -39,7 +39,7 @@ def main():
 
     loss_type = 'CrossEntropy'
 
-    args.wandb = 1
+    args.wandb = 0
     args.stats_steps = 1000
     args.train_steps = 10
     args.train_batch_size = 10
@@ -239,6 +239,7 @@ def main():
 
                 with u.timeit(f'rho-{i}'):
                     p_sigma = u.lyapunov_svd(H, sigma)
+                    import pdb; pdb.set_trace()
                     if u.has_nan(p_sigma) and args.compute_rho:  # use expensive method
                         H0, sigma0 = u.to_numpy_multiple(H, sigma)
                         p_sigma = scipy.linalg.solve_lyapunov(H0, sigma0)

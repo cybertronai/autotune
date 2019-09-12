@@ -106,7 +106,7 @@ def main():
 
     hess_list1 = compute_hess(method='exact', **main_vals)
     hess_list2 = compute_hess(method='kron', **main_vals)
-    value_error = max([u.cov_dist(h1, h2) for h1, h2 in zip(hess_list1, hess_list2)])
+    value_error = max([u.symsqrt_dist(h1, h2) for h1, h2 in zip(hess_list1, hess_list2)])
     magnitude_error = max([u.l2_norm(h2) / u.l2_norm(h1) for h1, h2 in zip(hess_list1, hess_list2)])
     print(value_error)
     print(magnitude_error)
@@ -132,7 +132,7 @@ def main():
                 hess_list1 = [h/u.l2_norm(h) for h in hess_list1]
                 hess_list2 = [h/u.l2_norm(h) for h in hess_list2]
 
-                value_error = max([u.cov_dist(h1, h2) for h1, h2 in zip(hess_list1, hess_list2)])
+                value_error = max([u.symsqrt_dist(h1, h2) for h1, h2 in zip(hess_list1, hess_list2)])
                 value_errors.append(value_error)
                 magnitude_errors.append(magnitude_error.item())
             print(dimension)

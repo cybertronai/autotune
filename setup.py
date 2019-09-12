@@ -10,5 +10,5 @@ setup(install_requires=['torchvision',
                         'future',
                         'chainer',
                         'torchcontrib',
-                        'tensorflow', 'matplotlib'  # for summary_iterator to extract events
+                        'tensorflow', 'matplotlib', 'pytest'  # for summary_iterator to extract events
                         ])

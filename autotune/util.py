@@ -11,6 +11,7 @@ from typing import List
 import globals as gl
 import numpy as np
 import scipy
+import scipy.linalg as linalg
 import torch
 import torch.nn as nn
 import torchvision.datasets as datasets
@@ -18,8 +19,15 @@ from PIL import Image
 
 import torch.nn.functional as F
 
+
 # to enable referring to functions in its own module as u.func
 u = sys.modules[__name__]
+
+
+# acceptable condition dictionary, from scipy.linalg.pinv2
+# max float32 condition number: 8.4k
+# max float64 condition number: 4.5B
+cond_dict = {torch.float32: 1e3 * 1.1920929e-07, torch.float64: 1E6 * 2.220446049250313e-16}
 
 
 def v2c(vec):
@@ -207,7 +215,7 @@ def has_nan(mat):
 def l2_norm(mat: torch.Tensor):
     """Largest eigenvalue."""
     try:
-        u, s, v = reg_svd(mat)
+        u, s, v = robust_svd(mat)
     except RuntimeError as e:
         if gl.debug_linalg_crashes:
             print(e)
@@ -257,6 +265,14 @@ def erank(mat):
     return torch.trace(mat) / l2_norm(mat)
 
 
+def rank(A):
+    """Rank of a matrix"""
+    U, S, V = torch.svd(A)
+    cond = cond_dict[A.dtype]
+    cutoff = torch.max(S)*cond
+    return torch.sum(S > cutoff).type(torch.get_default_dtype())
+
+
 def sym_erank(mat):
     """Effective rank of symmetric matrix."""
     return torch.trace(mat) / sym_l2_norm(mat)
@@ -279,7 +295,7 @@ def lyapunov_svd(A, C, rtol=1e-4, eps=1e-7, use_svd=False):
     assert A.shape[0] == A.shape[1]
     assert len(A.shape) == 2
     if use_svd:
-        U, S, V = reg_svd(A)
+        U, S, V = robust_svd(A)
     else:
         S, U = torch.symeig(A, eigenvectors=True)
     S = S.diag() @ torch.ones_like(A)
@@ -291,6 +307,55 @@ def lyapunov_svd(A, C, rtol=1e-4, eps=1e-7, use_svd=False):
         pass
         print(f"Warning, error {relative_error} encountered in lyapunov_svd")
 
+    return X
+
+
+def truncated_lyapunov(A, C, use_svd=False, top_k=None, check_error=False):
+    """Truncated solution to AX+XA=C. top_k specified how many dimensions of A to use. If None, use threshold for
+    acceptable condition."""
+
+    rankA = u.rank(A)
+    rankC = u.rank(C)
+    if rankA < rankC:
+        print("Warning, losing precision, rank A: {rankA}, rank C: {rankC}")
+
+    assert A.shape[0] == A.shape[1]
+    assert len(A.shape) == 2
+    cond = cond_dict[A.dtype]
+
+    if use_svd:
+        U, S, V = torch.svd(A)
+    else:
+        # flip to be in decreasing order like for SVD
+        # TODO: can optimize this case by skipping flip
+        S, U = torch.symeig(A, eigenvectors=True)
+        S = torch.flip(S, [0])
+        U = torch.flip(U, [1])
+    cutoff = torch.max(S) * cond
+    rank = torch.sum(S > cutoff)
+    if top_k is not None:
+        top_k = rank
+
+    S = torch.where(S > cutoff, S, torch.zeros_like(S))
+    mask = (S > cutoff).type(torch.ByteTensor)
+    mask1 = u.outer(mask, mask)  # matrix 1 non-zero block
+
+    S = S.diag() @ torch.ones_like(A)
+    U = U[:, :top_k]
+    mask2d = mask1
+    mask2d = mask2d[:top_k, :top_k]
+
+    projected = U.t() @ C @ U
+    divider = S + S.t()
+    divider = divider[:top_k, :top_k]
+
+    divided = torch.where(mask2d, projected / divider, torch.zeros_like(projected))
+    X = U @ divided @ U.t()
+    if check_error:
+        error = A @ X + X @ A - C
+        relative_error = torch.max(torch.abs(error)) / torch.max(torch.abs(A))
+        if relative_error > 1e-3:
+            print('rel error', relative_error)
     return X
 
 
@@ -335,14 +400,6 @@ def khatri_rao(A: torch.Tensor, B: torch.Tensor):
     return torch.einsum("ik,jk->ijk", A, B).reshape(A.shape[0] * B.shape[0], A.shape[1])
 
 
-def test_khatri_rao():
-    A = torch.tensor([[1, 2], [3, 4]])
-    B = torch.tensor([[5, 6], [7, 8]])
-    C = torch.tensor([[5, 12], [7, 16],
-                      [15, 24], [21, 32]])
-    check_equal(khatri_rao(A, B), C)
-
-
 def khatri_rao_t(A: torch.Tensor, B: torch.Tensor):
     """Transposed Khatri-Rao, inputs and outputs are transposed.
 
@@ -352,18 +409,6 @@ def khatri_rao_t(A: torch.Tensor, B: torch.Tensor):
     # noinspection PyTypeChecker
     return torch.einsum("ki,kj->kij", A, B).reshape(A.shape[0], A.shape[1] * B.shape[1])
 
-
-def test_khatri_rao_t():
-    A = torch.tensor([[-2., -1.],
-                      [0., 1.],
-                      [2., 3.]])
-    B = torch.tensor([[-4.],
-                      [1.],
-                      [6.]])
-    C = torch.tensor([[8., 4.],
-                      [0., 1.],
-                      [12., 18.]])
-    check_equal(khatri_rao_t(A, B), C)
 
 
 # Autograd functions, from https://gist.github.com/apaszke/226abdf867c4e9d6698bd198f3b45fb7
@@ -397,7 +442,7 @@ def pinv(mat: torch.Tensor, cond=None) -> torch.Tensor:
     # https://github.com/ilayn/scipy/blob/0f4c793601ecdd74fc9826ac02c9b953de99403a/scipy/linalg/basic.py#L1307
 
     nan_check(mat)
-    u, s, v = reg_svd(mat)
+    u, s, v = robust_svd(mat)
     if cond in [None, -1]:
         cond = torch.max(s) * max(mat.shape) * np.finfo(np.dtype('float32')).eps
     rank = torch.sum(s > cond)
@@ -409,7 +454,7 @@ def pinv(mat: torch.Tensor, cond=None) -> torch.Tensor:
 
 def pinv_square_root(mat: torch.Tensor, eps=1e-4) -> torch.Tensor:
     nan_check(mat)
-    u, s, v = reg_svd(mat)
+    u, s, v = robust_svd(mat)
     one = torch.from_numpy(np.array(1))
     ivals: torch.Tensor = one / torch.sqrt(s)
     si = torch.where(s > eps, ivals, s)
@@ -420,24 +465,26 @@ def symeig_pos_evals(mat):
     """Returns positive eigenvalues from symeig in reversed order (decreasing order, to match order of .svd())"""
 
     s, u = torch.symeig(mat, eigenvectors=False)
-    cond_dict = {torch.float32: 1e3 * 1.1920929e-07, torch.float64: 1E6 * 2.220446049250313e-16}
-    cond = cond_dict[mat.dtype]
-    above_cutoff = (s > cond * torch.max(abs(s)))
-    return torch.flip(s[above_cutoff], dims=[0])
+    return torch.flip(filter_evals(s), dims=[0])
 
 
 def svd_pos_svals(mat):
     """Returns positive singular values of a matrix."""
 
-    s = reg_svd(mat).S
-    cond_dict = {torch.float32: 1e3 * 1.1920929e-07, torch.float64: 1E6 * 2.220446049250313e-16}
-    cond = cond_dict[mat.dtype]
-    above_cutoff = (s > cond * torch.max(abs(s)))
+    U, S, V = robust_svd(mat)
+    return filter_evals(S)
+
+
+def filter_evals(s, cond=None):
+    """Given list of eigenvalues or singular values, filter out small values."""
+    if cond is None:
+        cond = cond_dict[s.dtype]
+    above_cutoff = (abs(s) > cond * torch.max(abs(s)))
     return s[above_cutoff]
 
 
 def symsqrt(mat, cond=None, return_rank=False):
-    """Computes the symmetric square root of a positive semi-definite matrix"""
+    """Computes the symmetric square root of a positive semi-definite matrix. Throws away small and negative eigenvalues."""
 
     nan_check(mat)
     s, u = torch.symeig(mat, eigenvectors=True)
@@ -447,15 +494,15 @@ def symsqrt(mat, cond=None, return_rank=False):
         cond = cond_dict[mat.dtype]
 
     # Note, this can include negative values, see https://github.com/pytorch/pytorch/issues/25972
-    above_cutoff = (abs(s) > cond * torch.max(abs(s)))
+    above_cutoff = (s > cond * torch.max(abs(s)))
 
     if torch.sum(above_cutoff) == 0:
         return torch.zeros_like(mat)
 
-    psigma_diag = torch.sqrt(s[above_cutoff])
+    sigma_diag = torch.sqrt(s[above_cutoff])
     u = u[:, above_cutoff]
 
-    B = u @ torch.diag(psigma_diag) @ u.t()
+    B = u @ torch.diag(sigma_diag) @ u.t()
 
     if torch.sum(torch.isnan(B)) > 0:
         if gl.debug_linalg_crashes:
@@ -463,33 +510,15 @@ def symsqrt(mat, cond=None, return_rank=False):
             assert False
 
     if return_rank:
-        return B, len(psigma_diag)
+        return B, len(sigma_diag)
     else:
         return B
 
 
-cond_dict = {torch.float32: 1e3 * 1.1920929e-07, torch.float64: 1E6 * 2.220446049250313e-16}
-
-
-def reg_svd(mat: torch.Tensor, eps=None):
-    """Regularize the matrix to get around the fact that gesdd fails sometimes
-    https://github.com/pytorch/pytorch/issues/25978
-    """
-    
-    if mat.shape[0] != mat.shape[1]:
-        return torch.svd(mat)    # don't know how to regularize non-square matrices, so use regular SVD
-    s = torch.symeig(mat).eigenvalues
-    if eps is None:
-        eps = cond_dict[mat.dtype] * torch.max(abs(s))
-
-    mat = mat + torch.eye(mat.shape[0])*eps
-    return torch.svd(mat)
-
-
 def symsqrt_svd(mat: torch.Tensor):
-    """Like symsqrt, but uses more expensive SVD"""
+    """Like symsqrt, but uses SVD."""
 
-    u, s, v = reg_svd(mat)
+    u, s, v = robust_svd(mat)
     svals: torch.Tensor = torch.sqrt(s)
     eps = cond_dict[mat.dtype] * torch.max(abs(s))
     si = torch.where(s > eps, svals, s)
@@ -498,15 +527,30 @@ def symsqrt_svd(mat: torch.Tensor):
     return u @ torch.diag(si) @ v.t()
 
 
-def cov_dist(cov1: torch.Tensor, cov2: torch.Tensor) -> float:
-    """A measure of distance between two covariance matrices."""
+def robust_svd(mat: torch.Tensor) -> torch.Tensor:
+    """Try to perform SVD and handle errors.
+    """
+
+    try:
+        U, S, V = torch.svd(mat)
+    except Exception as e:  # this can fail, see https://github.com/pytorch/pytorch/issues/25978
+        s = torch.symeig(mat).eigenvalues
+        eps = cond_dict[mat.dtype] * torch.max(abs(s))
+        print(f"Warning, SVD diverged with {e}, regularizing with {eps}")
+        mat = mat + torch.eye(mat.shape[0])*eps*2
+        U, S, V = torch.svd(mat)
+    return U, S, V
+
+
+def symsqrt_dist(cov1: torch.Tensor, cov2: torch.Tensor) -> float:
+    """Distance between square roots of matrices"""
 
     cov1 = symsqrt_svd(cov1)
     cov2 = symsqrt_svd(cov2)
     return torch.norm(cov1 - cov2).item()
 
 
-def check_close(a0: torch.Tensor, b0: torch.Tensor, rtol=1e-5, atol=1e-8) -> None:
+def check_close(a0, b0, rtol=1e-5, atol=1e-8) -> None:
     """Convenience method for check_equal with tolerances defaulting to typical errors observed in neural network
     ops in float32 precision."""
     return check_equal(a0, b0, rtol=rtol, atol=atol)
@@ -1590,16 +1634,11 @@ def kron_batch_sum(G: Tuple):
     return torch.einsum('ni,nj->ij', Bt, At)
 
 
-def chop(mat: torch.Tensor, eps=1e-7) -> torch.Tensor:
+def chop(mat: torch.Tensor, eps=1e-10) -> torch.Tensor:
     """Set values below max(mat)*eps to zero"""
 
-    cutoff = eps * torch.max(mat)
     zeros = torch.zeros_like(mat)
-    return torch.where(mat < eps * cutoff, zeros, mat)
-
-
-if __name__ == '__main__':
-    run_all_tests(sys.modules[__name__])
+    return torch.where(mat < eps, zeros, mat)
 
 
 def format_list(ll: List) -> str:
@@ -1616,42 +1655,108 @@ def create_local_logdir(logdir) -> str:
     return logdir
 
 
-# no_op method/object that accept every signature
 class NoOp:
+    """Dummy callable that accepts every signature"""
     def __getattr__(self, *_args):
         def no_op(*_args, **_kwargs): pass
-
         return no_op
 
 
 def install_pdb_handler():
-  """Signals to automatically start pdb:
+    """Signals to automatically start pdb:
       1. CTRL+\\ breaks into pdb.
       2. pdb gets launched on exception.
-  """
+    """
 
-  import signal
-  import pdb
+    import signal
+    import pdb
 
-  def handler(_signum, _frame):
-    pdb.set_trace()
-  signal.signal(signal.SIGQUIT, handler)
+    def handler(_signum, _frame):
+        pdb.set_trace()
+        signal.signal(signal.SIGQUIT, handler)
 
-  # Drop into PDB on exception
-  # from https://stackoverflow.com/questions/13174412
-  def info(type_, value, tb):
-   if hasattr(sys, 'ps1') or not sys.stderr.isatty():
-      # we are in interactive mode or we don't have a tty-like
-      # device, so we call the default hook
-      sys.__excepthook__(type_, value, tb)
-   else:
-      import traceback
-      import pdb
-      # we are NOT in interactive mode, print the exception...
-      traceback.print_exception(type_, value, tb)
-      print()
-      # ...then start the debugger in post-mortem mode.
-      pdb.pm()
+    # Drop into PDB on exception
+    # from https://stackoverflow.com/questions/13174412
+    def info(type_, value, tb):
+        if hasattr(sys, 'ps1') or not sys.stderr.isatty():
+            # we are in interactive mode or we don't have a tty-like
+            # device, so we call the default hook
+            sys.__excepthook__(type_, value, tb)
+        else:
+            import traceback
+            import pdb
+            # we are NOT in interactive mode, print the exception...
+            traceback.print_exception(type_, value, tb)
+            print()
+            # ...then start the debugger in post-mortem mode.
+            pdb.pm()
 
-  sys.excepthook = info
+    sys.excepthook = info
+
+
+def randomly_rotate(X: torch.Tensor) -> torch.Tensor:
+    """Randomly rotate d,n data matrix X"""
+
+    d, n = X.shape
+    z = torch.randn((d, d), dtype=X.dtype)
+    q, r = torch.qr(z)
+    d = torch.diag(r)
+    ph = d / abs(d)
+    rot_mat = q * ph
+    return rot_mat @ X
+
+
+def random_cov(rank, d, n=20) -> torch.Tensor:
+    """Random covariance matrix of given rank and dimension"""
+
+    assert d >= rank
+    X = torch.randn((rank, n))
+    X = torch.cat([X, torch.zeros(d-rank, n)])
+    X = randomly_rotate(X)
+    return X @ X.t() / n
+
+
+def _dim_check(d, rank=0):
+    assert d > 0
+    assert d < 1e6
+    assert 0 <= rank <= d
+
+
+def random_cov_pair(shared_rank, independent_rank, d, n=20, strength=1):
+    """Generate pair of covariance matrices which share covariance in subspace of dimension shared_rank,
+    and have independent covariances of dimension independent_rank. Strength determines relative scale of covariance
+    in the independent subspace."""
+    _dim_check(d, shared_rank + independent_rank)
+    _dim_check(d, shared_rank)
+    _dim_check(d, independent_rank)
+    print(shared_rank, independent_rank, d)
+    shared = random_cov(shared_rank, d, n)
+    if independent_rank == 0 or strength == 0:
+        return shared, shared
+    A = shared + strength * random_cov(independent_rank, d, n)
+    B = shared + strength * random_cov(independent_rank, d, n)
+    return A, B
+
+
+if __name__ == '__main__':
+    run_all_tests(sys.modules[__name__])
+
+
+
+
+# import matplotlib.pyplot as plt
+#
+#
+# def spectral_plot(vals: torch.Tensor, loglog=True):
+#     fig, ax = plt.subplots()
+#     y = vals
+#     x = torch.arange(len(vals), dtype=y.dtype) + 1.
+#     if loglog:
+#         y = torch.log10(y)
+#         x = torch.log10(x)
+#
+#     markerline, stemlines, baseline = ax.stem(x, y, markerfmt='bo', basefmt='r-', bottom=min(y))
+#     plt.setp(baseline, color='r', linewidth=2)
+#
+#     plt.show()
 

@@ -10,7 +10,7 @@ event_writer: Optional[SummaryWriter] = None
 token_count: int = 0   # TODO(y): rename to global-step. Meaning is context-specific, in case of sequences it's number of tokens
 
 debug_dump_stats: bool = False   # print activations/backprops to console
-debug_linalg_crashes: bool = True   # save matrices that cause linalg routines to crash
+debug_linalg_crashes: bool = False   # save matrices that cause linalg routines to crash
 
 # debug_hard_crashes_on_nans: bool = True  # crash if encountering NaN
 
