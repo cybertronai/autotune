@@ -37,20 +37,9 @@ def main():
 
     loss_type = 'CrossEntropy'
 
-    args.wandb = 0
-    args.stats_steps = 1000
-    args.train_steps = 10
-    args.train_batch_size = 10
-    args.stats_batch_size = 10
-    args.data_width = 8
-    args.skip_stats = 0
-    args.nonlin = True
-    args.weight_decay = 1e-3
-
     d1 = args.data_width ** 2
     n = args.stats_batch_size
     o = 10
-    #d = [d1, 30, 30, 30, o]
     d = [d1, o]
     dataset_size = 10000
 
@@ -79,7 +68,7 @@ def main():
     stats_iter = u.infinite_iter(stats_loader)
 
     test_dataset = u.TinyMNIST(data_width=args.data_width, train=False, dataset_size=dataset_size, loss_type=loss_type)
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.train_batch_size, shuffle=False, drop_last=True)
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.stats_batch_size, shuffle=False, drop_last=True)
     test_iter = u.infinite_iter(test_loader)
 
     if loss_type == 'LeastSquares':
@@ -210,6 +199,7 @@ def main():
 
                     with u.timeit(f'rho-{i}'):
                         s.rho, s.lyap_erank, lyap_evals = u.truncated_lyapunov_rho(H, sigma)
+                        s.step_div_1_adjusted = s.step_div_1/s.rho
 
                     with u.timeit(f"batch-{i}"):
                         s.batch_openai = torch.trace(H @ sigma) / (g @ H @ g.t())
@@ -256,7 +246,7 @@ if __name__ == '__main__':
     parser.add_argument('--logdir', type=str, default='/temp/runs/curv_train_tiny/run')
     parser.add_argument('--train_batch_size', type=int, default=10)
     parser.add_argument('--stats_batch_size', type=int, default=10)
-    parser.add_argument('--dataset_size', type=int, default=60000)
+    parser.add_argument('--data_width', type=int, default=8)
     parser.add_argument('--train_steps', type=int, default=10, help="this many train steps between stat collection")
     parser.add_argument('--stats_steps', type=int, default=1000000, help="total number of curvature stats collections")
     parser.add_argument('--nonlin', type=int, default=1, help="whether to add ReLU nonlinearity between layers")
