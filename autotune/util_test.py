@@ -182,6 +182,6 @@ def test_robust_svd():
 
 
 if __name__ == '__main__':
-    #test_truncated_lyapunov()
+    test_truncated_lyapunov()
     # test_robust_svd()
-    u.run_all_tests(sys.modules[__name__])
+    #u.run_all_tests(sys.modules[__name__])

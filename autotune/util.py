@@ -27,7 +27,12 @@ u = sys.modules[__name__]
 # acceptable condition dictionary, from scipy.linalg.pinv2
 # max float32 condition number: 8.4k
 # max float64 condition number: 4.5B
-cond_dict = {torch.float32: 1e3 * 1.1920929e-07, torch.float64: 1E6 * 2.220446049250313e-16}
+
+def get_condition(dtype):
+    if str(dtype).endswith('float32') or str(dtype).endswith('float16'):
+        return 1e3 * 1.1920929e-07
+    else:   # assume float64
+        return 1e6 * 2.220446049250313e-16
 
 
 def v2c(vec):
@@ -268,7 +273,7 @@ def erank(mat):
 def rank(A):
     """Rank of a matrix"""
     U, S, V = torch.svd(A)
-    cond = cond_dict[A.dtype]
+    cond = get_condition(A.dtype)
     cutoff = torch.max(S)*cond
     return torch.sum(S > cutoff).type(torch.get_default_dtype())
 
@@ -321,7 +326,7 @@ def truncated_lyapunov(A, C, use_svd=False, top_k=None, check_error=False):
 
     assert A.shape[0] == A.shape[1]
     assert len(A.shape) == 2
-    cond = cond_dict[A.dtype]
+    cond = get_condition(A.dtype)
 
     if use_svd:
         U, S, V = torch.svd(A)
@@ -337,19 +342,13 @@ def truncated_lyapunov(A, C, use_svd=False, top_k=None, check_error=False):
         top_k = rank
 
     S = torch.where(S > cutoff, S, torch.zeros_like(S))
-    mask = (S > cutoff).type(torch.ByteTensor)
-    mask1 = u.outer(mask, mask)  # matrix 1 non-zero block
-
     S = S.diag() @ torch.ones_like(A)
     U = U[:, :top_k]
-    mask2d = mask1
-    mask2d = mask2d[:top_k, :top_k]
-
     projected = U.t() @ C @ U
     divider = S + S.t()
     divider = divider[:top_k, :top_k]
 
-    divided = torch.where(mask2d, projected / divider, torch.zeros_like(projected))
+    divided = torch.where(S > 0, projected / divider, torch.zeros_like(projected))
     X = U @ divided @ U.t()
     if check_error:
         error = A @ X + X @ A - C
@@ -357,6 +356,45 @@ def truncated_lyapunov(A, C, use_svd=False, top_k=None, check_error=False):
         if relative_error > 1e-3:
             print('rel error', relative_error)
     return X
+
+
+def truncated_lyapunov_rho(A, C):
+    """Returns all spectrum-related quantities."""
+
+    C = 2*C    # to center spectrum at 1
+    assert A.shape[0] == A.shape[1]
+    assert len(A.shape) == 2
+    cond = get_condition(A.dtype)
+
+    S, U = torch.symeig(A, eigenvectors=True)
+    S = torch.flip(S, [0])
+    U = torch.flip(U, [1])
+    cutoff = torch.max(S) * cond
+    rank = torch.sum(S > cutoff)
+    top_k = rank
+
+    S = S[:top_k].diag()
+    S = S @ torch.ones_like(S)
+
+    U = U[:, :top_k]
+    projected = U.t() @ C @ U
+    divider = S + S.t()
+    divider = divider[:top_k, :top_k]
+
+    divided = torch.where(S > 0, projected / divider, torch.zeros_like(projected))
+    X = U @ divided @ U.t()
+    nan_check(X)
+
+    U, S, V = torch.svd(X)  # can we use symeig here?
+    # S = torch.symeig(X).eigenvalues
+    # S = u.filter_evals(S)
+
+    erank = torch.sum(S)/torch.max(S)
+    rho = A.shape[0]/erank
+    spectrum = u.filter_evals(S)
+
+    return rho, erank, spectrum
+
 
 
 def outer(x, y):
@@ -377,11 +415,16 @@ def to_numpy_multiple(*xs, dtype=np.float32):
     return (to_numpy(x, dtype) for x in xs)
 
 
-def to_numpy(x, dtype=np.float32) -> np.ndarray:
+def to_numpy(x, dtype=None) -> np.ndarray:
     """Convert numeric object to numpy array."""
 
+    if dtype is None:
+        if torch.get_default_dtype() == torch.float64:
+            dtype = np.float64
+        else:
+            dtype = np.float32
     if hasattr(x, 'numpy'):  # PyTorch tensor
-        result = x.detach().numpy().astype(dtype)
+        result = x.detach().cpu().numpy().astype(dtype)
     elif type(x) == np.ndarray:
         result = x.astype(dtype)
     else:  # Some Python type
@@ -475,12 +518,12 @@ def svd_pos_svals(mat):
     return filter_evals(S)
 
 
-def filter_evals(s, cond=None):
+def filter_evals(vals, cond=None):
     """Given list of eigenvalues or singular values, filter out small values."""
     if cond is None:
-        cond = cond_dict[s.dtype]
-    above_cutoff = (abs(s) > cond * torch.max(abs(s)))
-    return s[above_cutoff]
+        cond = get_condition(vals.dtype)
+    above_cutoff = (abs(vals) > cond * torch.max(abs(vals)))
+    return vals[above_cutoff]
 
 
 def symsqrt(mat, cond=None, return_rank=False):
@@ -520,14 +563,14 @@ def symsqrt_svd(mat: torch.Tensor):
 
     u, s, v = robust_svd(mat)
     svals: torch.Tensor = torch.sqrt(s)
-    eps = cond_dict[mat.dtype] * torch.max(abs(s))
+    eps = get_condition(mat.dtype) * torch.max(abs(s))
     si = torch.where(s > eps, svals, s)
     if len(si) == 0:
         return torch.zeros_like(mat)
     return u @ torch.diag(si) @ v.t()
 
 
-def robust_svd(mat: torch.Tensor) -> torch.Tensor:
+def robust_svd(mat: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Try to perform SVD and handle errors.
     """
 
@@ -535,7 +578,7 @@ def robust_svd(mat: torch.Tensor) -> torch.Tensor:
         U, S, V = torch.svd(mat)
     except Exception as e:  # this can fail, see https://github.com/pytorch/pytorch/issues/25978
         s = torch.symeig(mat).eigenvalues
-        eps = cond_dict[mat.dtype] * torch.max(abs(s))
+        eps = get_condition(mat.dtype) * torch.max(abs(s))
         print(f"Warning, SVD diverged with {e}, regularizing with {eps}")
         mat = mat + torch.eye(mat.shape[0])*eps*2
         U, S, V = torch.svd(mat)
@@ -1095,13 +1138,10 @@ class StridedConvolutional2(SimpleModel2):
         self._finalize()
 
     def forward(self, x: torch.Tensor):
-        # x = self.predict(x)
         for i, layer in enumerate(self.all_layers):
             print(i, x)
             x = layer(x)
 
-        print(i + 1, x)
-        # x = F.adaptive_avg_pool2d(x, [1, 1])
         assert x.shape[2] == 1 and x.shape[3] == 1
         return x.reshape(x.shape[0], 1)
 
@@ -1178,13 +1218,23 @@ def log_scalar(**metrics) -> None:
         gl.event_writer.add_scalar(tag=tag, scalar_value=metrics[tag], global_step=gl.get_global_step())
 
 
-def log_spectrum(tag, vals):
+def log_spectrum(tag, vals: torch.Tensor, loglog=True, discard_tiny=True):
     """Given eigenvalues or singular values in decreasing order, log this plg."""
 
     import matplotlib.pyplot as plt
+
+    if discard_tiny:
+        vals = filter_evals(vals)
+
+    y = vals
+    x = torch.arange(len(vals), dtype=vals.dtype) + 1.
+    if loglog:
+        y = torch.log10(y)
+        x = torch.log10(x)
     fig, ax = plt.subplots()
     y = torch.log10(vals)
     x = torch.log10(torch.arange(len(vals), dtype=y.dtype) + 1.)
+    x, y = to_numpy_multiple(x, y)
     markerline, stemlines, baseline = ax.stem(x, y, markerfmt='bo', basefmt='r-', bottom=min(y))
     plt.setp(baseline, color='r', linewidth=2)
     gl.event_writer.add_figure(tag=tag, figure=fig, global_step=gl.get_global_step())
@@ -1213,7 +1263,7 @@ def get_events(fname, x_axis='step'):
                 assert False, f"Unknown x_axis ({x_axis})"
 
             vals = {val.tag: val.simple_value for val in event.summary.value}
-            # step_time: value
+            # step_time: valuelayer
             for tag in vals:
                 event_dict = result.setdefault(tag, {})
                 if x_val in event_dict:

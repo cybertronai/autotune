@@ -384,7 +384,7 @@ def backprop_hess(output: torch.Tensor, hess_type: str) -> None:
     if hess_type == 'CrossEntropy':
         batch = F.softmax(output, dim=1)
 
-        mask = torch.eye(o).expand(n, o, o)
+        mask = torch.eye(o).expand(n, o, o).to(gl.device)
         diag_part = batch.unsqueeze(2).expand(n, o, o) * mask
         outer_prod_part = torch.einsum('ij,ik->ijk', batch, batch)
         hess = diag_part - outer_prod_part
@@ -394,7 +394,7 @@ def backprop_hess(output: torch.Tensor, hess_type: str) -> None:
             if torch.get_default_dtype() == torch.float64:
                 hess[i, :, :] = u.symsqrt_svd(hess[i, :, :])  # more stable method since we don't care about speed with float64
             else:
-                hess[i, :, :] = u.symsqrt_svd(hess[i, :, :])   # workaround for https://github.com/pytorch/pytorch/issues/25972, TODO(y), fix symsqrt
+                hess[i, :, :] = u.symsqrt(hess[i, :, :])
             u.nan_check(hess[i, :, :])
         hess = hess.transpose(0, 1)
 
