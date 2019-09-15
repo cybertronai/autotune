@@ -67,3 +67,6 @@ class KronFisherConv2d(KronCovConv2d, Fisher):
             self.accumulate_cov(G)
         else:
             self._G = self.finalize()
+
+    def recursive_update_in_backward(self):
+        raise NotImplementedError
