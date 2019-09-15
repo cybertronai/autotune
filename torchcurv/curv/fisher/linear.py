@@ -55,3 +55,21 @@ class KronFisherLinear(KronCovLinear, Fisher):
             self.accumulate_cov(G)
         else:
             self._G = self.finalize()
+
+    def recursive_update_in_backward(self):
+        G = self._G
+        data_input = getattr(self.module, 'data_input')
+        n, d = data_input.shape
+
+        for pre_curv in getattr(self, 'pre_curvs', []):
+            pre_data_output = getattr(pre_curv.module, 'data_output')
+            grads = torch.autograd.grad(data_input, pre_data_output)
+            print(grads.shape)
+            exit()
+
+    def update_as_presoftmax(self, prob):
+        n, dim = prob.shape
+        cov = torch.einsum('ki,kj->ij', prob, prob).div(n)
+        fisher_presoftmax = (torch.diag(prob.sum(dim=0)) - cov).div(n)
+        self._G = fisher_presoftmax
+

@@ -75,7 +75,7 @@ def main():
                         help='checkpoint path for resume training')
     parser.add_argument('--out', type=str, default='result',
                         help='dir to save output files')
-    parser.add_argument('--config', default=None,
+    parser.add_argument('--config', default='configs/cifar10/lenet_kfac.json',
                         help='config file path')
 
     args = parser.parse_args()

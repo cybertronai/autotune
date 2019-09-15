@@ -12,8 +12,8 @@
     "optim_args": {
         "curv_type": "Cov",
         "curv_shapes": {
-            "Conv2d": "Kron",
-            "Linear": "Kron",
+            "Conv2d": "Unit",
+            "Linear": "Diag",
             "BatchNorm1d": "Diag",
             "BatchNorm2d": "Diag"
         },

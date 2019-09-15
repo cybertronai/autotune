@@ -1,6 +1,6 @@
 {
   "dataset": "CIFAR-10",
-  "epochs": 150,
+  "epochs": 50,
   "batch_size": 32,
   "val_batch_size": 1250,
   "random_crop": true,
@@ -20,11 +20,11 @@
     },
     "momentum": 0.9,
     "momentum_type": "raw",
-    "weight_decay": 0.05,
+    "l2_reg": 1e-3,
     "acc_steps": 1
   },
   "curv_args": {
-    "damping": 1e-4,
+    "damping": 1e-3,
     "ema_decay": 0.999,
     "pi_type": "tracenorm"
   },

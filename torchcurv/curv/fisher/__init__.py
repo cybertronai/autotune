@@ -30,9 +30,6 @@ class Fisher(object):
 
 def get_closure_for_fisher(optimizer, model, data, target, approx_type=None, num_mc=1):
 
-    for group in optimizer.param_groups:
-        assert isinstance(group['curv'], Fisher)
-
     _APPROX_TYPE_MC = 'mc'
     _APPROX_TYPE_RECURSIVE = 'recursive'
 
