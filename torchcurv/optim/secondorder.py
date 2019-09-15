@@ -55,9 +55,9 @@ class SecondOrderOptimizer(Optimizer):
         self.curv_shapes = {} if curv_shapes is None else curv_shapes
 
         for module in model.modules():
-            params = list(module.parameters(recurse=False))
-            if len(params) == 0:
+            if len(list(module.children())) > 0:
                 continue
+            params = list(module.parameters())
 
             curv_class = self.get_curv_class(module)
             if curv_class is not None:
