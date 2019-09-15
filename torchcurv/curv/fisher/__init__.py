@@ -27,6 +27,9 @@ class Fisher(object):
     def finalize(self):
         return self._acc_cov.get()
 
+    def update_as_presoftmax(self, prob):
+        raise NotImplementedError('This method supports only torchcurv.KronFisherLinear.')
+
 
 def get_closure_for_fisher(optimizer, model, data, target, approx_type=None, num_mc=1):
 
