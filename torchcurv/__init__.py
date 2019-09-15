@@ -15,4 +15,3 @@ from torchcurv.curv.fisher import Fisher  # NOQA
 from torchcurv.curv.fisher.linear import DiagFisherLinear, KronFisherLinear  # NOQA
 from torchcurv.curv.fisher.conv import DiagFisherConv2d, KronFisherConv2d  # NOQA
 from torchcurv.curv.fisher.batchnorm import DiagFisherBatchNorm2d  # NOQA
-from torchcurv.curv.fisher.pooling import KronFisherMaxPool2d  # NOQA
