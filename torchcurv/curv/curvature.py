@@ -98,8 +98,7 @@ class Curvature(object):
     def forward_postprocess(self, module, input, output):
         assert self._module == module
 
-        #data_input = input[0].detach()
-        data_input = input[0]
+        data_input = input[0].detach()
 
         setattr(module, 'data_input', data_input)
         setattr(module, 'data_output', output)
