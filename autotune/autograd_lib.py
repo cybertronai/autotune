@@ -32,6 +32,10 @@ B, backprops: backprop values (aka Lop aka Jacobian-vector product) for current 
 
 weight: matmul part of layer, Linear [di, do], Conv [do, di, Kh, Kw]
 
+H, hess  -- hessian
+S, sigma -- noise
+L, lyap -- lyapunov matrix
+
 """
 
 from typing import List
@@ -42,6 +46,7 @@ import torch.nn.functional as F
 
 import util as u
 import globals as gl
+from attrdict import AttrDefault
 
 _supported_layers = ['Linear', 'Conv2d']  # Supported layer class types  TODO(y): make non-private
 _supported_methods = ['exact', 'kron', 'mean_kron', 'experimental_kfac']  # supported approximation methods
@@ -236,7 +241,7 @@ def compute_hess(model: nn.Module, method='exact', attr_name=None) -> None:
       kron: kronecker product
       mean_kron: mean of kronecker products, one kronecker product per datapoint
       experimental_kfac: experimental method for Conv2d
-    field_name: If None, will save hessian to "hess" for exact computation and to "hess_factored" for factored, otherwise use this attr name
+    attr_name: If None, will save hessian to "hess" for exact computation and to "hess_factored" for factored, otherwise use this attr name
 
     Must be called after backprop_hess().
     """
@@ -430,3 +435,255 @@ def backprop_hess(output: torch.Tensor, hess_type: str) -> None:
 
     _global_backprops_prefix = old_backprops_prefix
 
+
+def compute_stats(model):
+    """Combines activations and backprops to compute statistics for a model."""
+
+    # obtain n
+    n = 0
+    for param in model.modules():
+        if hasattr(param, 'activations'):
+            n = param.activations.shape[0]
+            break
+    assert n, "Couldn't figure out size of activations"
+
+    for (i, layer) in enumerate(model.layers):
+
+        if hasattr(layer, 'expensive'):
+            continue
+
+        param_names = {layer.weight: "weight", layer.bias: "bias"}
+        for param in [layer.weight, layer.bias]:
+
+            if param is None:
+                continue
+
+            s = AttrDefault(str, {})  # dictionary-like object for layer stats
+
+            #############################
+            # Gradient stats
+            #############################
+            A_t = layer.activations
+            B_t = layer.backprops_list[0] * n
+
+            s.sparsity = torch.sum(layer.output <= 0) / layer.output.numel()  # proportion of activations that are zero
+            s.mean_activation = torch.mean(A_t)
+            s.mean_backprop = torch.mean(B_t)
+
+            # empirical Fisher
+            G = param.grad1.reshape((n, -1))
+            g = G.mean(dim=0, keepdim=True)
+
+            u.nan_check(G)
+            with u.timeit(f'sigma-{i}'):
+                efisher = G.t() @ G / n
+                sigma = efisher - g.t() @ g
+                s.sigma_l2 = u.sym_l2_norm(sigma)
+                s.sigma_erank = torch.trace(sigma) / s.sigma_l2
+
+            H = param.hess
+
+            u.nan_check(H)
+
+            with u.timeit(f"H_l2-{i}"):
+                s.H_l2 = u.sym_l2_norm(H)
+
+            with u.timeit(f"norms-{i}"):
+                s.H_fro = H.flatten().norm()
+                s.grad_fro = g.flatten().norm()
+                s.param_fro = param.data.flatten().norm()
+
+            # TODO(y): col vs row fix
+            def loss_direction(dd: torch.Tensor, eps):
+                """
+
+                Args:
+                    dd: direction, as a n-by-1 matrix
+                    eps: scalar length
+
+                Returns:
+                   loss improvement if we take step eps in direction dd.
+                """
+                assert u.is_row_matrix(dd)
+                return u.to_scalar(eps * (dd @ g.t()) - 0.5 * eps ** 2 * dd @ H @ dd.t())
+
+            def curv_direction(dd: torch.Tensor):
+                """Curvature in direction dd (directional eigenvalue). """
+                assert u.is_row_matrix(dd)
+                return u.to_scalar(dd @ H @ dd.t() / (dd.flatten().norm() ** 2))
+
+            with u.timeit(f"pinvH-{i}"):
+                pinvH = u.pinv(H)
+
+            with u.timeit(f'curv-{i}'):
+                s.grad_curv = curv_direction(g)  # curvature (eigenvalue) in direction g
+                ndir = g @ pinvH  # newton direction (TODO(y): replace with lstsqsolve)
+                s.newton_curv = curv_direction(ndir)
+                setattr(layer.weight, 'pre', pinvH)  # save Newton preconditioner
+                s.step_openai = 1 / s.grad_curv if s.grad_curv else 1234567
+                s.step_div_inf = 2 / s.H_l2  # divegent step size for batch_size=infinity
+                s.step_div_1 = torch.tensor(2) / torch.trace(H)  # divergent step for batch_size=1
+
+                s.newton_fro = ndir.flatten().norm()  # frobenius norm of Newton update
+                s.regret_newton = u.to_scalar(g @ pinvH @ g.t() / 2)  # replace with "quadratic_form"
+                s.regret_gradient = loss_direction(g, s.step_openai)
+
+            # todo: Lyapunov has to be redone
+            with u.timeit(f'rho-{i}'):
+                s.rho, s.lyap_erank, L_evals = u.truncated_lyapunov_rho(H, sigma)
+                s.step_div_1_adjusted = s.step_div_1 / s.rho
+
+            with u.timeit(f"batch-{i}"):
+                s.batch_openai = torch.trace(H @ sigma) / (g @ H @ g.t())
+                s.diversity = torch.norm(G, "fro") ** 2 / torch.norm(g) ** 2 / n  # Gradient diversity / n
+                s.noise_variance_pinv = torch.trace(pinvH @ sigma)   # todo(y): replace with lsqtsolve
+                s.H_erank = torch.trace(H) / s.H_l2
+                s.batch_jain_simple = 1 + s.H_erank
+                s.batch_jain_full = 1 + s.rho * s.H_erank
+
+            param_name = f"{layer.name}={param_names[param]}"
+            u.log_scalars(u.nest_stats(f"{param_name}", s))
+
+            H_evals = u.symeig_pos_evals(H)
+            S_evals = u.symeig_pos_evals(sigma)
+
+            #s.H_evals = H_evals
+            #s.S_evals = S_evals
+            #s.L_evals = L_evals
+
+            setattr(param, 'stats', s)
+
+            #u.log_spectrum(f'{param_name}/hess', H_evals)
+            #u.log_spectrum(f'{param_name}/sigma', S_evals)
+            #u.log_spectrum(f'{param_name}/lyap', L_evals)
+
+    return None
+
+
+def compute_stats_factored(model):
+    """Combines activations and backprops to compute statistics for a model."""
+
+    # obtain n
+    n = 0
+    for param in model.modules():
+        if hasattr(param, 'activations'):
+            n = param.activations.shape[0]
+            break
+    assert n, "Couldn't figure out size of activations"
+
+    for (i, layer) in enumerate(model.layers):
+
+        if hasattr(layer, 'expensive'):
+            continue
+
+        param_names = {layer.weight: "weight", layer.bias: "bias"}
+        for param in [layer.weight, layer.bias]:
+
+            if param is None:
+                continue
+
+            s = AttrDefault(str, {})  # dictionary-like object for layer stats
+
+            #############################
+            # Gradient stats
+            #############################
+            A_t = layer.activations
+            B_t = layer.backprops_list[0] * n
+
+            AA = A_t @ A_t.t()
+            BB = B_t @ B_t.t()
+
+            # kronecker factored hess and sigma
+            Hk = param.hess_kron
+            Sk = u.KronFactored(AA, BB)
+
+            s.sparsity = torch.sum(layer.output <= 0) / layer.output.numel()  # proportion of activations that are zero
+            s.mean_activation = torch.mean(A_t)
+            s.mean_backprop = torch.mean(B_t)
+
+            # empirical Fisher
+            G = param.grad1.reshape((n, -1))
+            g = G.mean(dim=0, keepdim=True)
+
+            u.nan_check(G)
+            with u.timeit(f'sigma-{i}'):
+                efisher = G.t() @ G / n
+                sigma = efisher - g.t() @ g
+                s.sigma_l2 = u.sym_l2_norm(sigma)
+                s.sigma_erank = torch.trace(sigma) / s.sigma_l2
+
+            H = param.hess
+
+            u.nan_check(H)
+
+            with u.timeit(f"H_l2-{i}"):
+                s.H_l2 = u.sym_l2_norm(H)
+
+            with u.timeit(f"norms-{i}"):
+                s.H_fro = H.flatten().norm()
+                s.grad_fro = g.flatten().norm()
+                s.param_fro = param.data.flatten().norm()
+
+            # TODO(y): col vs row fix
+            def loss_direction(dd: torch.Tensor, eps):
+                """
+
+                Args:
+                    dd: direction, as a n-by-1 matrix
+                    eps: scalar length
+
+                Returns:
+                   loss improvement if we take step eps in direction dd.
+                """
+                assert u.is_row_matrix(dd)
+                return u.to_scalar(eps * (dd @ g.t()) - 0.5 * eps ** 2 * dd @ H @ dd.t())
+
+            def curv_direction(dd: torch.Tensor):
+                """Curvature in direction dd (directional eigenvalue). """
+                assert u.is_row_matrix(dd)
+                return u.to_scalar(dd @ H @ dd.t() / (dd.flatten().norm() ** 2))
+
+            with u.timeit(f"pinvH-{i}"):
+                pinvH = u.pinv(H)
+
+            with u.timeit(f'curv-{i}'):
+                s.grad_curv = curv_direction(g)  # curvature (eigenvalue) in direction g
+                ndir = g @ pinvH  # newton direction (TODO(y): replace with lstsqsolve)
+                s.newton_curv = curv_direction(ndir)
+                setattr(layer.weight, 'pre', pinvH)  # save Newton preconditioner
+                s.step_openai = 1 / s.grad_curv if s.grad_curv else 1234567
+                s.step_div_inf = 2 / s.H_l2  # divegent step size for batch_size=infinity
+                s.step_div_1 = torch.tensor(2) / torch.trace(H)  # divergent step for batch_size=1
+
+                s.newton_fro = ndir.flatten().norm()  # frobenius norm of Newton update
+                s.regret_newton = u.to_scalar(g @ pinvH @ g.t() / 2)  # replace with "quadratic_form"
+                s.regret_gradient = loss_direction(g, s.step_openai)
+
+            # todo: Lyapunov has to be redone
+            with u.timeit(f'rho-{i}'):
+                s.rho, s.lyap_erank, L_evals = u.truncated_lyapunov_rho(H, sigma)
+                s.step_div_1_adjusted = s.step_div_1 / s.rho
+
+            with u.timeit(f"batch-{i}"):
+                s.batch_openai = torch.trace(H @ sigma) / (g @ H @ g.t())
+                s.diversity = torch.norm(G, "fro") ** 2 / torch.norm(g) ** 2 / n  # Gradient diversity / n
+                s.noise_variance_pinv = torch.trace(pinvH @ sigma)   # todo(y): replace with lsqtsolve
+                s.H_erank = torch.trace(H) / s.H_l2
+                s.batch_jain_simple = 1 + s.H_erank
+                s.batch_jain_full = 1 + s.rho * s.H_erank
+
+            param_name = f"{layer.name}={param_names[param]}"
+            u.log_scalars(u.nest_stats(f"{param_name}", s))
+
+            H_evals = u.symeig_pos_evals(H)
+            S_evals = u.symeig_pos_evals(sigma)
+
+            #s.H_evals = H_evals
+            #s.S_evals = S_evals
+            #s.L_evals = L_evals
+
+            setattr(param, 'stats', s)
+
+            #u.log_spectrum(f'{param_name}/hess', H_evals)
+            #u.log_spectrum(f'{param_name}/sigma', S_evals)
+            #u.log_spectrum(f'{param_name}/lyap', L_evals)

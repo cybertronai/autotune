@@ -293,22 +293,12 @@ def test_main():
                 s.regret_gradient = loss_direction(g, s.step_openai)
 
             with u.timeit(f'rho-{i}'):
-                p_sigma = u.lyapunov_svd(H, sigma)
-                if u.has_nan(p_sigma) and args.compute_rho:  # use expensive method
-                    print('using expensive method')
-                    import pdb;
-                    pdb.set_trace()
-                    H0, sigma0 = u.to_numpys(H, sigma)
-                    p_sigma = scipy.linalg.solve_lyapunov(H0, sigma0)
-                    p_sigma = torch.tensor(p_sigma).to(gl.device)
+                p_sigma = u.lyapunov_spectral(H, sigma)
 
-                if u.has_nan(p_sigma):
-                    # import pdb; pdb.set_trace()
-                    s.psigma_erank = H.shape[0]
-                    s.rho = 1
-                else:
-                    s.psigma_erank = u.sym_erank(p_sigma)
-                    s.rho = H.shape[0] / s.psigma_erank
+                discrepancy = torch.max(abs(p_sigma - p_sigma.t()) / p_sigma)
+
+                s.psigma_erank = u.sym_erank(p_sigma)
+                s.rho = H.shape[0] / s.psigma_erank
 
             with u.timeit(f"batch-{i}"):
                 s.batch_openai = torch.trace(H @ sigma) / (g @ H @ g.t())

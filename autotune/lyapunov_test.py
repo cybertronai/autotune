@@ -117,10 +117,11 @@ def test_lyapunov():
     H = J.t() @ J / n
     noise_variance = torch.trace(H.inverse() @ sigma)
 
+    # H is not quite symmetric, make it so
+    H = H + H.t()
+
     # Slow way
-    # p_sigma = (u.kron(H, torch.eye(d)) + u.kron(torch.eye(d), H)).inverse() @ u.vec(sigma)
-    p_sigma = torch.solve(u.vec(sigma), u.kron(H, torch.eye(d)) + u.kron(torch.eye(d), H))[0]
-    p_sigma = u.unvec(p_sigma, d)
+    p_sigma = u.lyapunov_lstsq(H, sigma)
 
     sigma0 = u.to_numpy(sigma)
     H0 = u.to_numpy(H)
@@ -130,11 +131,51 @@ def test_lyapunov():
     print(f"Error 1: {np.max(abs(H0 @ p_sigma2 + p_sigma2 @ H0 - sigma0))}")
     u.check_close(p_sigma, p_sigma2)
 
-    # alternative even faster way
+    # alternative through SVD
     p_sigma3 = lyapunov_svd(torch.tensor(H0), torch.tensor(sigma0))
     u.check_close(p_sigma2, p_sigma3)
 
-    print("tests passed")
+    # alternative through evals
+    p_sigma4 = u.lyapunov_spectral(torch.tensor(H0), torch.tensor(sigma0))
+    u.check_close(p_sigma2, p_sigma4)
+
+
+def test_stability():
+    bad_sigmas = torch.load('test/bad_sigmas.pt')
+    H = bad_sigmas['H']
+    sigma = bad_sigmas['sigma']
+
+    X = u.lyapunov_spectral(H, sigma)
+    discrepancy = torch.max(abs(X - X.t()) / X)
+    assert discrepancy < 0.01
+
+
+def compare_impl():
+    """
+    lstsq : error 2.23668351395645e-07 erank 4.248441219329834 discrepancy 4760.62841796875
+    scipy : error 4.3144709138687176e-07 erank 5.015336036682129 discrepancy 0.38698798418045044
+    svd : error 2.6252257612213725e-07 erank 5.567287921905518 discrepancy 11.784327507019043
+    spectral : error 3.1967988434189465e-07 erank 4.978618144989014 discrepancy 0.0020115238148719072
+    """
+
+    bad_sigmas = torch.load('test/bad_sigmas.pt')
+    H = bad_sigmas['H']
+    sigma = bad_sigmas['sigma']
+
+    # X = u.lyapunov_spectral(H, sigma)
+
+    def print_stats(tag, X):
+        error = torch.norm(H @ X + X @ H - sigma)
+        discrepancy = torch.max(abs(X - X.t()) / X)
+        print(tag, ": error", error.item(), "erank", u.erank(X).item(), 'discrepancy', discrepancy.item())
+
+    H0, sigma0 = u.to_numpys(H, sigma)
+    X0 = scipy.linalg.solve_lyapunov(H0, sigma0)
+
+    print_stats('lstsq', u.lyapunov_lstsq(H, sigma))
+    print_stats('scipy', torch.tensor(X0))
+    print_stats('svd', u.lyapunov_svd(H, sigma))
+    print_stats('spectral', u.lyapunov_spectral(H, sigma))
 
 
 def lyapunov_svd(A, C, rtol=1e-4, use_svd=False):
@@ -199,4 +240,5 @@ def print_cpu_info():
 
 
 if __name__ == '__main__':
-    u.run_all_tests(sys.modules[__name__])
+    test_stability()
+    #    u.run_all_tests(sys.modules[__name__])

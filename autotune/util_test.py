@@ -193,7 +193,7 @@ def test_lyapunov_lstsq():
     print(X)
     print(torch.svd(X)[1])
     # torch.set_default_dtype(torch.float32)
-    
+
 
 def test_robust_svd():
     mat = np.genfromtxt('test/gesvd_crash.txt', delimiter=",")

@@ -30,6 +30,7 @@ u = sys.modules[__name__]
 
 def get_condition(dtype):
     """Return number x such that values below max(eigenval)*x are indistinguishable from noise"""
+    assert 'float' in str(dtype)
     if str(dtype).endswith('float32') or str(dtype).endswith('float16'):
         return 1e3 * 1.1920929e-07
     else:   # assume float64
@@ -242,6 +243,8 @@ def test_l2_norm():
 def sym_l2_norm(mat: torch.Tensor):
     """Largest eigenvalue assuming that matrix is symmetric."""
 
+    u.check_symmetric(mat)
+
     if gl.debug_linalg_crashes:
         try:
             evals, _evecs = torch.symeig(mat)
@@ -288,6 +291,27 @@ def regularize_mat(mat, eps):
     rtol = l2_norm(mat) * eps
     atol = 1e-12
     return mat + torch.eye(mat.shape[0]) * (rtol + atol)
+
+
+def lyapunov_spectral(A, B, cond=None):
+    u.check_symmetric(A)
+    u.check_symmetric(B)
+
+    s, U = torch.symeig(A, eigenvectors=True)
+    if cond is None:
+        cond = get_condition(s.dtype)
+    cutoff = cond * max(s)
+    s = torch.where(s > cutoff, s, torch.tensor(0.))
+
+    C = U.t() @ B @ U
+    s = s.unsqueeze(1) + s.unsqueeze(0)
+    si = torch.where(s > 0, 1/s, s)
+    Y = C * si
+    X = U @ Y @ U.t()
+
+    # cancel small asymetries introduces by multiplication by small numbers
+    X = (X + X.t())/2
+    return X
 
 
 def lyapunov_svd(A, C, rtol=1e-4, eps=1e-7, use_svd=False):
@@ -391,7 +415,7 @@ def lyapunov_lstsq(A, C):
     """Slow explicit solution to least squares Lyapunov in kronecker expanded form."""
     n, n = A.shape
     ii = torch.eye(n)
-    sol = torch.lstsq(u.vec(C), kron(A, ii) + kron(ii, A))[0]
+    sol = torch.lstsq(u.vec(C), kron(ii, A) + kron(A.t(), ii))[0]
     return unvec(sol, n)
 
 
@@ -570,11 +594,11 @@ def pinv_square_root(mat: torch.Tensor, eps=1e-4) -> torch.Tensor:
     return u @ torch.diag(si) @ v.t()
 
 
-def symeig_pos_evals(mat):
-    """Returns positive eigenvalues from symeig in reversed order (decreasing order, to match order of .svd())"""
+def symeig_pos_evals(mat: torch.Tensor) -> torch.Tensor:
+    """Returns positive eigenvalues from symeig in decreasing order (to match order of .svd())"""
 
     s, u = torch.symeig(mat, eigenvectors=False)
-    return torch.flip(filter_evals(s), dims=[0])
+    return torch.flip(filter_evals(s, remove_negative=True), dims=[0])
 
 
 def svd_pos_svals(mat):
@@ -584,19 +608,27 @@ def svd_pos_svals(mat):
     return filter_evals(S)
 
 
-def filter_evals(vals, cond=None):
-    """Given list of eigenvalues or singular values, filter out values indistinguishable from noise."""
+def filter_evals(vals, cond=None, remove_small=True, remove_negative=True):
+    """Given list of eigenvalues or singular values, remove values indistinguishable from noise and/or small values."""
     if cond is None:
         cond = get_condition(vals.dtype)
     above_cutoff = (abs(vals) > cond * torch.max(abs(vals)))
-    return vals[above_cutoff]
+    if remove_small:
+        vals = vals[above_cutoff]
+    if remove_negative:
+        vals = vals[vals > 0]
+    return vals
 
 
 def symsqrt(mat, cond=None, return_rank=False):
-    """Computes the symmetric square root of a positive semi-definite matrix. Throws away small and negative eigenvalues."""
+    """Computes the symmetric square root of a symmetric matrix. Throws away small and negative eigenvalues."""
 
     nan_check(mat)
     s, u = torch.symeig(mat, eigenvectors=True)
+
+    check_symmetric(mat)
+
+    # todo(y): dedupe with getcond
     cond_dict = {torch.float32: 1e3 * 1.1920929e-07, torch.float64: 1E6 * 2.220446049250313e-16}
 
     if cond in [None, -1]:
@@ -657,6 +689,14 @@ def symsqrt_dist(cov1: torch.Tensor, cov2: torch.Tensor) -> float:
     cov1 = symsqrt_svd(cov1)
     cov2 = symsqrt_svd(cov2)
     return torch.norm(cov1 - cov2).item()
+
+
+def check_symmetric(mat):
+    try:
+        u.check_close(mat, mat.t())
+    except:
+        discrepancy = torch.max(abs(mat-mat.t())/mat)
+        print(f"warning, matrix not symmetric: {discrepancy}")
 
 
 def check_close(a0, b0, rtol=1e-5, atol=1e-8) -> None:
@@ -1883,6 +1923,14 @@ def random_cov_pair(shared_rank, independent_rank, d, n=20, strength=1):
     A = shared + strength * random_cov(independent_rank, d, n)
     B = shared + strength * random_cov(independent_rank, d, n)
     return A, B
+
+
+def is_row_matrix(dd):
+    return len(dd.shape) == 2 and dd.shape[0] == 1
+
+
+def is_col_matrix(dd):
+    return len(dd.shape) == 2 and dd.shape[1] == 1
 
 
 if __name__ == '__main__':
