@@ -1,4 +1,4 @@
-from torchcurv import Curvature, DiagCurvature, KronCurvature, UnitCurvature
+from torchcurv import Curvature, DiagCurvature, KronCurvature
 import torch
 import torch.nn.functional as F
 
@@ -121,68 +121,4 @@ class KronCovConv2d(KronCurvature):
             A_shape = (dim, dim)
 
         return A_shape, G_shape
-
-
-class UnitCovConv2d(UnitCurvature, DiagCovConv2d):
-
-    def update_in_backward(self, grad_output):
-        conv2d = self._module
-        data_input = getattr(conv2d, 'data_input', None)  # n x c_in x h_in x w_in
-        assert data_input is not None
-
-        n, c_in, _, _ = data_input.shape
-
-        # n x (c_in)(k_h)(k_w) x (h_out)(w_out)
-        input2d = F.unfold(data_input,
-                           kernel_size=conv2d.kernel_size, stride=conv2d.stride,
-                           padding=conv2d.padding, dilation=conv2d.dilation)
-
-        # n x c_out x h_out x w_out
-        n, c_out, h, w = grad_output.shape
-        # n x c_out x (h_out)(w_out)
-        grad_output2d = grad_output.reshape(n, c_out, -1)
-
-        grad_w = torch.einsum('bik,bjk->bij',
-                              grad_output2d, input2d)  # n x c_out x (c_in)(k_h)(k_w)
-
-        grad_w = grad_w.reshape((n, c_out, c_in, -1))  # n x c_out x c_in x (k_h)(k_w)
-
-        if self.bias:
-            grad_b = grad_output2d.sum(dim=2)  # n x c_out
-            # n x c_out x c_in x {(k_h)(k_w)+1}
-        else:
-            grad_w = grad_w.reshape((n, c_out * c_in, -1))  # n x (c_out)(c_in) x (k_h)(k_w)
-            data = torch.einsum('nbi,nbj->bij',
-                                grad_w, grad_w)  # (c_out)(c_in) x (k_h)(k_w) x (k_h)(k_w)
-
-        self._data = [data]
-
-    def update_inv(self):
-        ema = self.ema if not self.use_max_ema else self.ema_max
-
-        inv_w = self._inv(ema[0])
-        self.inv = [inv_w]
-
-        if self.bias:
-            inv_b = DiagCovConv2d._inv(self, ema[1])
-            self.inv.append(inv_b)
-
-    def precondition_grad(self, params):
-        w = params[0]
-        inv_w = self.inv[0]
-
-        cout, cin, kh, kw = w.shape
-        grad = w.grad.reshape(cout*cin, -1)
-        precondition_grad = torch.zeros_like(grad)
-
-        for i in range(grad.shape[0]):
-            precondition_grad[i] = inv_w[i].matmul(grad[i])
-
-        w.grad.copy_(precondition_grad.reshape_as(w))
-
-        if self.bias:
-            b = params[1]
-            inv_b = self.inv[1]
-            precondition_grad = inv_b.mul(b.grad)
-            b.grad.copy_(precondition_grad)
 

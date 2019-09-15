@@ -305,34 +305,6 @@ class KronCurvature(Curvature):
         return A_ic.norm().item() * G_ic.norm().item()
 
 
-class UnitCurvature(Curvature):
-
-    def __init__(self, *args, **kwargs):
-        super(UnitCurvature, self).__init__(*args, **kwargs)
-
-    def update_in_backward(self, grad_output_data):
-        raise NotImplementedError
-
-    def _inv(self, X):
-        assert len(X.shape) == 3
-        d_out = X.shape[0]
-
-        X_inv = torch.zeros_like(X)
-
-        for i in range(d_out):
-            isnan = torch.isnan(X[i]).any()
-            assert isnan == 0, ('after inv', i, self.module)
-            Xi_damp = add_value_to_diagonal(X[i], self.damping)
-            X_inv[i, :, :] = torchcurv.utils.inv(Xi_damp)
-            isnan = torch.isnan(X_inv[i, :, :]).any()
-            assert isnan == 0, ('after inv', i, self.module)
-
-        return X_inv
-
-    def precondition_grad(self, params):
-        raise NotImplementedError
-
-
 def add_value_to_diagonal(X, value):
     if torch.cuda.is_available():
         indices = torch.cuda.LongTensor([[i, i] for i in range(X.shape[0])])
