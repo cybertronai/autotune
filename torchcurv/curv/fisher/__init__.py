@@ -127,12 +127,6 @@ def get_closure_for_fisher(optimizer, model, data, target, approx_type=None, num
         elif approx_type == _APPROX_TYPE_RECURSIVE:
             trace_pre_curvatures(prob.grad_fn)
             for curv in all_curvs:
-                print(curv.module,
-                      len(getattr(curv, 'pre_curvs', set())),
-                      len(getattr(curv, 'post_curvs', set()))
-                      )
-            exit()
-            for curv in all_curvs:
                 curv.recurse = True
                 if len(getattr(curv, 'post_curvs', set())) == 0:
                     curv.update_as_presoftmax(prob)
