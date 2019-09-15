@@ -94,29 +94,50 @@ def get_closure_for_fisher(optimizer, model, data, target, approx_type=None, num
             logsoftmax = torch.nn.LogSoftmax(dim=1)
             return torch.mean(torch.sum(-soft_targets * logsoftmax(logits), 1))
 
+        for group in optimizer.param_groups:
+            assert isinstance(group['curv'], Fisher)
+
         optimizer.zero_grad()
         output = model(data)
         prob = F.softmax(output, dim=1)
 
-        turn_off_param_grad()
+        is_sampling = approx_type is None or approx_type == _APPROX_TYPE_MC
 
-        if mc_approx:
-            dist = torch.distributions.Dirichlet(prob)
-            soft_target = dist.sample((num_mc,))
-            for group in optimizer.param_groups:
-                group['curv'].prob = torch.ones_like(prob[:, 0]).div(num_mc)
+        if is_sampling:
+            turn_off_param_grad()
 
-            for i in range(num_mc):
-                loss = cross_entropy(output, soft_target[i])
-                loss.backward(retain_graph=True)
-        else:
-            for i in range(model.num_classes):
+            if approx_type == _APPROX_TYPE_MC:
+                dist = torch.distributions.Categorical(prob)
+                _target = dist.sample((num_mc,))
                 for group in optimizer.param_groups:
-                    group['curv'].prob = prob[:, i]
-                loss = F.cross_entropy(output, torch.ones_like(target).mul(i))
-                loss.backward(retain_graph=True)
+                    group['curv'].prob = torch.ones_like(prob[:, 0]).div(num_mc)
 
-        turn_on_param_grad()
+                for i in range(num_mc):
+                    loss = cross_entropy(output, _target[i])
+                    loss.backward(retain_graph=True)
+            else:
+                for i in range(model.num_classes):
+                    for group in optimizer.param_groups:
+                        group['curv'].prob = prob[:, i]
+                    loss = F.cross_entropy(output, torch.ones_like(target).mul(i))
+                    loss.backward(retain_graph=True)
+
+            turn_on_param_grad()
+
+        elif approx_type == _APPROX_TYPE_RECURSIVE:
+            trace_pre_curvatures(prob.grad_fn)
+            for curv in all_curvs:
+                print(curv.module,
+                      len(getattr(curv, 'pre_curvs', set())),
+                      len(getattr(curv, 'post_curvs', set()))
+                      )
+            exit()
+            for curv in all_curvs:
+                curv.recurse = True
+                if len(getattr(curv, 'post_curvs', set())) == 0:
+                    curv.update_as_presoftmax(prob)
+        else:
+            raise ValueError('Invalid approx type: {}'.format(approx_type))
 
         loss = F.cross_entropy(output, target)
         loss.backward()
