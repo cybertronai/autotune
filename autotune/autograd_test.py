@@ -695,8 +695,10 @@ def subtest_hess_type(hess_type):
         targets = torch.LongTensor(n).random_(0, 10)
         loss_fn = nn.CrossEntropyLoss()
 
+    # Dummy backprop to make sure multiple backprops don't invalidate each other
     autograd_lib.backprop_hess(output, hess_type=hess_type)
     autograd_lib.clear_hess_backprops(model)
+
     autograd_lib.backprop_hess(output, hess_type=hess_type)
 
     autograd_lib.compute_hess(model)

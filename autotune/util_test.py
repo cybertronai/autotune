@@ -166,22 +166,45 @@ def test_truncated_lyapunov():
     shared_rank = 2
     independent_rank = 1
     A, C = u.random_cov_pair(shared_rank=shared_rank, independent_rank=independent_rank, strength=0.1, d=d, n=n)
-    X = u.truncated_lyapunov(A, C)
+    X = u.lyapunov_truncated(A, C)
 
     # effective rank of X captures dimensionality of shared subspace
-    u.check_close(u.rank(X), shared_rank+independent_rank, rtol=1e-4)
+    u.check_close(u.rank(X), shared_rank + independent_rank, rtol=1e-4)
     u.check_close(u.erank(X), shared_rank, rtol=1e-2)
 
 
+def test_lyapunov_lstsq():
+    torch.manual_seed(1)
+    torch.set_default_dtype(torch.float64)
+    # A = torch.tensor([1., 2, 3, 4]).reshape(2, 2)
+    # C = torch.tensor([5., 6, 7, 8]).reshape(2, 2)
+    # X = u.lyapunov_lstsq(A, C)
+    # u.check_close(X, [[0.1, 1.1], [1.3, 0.1]])
+    #
+    # X = u.lyapunov_lstsq(A, A)
+    # u.check_close(X, [[0.5, -.1], [.1, .5]])
+    #
+    A = u.random_cov(1, 3, n=100)
+    print('A=', u._to_mathematica(A))
+    X = u.lyapunov_lstsq(A, 2*A)
+    print('X=', u._to_mathematica(X))
+    print(torch.svd(X)[1])
+    X = u.lyapunov_svd(A, 2*A)
+    print(X)
+    print(torch.svd(X)[1])
+    # torch.set_default_dtype(torch.float32)
+    
+
 def test_robust_svd():
-    mat = np.genfromtxt('test/gesvd_crash.txt', delimiter=",").astype(np.float32)
-    mat = torch.tensor(mat)
+    mat = np.genfromtxt('test/gesvd_crash.txt', delimiter=",")
+    mat = torch.tensor(mat).type(torch.get_default_dtype())
     U, S, V = u.robust_svd(mat)
     mat2 = U @ torch.diag(S) @ V.T
-    print(torch.norm(mat-mat2))
+    print(torch.norm(mat - mat2))
 
 
 if __name__ == '__main__':
-    test_truncated_lyapunov()
+    # test_truncated_lyapunov()
+    # test_lyapunov_lstsq()
     # test_robust_svd()
-    #u.run_all_tests(sys.modules[__name__])
+    u.run_all_tests(sys.modules[__name__])

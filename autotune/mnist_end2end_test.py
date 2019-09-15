@@ -298,7 +298,7 @@ def test_main():
                     print('using expensive method')
                     import pdb;
                     pdb.set_trace()
-                    H0, sigma0 = u.to_numpy_multiple(H, sigma)
+                    H0, sigma0 = u.to_numpys(H, sigma)
                     p_sigma = scipy.linalg.solve_lyapunov(H0, sigma0)
                     p_sigma = torch.tensor(p_sigma).to(gl.device)
 

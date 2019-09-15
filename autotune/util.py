@@ -24,11 +24,12 @@ import torch.nn.functional as F
 u = sys.modules[__name__]
 
 
-# acceptable condition dictionary, from scipy.linalg.pinv2
-# max float32 condition number: 8.4k
+# numerical noise cutoff for eigenvalues, from scipy.linalg.pinv2
+# max float32 condition number: 8.4k (8388.61)
 # max float64 condition number: 4.5B
 
 def get_condition(dtype):
+    """Return number x such that values below max(eigenval)*x are indistinguishable from noise"""
     if str(dtype).endswith('float32') or str(dtype).endswith('float16'):
         return 1e3 * 1.1920929e-07
     else:   # assume float64
@@ -315,7 +316,35 @@ def lyapunov_svd(A, C, rtol=1e-4, eps=1e-7, use_svd=False):
     return X
 
 
-def truncated_lyapunov(A, C, use_svd=False, top_k=None, check_error=False):
+def lyapunov_svd2(A, C, rtol=1e-4, eps=1e-7, use_svd=False):
+    """Solve AX+XA=C using SVD"""
+
+    # This method doesn't work for singular matrices, so regularize it
+    # TODO: can optimize performance by reusing eigenvalues from regularization computations
+    # A = regularize_mat(A, eps)
+    # C = regularize_mat(C, eps)
+
+    assert A.shape[0] == A.shape[1]
+    assert len(A.shape) == 2
+    if use_svd:
+        U, S, V = robust_svd(A)
+    else:
+        S, U = torch.symeig(A, eigenvectors=True)
+    S = S.diag() @ torch.ones_like(A)
+    factor = (S + S.t())
+    cutoff = max(S)*get_condition(S)
+    factor = torch.where(factor > cutoff, 1 / factor, factor)
+    X = U @ ((U.t() @ C @ U) * factor) @ U.t()
+    error = A @ X + X @ A - C
+    relative_error = torch.max(torch.abs(error)) / torch.max(torch.abs(A))
+    if relative_error > rtol:
+        # TODO(y): currently spams with errors, implement another method based on Newton iteration
+        pass
+        print(f"Warning, error {relative_error} encountered in lyapunov_svd")
+
+    return X
+
+def lyapunov_truncated(A, C, use_svd=False, top_k=None, check_error=False):
     """Truncated solution to AX+XA=C. top_k specified how many dimensions of A to use. If None, use threshold for
     acceptable condition."""
 
@@ -358,8 +387,21 @@ def truncated_lyapunov(A, C, use_svd=False, top_k=None, check_error=False):
     return X
 
 
+def lyapunov_lstsq(A, C):
+    """Slow explicit solution to least squares Lyapunov in kronecker expanded form."""
+    n, n = A.shape
+    ii = torch.eye(n)
+    sol = torch.lstsq(u.vec(C), kron(A, ii) + kron(ii, A))[0]
+    return unvec(sol, n)
+
+
+# TODO(y): reuse logic from above
 def truncated_lyapunov_rho(A, C):
-    """Returns all spectrum-related quantities."""
+    """Returns quantities related to spectrum of solution to AX+XA=2C
+
+    rho: measure of misfit
+    erank: effective rank of X
+    ."""
 
     C = 2*C    # to center spectrum at 1
     assert A.shape[0] == A.shape[1]
@@ -391,10 +433,9 @@ def truncated_lyapunov_rho(A, C):
 
     erank = torch.sum(S)/torch.max(S)
     rho = A.shape[0]/erank
-    spectrum = u.filter_evals(S)
+    spectrum = filter_evals(S)
 
     return rho, erank, spectrum
-
 
 
 def outer(x, y):
@@ -411,25 +452,50 @@ def to_scalar(x):
     return x[0]
 
 
-def to_numpy_multiple(*xs, dtype=np.float32):
-    return (to_numpy(x, dtype) for x in xs)
+def from_numpy(x) -> torch.Tensor:
+    if isinstance(x, torch.Tensor):
+        return x
+    else:
+        return torch.tensor(x)
+
+def pytorch_dtype_to_numpy_dtype(dtype):
+    if dtype == torch.float64:
+        dtype = np.float64
+    elif dtype == torch.float32:
+        dtype = np.float32
+    elif dtype == torch.float16:
+        dtype = np.float16
+    else:
+        dtype = np.float32
+    return dtype
 
 
 def to_numpy(x, dtype=None) -> np.ndarray:
-    """Convert numeric object to numpy array."""
+    """Convert numeric object to numpy array.
+    dtype: numpy dtype
+    """
 
     if dtype is None:
-        if torch.get_default_dtype() == torch.float64:
-            dtype = np.float64
+        if type(x) == np.ndarray:
+            dtype = x.dtype
+        elif type(x) == torch.Tensor:
+            dtype = pytorch_dtype_to_numpy_dtype(x.dtype)
         else:
-            dtype = np.float32
+            dtype = pytorch_dtype_to_numpy_dtype(torch.get_default_dtype())
+
     if hasattr(x, 'numpy'):  # PyTorch tensor
         result = x.detach().cpu().numpy().astype(dtype)
     elif type(x) == np.ndarray:
         result = x.astype(dtype)
     else:  # Some Python type
         result = np.array(x).astype(dtype)
+
+    assert np.issubdtype(result.dtype, np.number), f"Provided object ({result}) is not numeric, has type {result.dtype}"
     return result
+
+
+def to_numpys(*xs, dtype=np.float32):
+    return (to_numpy(x, dtype) for x in xs)
 
 
 def khatri_rao(A: torch.Tensor, B: torch.Tensor):
@@ -519,7 +585,7 @@ def svd_pos_svals(mat):
 
 
 def filter_evals(vals, cond=None):
-    """Given list of eigenvalues or singular values, filter out small values."""
+    """Given list of eigenvalues or singular values, filter out values indistinguishable from noise."""
     if cond is None:
         cond = get_condition(vals.dtype)
     above_cutoff = (abs(vals) > cond * torch.max(abs(vals)))
@@ -679,6 +745,9 @@ def unfreeze(layer: nn.Module):
         param.requires_grad = True
     setattr(layer, "frozen", False)
 
+
+def mark_expensive(layer: nn.Module):
+    setattr(layer, 'expensive', True)
 
 def nest_stats(tag: str, stats) -> Dict:
     """Nest given dict of stats under tag using TensorBoard syntax /nest1/tag"""
@@ -1218,6 +1287,15 @@ def log_scalar(**metrics) -> None:
         gl.event_writer.add_scalar(tag=tag, scalar_value=metrics[tag], global_step=gl.get_global_step())
 
 
+# for line profiling
+try:
+  # noinspection PyUnboundLocalVariable
+  profile  # throws an exception when profile isn't defined
+except NameError:
+  profile = lambda x: x   # if it's not defined simply ignore the decorator.
+
+
+@profile
 def log_spectrum(tag, vals: torch.Tensor, loglog=True, discard_tiny=True):
     """Given eigenvalues or singular values in decreasing order, log this plg."""
 
@@ -1234,7 +1312,7 @@ def log_spectrum(tag, vals: torch.Tensor, loglog=True, discard_tiny=True):
     fig, ax = plt.subplots()
     y = torch.log10(vals)
     x = torch.log10(torch.arange(len(vals), dtype=y.dtype) + 1.)
-    x, y = to_numpy_multiple(x, y)
+    x, y = to_numpys(x, y)
     markerline, stemlines, baseline = ax.stem(x, y, markerfmt='bo', basefmt='r-', bottom=min(y))
     plt.setp(baseline, color='r', linewidth=2)
     gl.event_writer.add_figure(tag=tag, figure=fig, global_step=gl.get_global_step())
@@ -1723,7 +1801,7 @@ def install_pdb_handler():
 
     def handler(_signum, _frame):
         pdb.set_trace()
-        signal.signal(signal.SIGQUIT, handler)
+    signal.signal(signal.SIGQUIT, handler)
 
     # Drop into PDB on exception
     # from https://stackoverflow.com/questions/13174412
@@ -1757,13 +1835,32 @@ def randomly_rotate(X: torch.Tensor) -> torch.Tensor:
 
 
 def random_cov(rank, d, n=20) -> torch.Tensor:
-    """Random covariance matrix of given rank and dimension"""
+    """
 
+    Args:
+        rank: dimensionality of space spanned by data
+        d: embedding dimension
+        n: number of examples to generate covariance matrix
+
+    Returns:
+        covariance matrix of size d and rank rank
+    """
     assert d >= rank
     X = torch.randn((rank, n))
     X = torch.cat([X, torch.zeros(d-rank, n)])
     X = randomly_rotate(X)
     return X @ X.t() / n
+
+
+def _to_mathematica(x):
+    x = to_numpy(x)
+    x = np.array2string(x, separator=',')
+    x = x.replace('[', '{')
+    x = x.replace(']', '}')
+    x = x.replace('(', '')
+    x = x.replace(')', '')
+    x = x.replace('tensor', '')
+    return x
 
 
 def _dim_check(d, rank=0):

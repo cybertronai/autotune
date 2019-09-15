@@ -16,6 +16,7 @@ debug_linalg_crashes: bool = False   # save matrices that cause linalg routines 
 
 if torch.cuda.is_available():
     device = torch.device('cuda')
+    print("Using GPU")
 else:
     device = torch.device('cpu')
 

@@ -84,8 +84,9 @@ def add_hooks(model: nn.Module) -> None:
 
 def remove_hooks(model: nn.Module) -> None:
     """
-    Remove hooks added by add_hooks.
+    Remove hooks added by add_hooks. Provides
     """
+
 
     assert model == 0, "not working, remove this after fix to https://github.com/pytorch/pytorch/issues/25723"
 
@@ -183,6 +184,9 @@ def compute_grad1(model: nn.Module, loss_type: str = 'mean') -> None:
 
     assert loss_type in ('sum', 'mean')
     for layer in model.modules():
+        if hasattr(layer, 'expensive'):
+            continue
+
         layer_type = _layer_type(layer)
         if layer_type not in _supported_layers:
             continue
@@ -248,6 +252,10 @@ def compute_hess(model: nn.Module, method='exact', attr_name=None) -> None:
 
     li = 0
     for layer in model.modules():
+
+        if hasattr(layer, 'expensive'):
+            continue
+
         layer_type = _layer_type(layer)
         if layer_type not in _supported_layers:
             continue
