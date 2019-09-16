@@ -294,7 +294,6 @@ def compute_hess(model: nn.Module, method='exact', attr_name=None) -> None:
                 BB = torch.einsum("oni,onj->ij", B, B) / n
                 H = u.KronFactored(AA, BB)
                 H_bias = u.KronFactored(torch.eye(1), torch.einsum("oni,onj->ij", B, B) / n)  # TODO: reuse BB
-                setattr(layer.bias, 'hess_factored', H_bias)
 
         elif layer_type == 'Conv2d':
             Kh, Kw = layer.kernel_size
@@ -594,7 +593,7 @@ def compute_stats_factored(model):
             BB = B_t @ B_t.t()
 
             # kronecker factored hess and sigma
-            Hk = param.hess_kron
+            Hk = param.hess2
             Sk = u.KronFactored(AA, BB)
 
             s.sparsity = torch.sum(layer.output <= 0) / layer.output.numel()  # proportion of activations that are zero
