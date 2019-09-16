@@ -60,10 +60,8 @@ class SecondOrderOptimizer(Optimizer):
             params = list(module.parameters())
 
             curv_class = self.get_curv_class(module)
-            if curv_class is not None:
-                curvature = curv_class(module, **curv_kwargs)
-            else:
-                curvature = None
+            assert curv_class is not None, f"Failed to lookup Curvature class for {module}."
+            curvature = curv_class(module, **curv_kwargs)
 
             group = {
                 'params': params,
