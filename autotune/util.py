@@ -147,6 +147,42 @@ class KronFactored(FactoredMatrix):
         """Returns expanded representation (row-major form)"""
         return kron(self.BB, self.AA)
 
+    def expand_vec(self):
+        """Returns expanded representation (col-major form, to match vec order in literature)"""
+        return kron(self.AA, self.BB)
+
+    def sym_l2_norm(self):
+        return sym_l2_norm(self.AA) * sym_l2_norm(self.BB)
+
+    def symsqrt(self, cond=None, return_rank=False):
+        a = symsqrt(self.AA, cond, return_rank)
+        b = symsqrt(self.BB, cond, return_rank)
+        if not return_rank:
+            return KronFactored(a, b)
+        else:
+            a, rank_a = a
+            b, rank_b = b
+            return KronFactored(a, b), rank_a * rank_b
+
+    def trace(self):
+        return torch.trace(self.AA) * torch.trace(self.BB)
+
+    def frobenius_norm(self):
+        return torch.norm(self.AA.flatten()) * torch.norm(self.BB.flatten())
+
+    def pinv(self):
+        return KronFactored(torch.pinverse(self.AA), torch.pinverse(self.BB))
+
+    def inv(self):
+        return KronFactored(torch.inverse(self.AA), torch.inverse(self.BB))
+
+    # TODO(y): implement in-place ops
+    def __truediv__(self, other):
+        return KronFactored(self.AA, self.BB/other)
+
+    def __matmul__(self, other: "KronFactored"):
+        return KronFactored(self.AA @ other.AA, self.BB @ other.BB)
+
 
 class MeanKronFactored(FactoredMatrix):
     """Factored representation as a mean of kronecker products"""
@@ -498,6 +534,9 @@ def to_numpy(x, dtype=None) -> np.ndarray:
     """Convert numeric object to numpy array.
     dtype: numpy dtype
     """
+
+    if isinstance(x, KronFactored):
+        x = x.expand()
 
     if dtype is None:
         if type(x) == np.ndarray:
@@ -1248,7 +1287,6 @@ class StridedConvolutional2(SimpleModel2):
 
     def forward(self, x: torch.Tensor):
         for i, layer in enumerate(self.all_layers):
-            print(i, x)
             x = layer(x)
 
         assert x.shape[2] == 1 and x.shape[3] == 1
@@ -1931,6 +1969,17 @@ def is_row_matrix(dd):
 
 def is_col_matrix(dd):
     return len(dd.shape) == 2 and dd.shape[1] == 1
+
+
+def is_square_matrix(dd):
+    return len(dd.shape) == 2 and dd.shape[0] == dd.shape[1] and dd.shape[0]>=1
+
+
+def eye_like(X:torch.Tensor) -> torch.Tensor:
+    """Create identity matrix of same shape as X."""
+    assert is_square_matrix(X)
+    d = X.shape[0]
+    return torch.eye(d).type(X.dtype).to(X.device)
 
 
 if __name__ == '__main__':
