@@ -12,5 +12,6 @@ from torchcurv.curv.hessian.conv import KronHessianConv2d  # NOQA
 
 from torchcurv.curv.fisher import get_closure_for_fisher  # NOQA
 from torchcurv.curv.fisher import Fisher  # NOQA
-from torchcurv.curv.fisher.linear import KronFisherLinear  # NOQA
-from torchcurv.curv.fisher.conv import KronFisherConv2d  # NOQA
+from torchcurv.curv.fisher.linear import DiagFisherLinear, KronFisherLinear  # NOQA
+from torchcurv.curv.fisher.conv import DiagFisherConv2d, KronFisherConv2d  # NOQA
+from torchcurv.curv.fisher.batchnorm import DiagFisherBatchNorm2d  # NOQA

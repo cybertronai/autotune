@@ -63,8 +63,10 @@ def main():
                         help='name of the optimizer')
     parser.add_argument('--optim_args', type=json.loads, default=None,
                         help='[JSON] arguments for the optimizer')
-    parser.add_argument('--curv_args', type=json.loads, default=None,
+    parser.add_argument('--curv_args', type=json.loads, default=dict(),
                         help='[JSON] arguments for the curvature')
+    parser.add_argument('--fisher_args', type=json.loads, default=dict(),
+                        help='[JSON] arguments for the fisher')
     parser.add_argument('--scheduler_name', type=str, default=None,
                         help='name of the learning rate scheduler')
     parser.add_argument('--scheduler_args', type=json.loads, default=None,
@@ -370,11 +372,20 @@ def main():
         # Copy this file & config to args.out
         if not os.path.isdir(args.out):
             os.makedirs(args.out)
-        shutil.copy(os.path.realpath(__file__), args.out)
+        try:
+            shutil.copy(os.path.realpath(__file__), args.out)
+        except shutil.SameFileError:
+            pass
         if args.config is not None:
-            shutil.copy(args.config, args.out)
+            try:
+                shutil.copy(args.config, args.out)
+            except shutil.SameFileError:
+                pass
         if args.arch_file is not None:
-            shutil.copy(args.arch_file, args.out)
+            try:
+                shutil.copy(args.arch_file, args.out)
+            except shutil.SameFileError:
+                pass
 
         # Setup logger
         logger = Logger(args.out, args.log_file_name)
@@ -455,7 +466,7 @@ def train(rank, epoch, model, device, train_loader, optimizer, scheduler,
 
         if isinstance(optimizer, DistributedSecondOrderOptimizer) \
                 and optimizer.curv_type == 'Fisher':
-            closure = torchcurv.get_closure_for_fisher(optimizer, model, data, target)
+            closure = torchcurv.get_closure_for_fisher(optimizer, model, data, target, **args.fisher_args)
 
         loss, output = optimizer.step(closure=closure)
         data_size = torch.tensor(len(data)).to(device)

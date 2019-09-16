@@ -1,14 +1,14 @@
 {
   "dataset": "CIFAR-10",
   "epochs": 50,
-  "batch_size": 32,
-  "val_batch_size": 1250,
+  "batch_size": 128,
+  "val_batch_size": 5000,
   "random_crop": true,
   "random_horizontal_flip": true,
   "normalizing_data": true,
   "arch_file": "models/lenet.py",
   "arch_name": "LeNet5",
-  "optim_name": "DistributedSecondOrderOptimizer",
+  "optim_name": "SecondOrderOptimizer",
   "optim_args": {
     "lr": 1e-3,
     "curv_type": "Cov",

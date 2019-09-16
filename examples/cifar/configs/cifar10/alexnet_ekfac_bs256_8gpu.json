@@ -10,14 +10,14 @@
     "arch_name": "AlexNet",
     "optim_name": "DistributedSecondOrderOptimizer",
     "optim_args": {
-        "curv_type": "Fisher",
+        "curv_type": "Cov",
         "curv_shapes": {
-            "Conv2d": "Kron",
-            "Linear": "Kron",
+            "Conv2d": "Unit",
+            "Linear": "Diag",
             "BatchNorm1d": "Diag",
             "BatchNorm2d": "Diag"
         },
-        "lr": 1e-2,
+        "lr": 1e-3,
         "l2_reg": 1e-3,
         "momentum": 0.9,
         "momentum_type": "raw"
@@ -26,10 +26,6 @@
         "damping": 1e-3,
         "ema_decay": 0.999,
         "pi_type": "tracenorm"
-    },
-    "fisher_args": {
-        "sample_type": "topk",
-        "num_samples": 10
     },
     "scheduler_name": "MultiStepLR",
     "scheduler_args": {

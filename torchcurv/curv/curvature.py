@@ -8,9 +8,9 @@ PI_TYPE_TRACENORM = 'tracenorm'
 
 class Curvature(object):
 
-    def __init__(self, module, ema_decay=1., damping=1e-7, post_curv=None,
+    def __init__(self, module, ema_decay=1., damping=1e-7,
                  use_max_ema=False, use_sqrt_ema=False,
-                 recursive_approx=False, pi_type=PI_TYPE_TRACENORM):
+                 pi_type=PI_TYPE_TRACENORM):
 
         self._module = module
         self.ema_decay = ema_decay
@@ -25,12 +25,10 @@ class Curvature(object):
         self.inv = None
         self.std = None
 
-        self.post_curv = post_curv
-
         self.use_sqrt_ema = use_sqrt_ema
         self.use_max_ema = use_max_ema
 
-        self.recursive_approx = recursive_approx
+        self.recurse = False
 
         self.pi_type = pi_type
 
@@ -102,8 +100,8 @@ class Curvature(object):
 
         data_input = input[0].detach()
 
-        setattr(self._module, 'data_input', data_input)
-        setattr(self._module, 'data_output', output)
+        setattr(module, 'data_input', data_input)
+        setattr(module, 'data_output', output)
 
         self.update_in_forward(data_input)
 
@@ -111,14 +109,16 @@ class Curvature(object):
         assert self._module == module
 
         index = 1 if self.bias else 0
-
         grad_input = None if grad_input[index] is None else grad_input[index].detach()
         grad_output = grad_output[0]
 
         setattr(module, 'grad_input', grad_input)
         setattr(module, 'grad_output', grad_output)
 
-        self.update_in_backward(grad_output)
+        if self.recurse:
+            self.recursive_update_in_backward()
+        else:
+            self.update_in_backward(grad_output)
 
         # adjust grad scale along with 'reduction' in loss function
         batch_size = grad_output.shape[0]
@@ -132,6 +132,9 @@ class Curvature(object):
 
     def update_in_backward(self, grad_output):
         raise NotImplementedError
+
+    def recursive_update_in_backward(self):
+        raise RuntimeError('This method supports only Fisher.')
 
     def step(self, update_std=False, update_inv=True):
         # TODO(oosawak): Add check for ema/inv timing

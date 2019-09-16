@@ -109,7 +109,7 @@ def ResNet50(num_classes=10):
 def ResNet101(num_classes=10):
     return ResNet(Bottleneck, [3,4,23,3], num_classes)
 
-def ResNet152(num_classe=10):
+def ResNet152(num_classes=10):
     return ResNet(Bottleneck, [3,8,36,3], num_classes)
 
 

@@ -121,3 +121,4 @@ class KronCovConv2d(KronCurvature):
             A_shape = (dim, dim)
 
         return A_shape, G_shape
+

@@ -50,27 +50,20 @@ class SecondOrderOptimizer(Optimizer):
         self.state = defaultdict(dict)
         self.optim_state = {'step': 0, 'acc_step': 0}
 
-        self.train_modules = []
-        self.set_train_modules(model)  # TODO implement better method
         self.param_groups = []
         self.curv_type = curv_type
         self.curv_shapes = {} if curv_shapes is None else curv_shapes
         self.update_inv = update_inv  # whether to update covariance inverses at each step
         self.precondition_grad = precondition_grad  # whether to apply preconditioning
 
-        post_curvature = None
-        for module in self.train_modules[::-1]:
+        for module in model.modules():
+            if len(list(module.children())) > 0:
+                continue
             params = list(module.parameters())
-            curv_class = self.get_curv_class(module)
-            assert curv_class is not None, f"Failed to lookup curv_class for {module}"
-            if curv_class is not None:
-                curvature = curv_class(module, **curv_kwargs, post_curv=post_curvature)
-                if post_curvature is not None:
-                    setattr(post_curvature, 'pre_curv', curvature)
-            else:
-                curvature = None
 
-            post_curvature = curvature
+            curv_class = self.get_curv_class(module)
+            assert curv_class is not None, f"Failed to lookup Curvature class for {module}."
+            curvature = curv_class(module, **curv_kwargs)
 
             group = {
                 'params': params,
@@ -105,14 +98,6 @@ class SecondOrderOptimizer(Optimizer):
         curv_class = getattr(torchcurv, curv_name, None)
 
         return curv_class
-
-    def set_train_modules(self, module):
-        if len(list(module.children())) == 0:
-            if len(list(module.parameters())) != 0:
-                self.train_modules.append(module)
-        else:
-            for child in list(module.children()):
-                self.set_train_modules(child)
 
     def step(self, closure=None):
         """Performs a single optimization step.

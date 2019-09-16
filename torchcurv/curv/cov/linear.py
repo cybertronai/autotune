@@ -4,8 +4,22 @@ from torchcurv import Curvature, DiagCurvature, KronCurvature
 
 class CovLinear(Curvature):
 
-    def update_in_backward(self, grad_output_data):
-        pass
+    def update_in_backward(self, grad_output):
+        data_input = getattr(self._module, 'data_input', None)  # n x f_in
+        assert data_input is not None
+
+        n = data_input.shape[0]
+
+        if self.bias:
+            ones = torch.ones((n, 1), device=data_input.device, dtype=data_input.dtype)
+            data_input = torch.cat((data_input, ones), 1)  # n x (f_in+1)
+
+        grad = torch.einsum('bi,bj->bij', grad_output, data_input)  # n x f_out x f_in
+        grad = grad.reshape((n, -1))  # n x (f_out)(f_in)
+
+        data = torch.einsum('bi,bj->ij', grad, grad)
+
+        self._data = [data]
 
     def precondition_grad(self, params):
         pass
@@ -98,3 +112,4 @@ class KronCovLinear(KronCurvature):
             A_shape = (f_in, f_in)
 
         return A_shape, G_shape
+

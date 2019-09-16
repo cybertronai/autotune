@@ -48,8 +48,10 @@ def main():
                         help='name of the optimizer')
     parser.add_argument('--optim_args', type=json.loads, default=None,
                         help='[JSON] arguments for the optimizer')
-    parser.add_argument('--curv_args', type=json.loads, default=None,
+    parser.add_argument('--curv_args', type=json.loads, default=dict(),
                         help='[JSON] arguments for the curvature')
+    parser.add_argument('--fisher_args', type=json.loads, default=dict(),
+                        help='[JSON] arguments for the fisher')
     parser.add_argument('--scheduler_name', type=str, default=None,
                         help='name of the learning rate scheduler')
     parser.add_argument('--scheduler_args', type=json.loads, default=None,
@@ -75,7 +77,7 @@ def main():
                         help='checkpoint path for resume training')
     parser.add_argument('--out', type=str, default='result',
                         help='dir to save output files')
-    parser.add_argument('--config', default=None,
+    parser.add_argument('--config', default='configs/cifar10/lenet_kfac.json',
                         help='config file path')
 
     args = parser.parse_args()
@@ -170,7 +172,7 @@ def main():
         optimizer = SecondOrderOptimizer(model, **optim_kwargs, curv_kwargs=args.curv_args)
     elif args.optim_name == VIOptimizer.__name__:
         optimizer = VIOptimizer(model, dataset_size=len(train_loader.dataset), seed=args.seed,
-                                **optim_kwargs, **args.curv_args)
+                                **optim_kwargs, curv_kwargs=args.curv_args)
     else:
         optim_class = getattr(torch.optim, args.optim_name)
         optimizer = optim_class(model.parameters(), **optim_kwargs)
@@ -289,7 +291,7 @@ def train(model, device, train_loader, optimizer, scheduler, epoch, args, logger
             return loss, output
 
         if isinstance(optimizer, SecondOrderOptimizer) and optimizer.curv_type == 'Fisher':
-            closure = torchcurv.get_closure_for_fisher(optimizer, model, data, target)
+            closure = torchcurv.get_closure_for_fisher(optimizer, model, data, target, **args.fisher_args)
 
         loss, output = optimizer.step(closure=closure)
 
