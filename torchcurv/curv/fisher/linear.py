@@ -58,14 +58,18 @@ class KronFisherLinear(KronCovLinear, Fisher):
 
     def recursive_update_in_backward(self):
         G = self._G
+        assert G is not None, 'G needs to be calculated by the post curv in advance.'
         data_input = getattr(self.module, 'data_input')
-        n, d = data_input.shape
+        n, _ = data_input.shape
+        d = (data_input > 0).type(data_input.dtype)
+        D = torch.mm(d.t(), d) * (1 / n)
+
+        W = self.module.weight
+        WGW = torch.mm(torch.mm(W.t(), G), W)
+        pre_G = WGW * D
 
         for pre_curv in getattr(self, 'pre_curvs', []):
-            pre_data_output = getattr(pre_curv.module, 'data_output')
-            grads = torch.autograd.grad(data_input, pre_data_output)
-            print(grads.shape)
-            exit()
+            pre_curv._G = pre_G
 
     def update_as_presoftmax(self, prob):
         n, dim = prob.shape
