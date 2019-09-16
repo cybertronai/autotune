@@ -8,11 +8,26 @@ import scipy
 import torch
 from torchcurv.optim import SecondOrderOptimizer
 
+
 import torch.nn as nn
 
 import util as u
 
 import numpy as np
+
+"""
+MKL version unknown
+PyTorch version 1.2.0
+Scipy version:  1.2.1
+Numpy version:  1.16.4
+1024-by-1024 matrix
+ 7079.93   linalg.solve_lyapunov
+  280.11   linalg.pinvh
+ 1186.08   linalg.pinv
+   49.18   linalg.inv
+  118.23   qr
+  413.42   svd
+"""
 
 class Net(nn.Module):
     def __init__(self, d):
@@ -26,7 +41,8 @@ class Net(nn.Module):
 
 class timeit:
     """Decorator to measure length of time spent in the block in millis and log
-    it to TensorBoard."""
+    it to TensorBoard. This function is
+    """
 
     def __init__(self, tag=""):
         self.tag = tag
@@ -101,6 +117,14 @@ def linalg_bench():
 
         with timeit(f"linalg.inv"):
             result = scipy.linalg.inv(H)
+            #print(result[0, 0])
+
+        with timeit(f"qr"):
+            result = scipy.linalg.qr(H)
+            #print(result[0, 0])
+
+        with timeit(f"svd"):
+            result = scipy.linalg.svd(H)
             #print(result[0, 0])
 
 
