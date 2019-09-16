@@ -95,7 +95,7 @@ def get_closure_for_fisher(optimizer, model, data, target, approx_type=None, num
             return torch.mean(torch.sum(-soft_targets * logsoftmax(logits), 1))
 
         for group in optimizer.param_groups:
-            assert isinstance(group['curv'], Fisher)
+            assert isinstance(group['curv'], Fisher), f"Invalid Curvature type: {type(group['curv'])}."
 
         optimizer.zero_grad()
         output = model(data)
