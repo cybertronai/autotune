@@ -109,16 +109,15 @@ class Curvature(object):
         assert self._module == module
 
         index = 1 if self.bias else 0
+        grad_input = None if grad_input[index] is None else grad_input[index].detach()
+        grad_output = grad_output[0]
+
+        setattr(module, 'grad_input', grad_input)
+        setattr(module, 'grad_output', grad_output)
 
         if self.recurse:
             self.recursive_update_in_backward()
         else:
-            grad_input = None if grad_input[index] is None else grad_input[index].detach()
-            grad_output = grad_output[0]
-
-            setattr(module, 'grad_input', grad_input)
-            setattr(module, 'grad_output', grad_output)
-
             self.update_in_backward(grad_output)
 
         # adjust grad scale along with 'reduction' in loss function
