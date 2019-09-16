@@ -28,6 +28,10 @@
     "ema_decay": 0.999,
     "pi_type": "tracenorm"
   },
+  "fisher_args": {
+    "approx_type": "mc",
+    "num_mc": 1
+  },
   "scheduler_name": "ExponentialLR",
   "scheduler_args": {
     "gamma": 0.9

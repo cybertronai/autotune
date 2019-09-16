@@ -90,10 +90,6 @@ def get_closure_for_fisher(optimizer, model, data, target, approx_type=None, num
 
     def closure():
 
-        def cross_entropy(logits, soft_targets):
-            logsoftmax = torch.nn.LogSoftmax(dim=1)
-            return torch.mean(torch.sum(-soft_targets * logsoftmax(logits), 1))
-
         for group in optimizer.param_groups:
             assert isinstance(group['curv'], Fisher), f"Invalid Curvature type: {type(group['curv'])}."
 
@@ -113,7 +109,7 @@ def get_closure_for_fisher(optimizer, model, data, target, approx_type=None, num
                     group['curv'].prob = torch.ones_like(prob[:, 0]).div(num_mc)
 
                 for i in range(num_mc):
-                    loss = cross_entropy(output, _target[i])
+                    loss = F.cross_entropy(output, _target[i])
                     loss.backward(retain_graph=True)
             else:
                 for i in range(model.num_classes):
