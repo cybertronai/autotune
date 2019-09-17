@@ -509,7 +509,7 @@ def compute_stats(model):
             def curv_direction(dd: torch.Tensor):
                 """Curvature in direction dd (directional eigenvalue). """
                 assert u.is_row_matrix(dd)
-                return u.to_scalar(dd @ H @ dd.t() / (dd.flatten().norm() ** 2))
+                return u.to_scalar(u.rmatmul(dd @ H, dd.t()) / (dd.flatten().norm() ** 2))
 
             with u.timeit(f"pinvH-{i}"):
                 pinvH = u.pinv(H)
@@ -594,6 +594,9 @@ def compute_stats_factored(model):
             A = layer.activations
             B = layer.backprops_list[0] * n
 
+            g2 = ein('ni,nj->ij', B, A) / n
+            u.check_close(g, g2.reshape((1, -1)))
+
             AA = ein('ni,nj->ij', A, A)
             BB = ein('ni,nj->ij', B, B)
 
@@ -661,7 +664,11 @@ def compute_stats_factored(model):
             def curv_direction(dd: torch.Tensor):
                 """Curvature in direction dd (directional eigenvalue). """
                 assert u.is_row_matrix(dd)
-                H = Hk.expand()
+                # dd = dd.flatten()
+                #                H = Hk.expand()
+                dd = dd.reshape(Hk.RR.shape[0], Hk.LL.shape[0])
+                # return Hk.quad(dd) / (dd.flatten().norm() ** 2)
+                new_curv = dd @ Hk @ dd
                 return u.to_scalar(dd @ H @ dd.t() / (dd.flatten().norm() ** 2))
 
             with u.timeit(f"pinvH-{i}"):
@@ -684,7 +691,7 @@ def compute_stats_factored(model):
 
             with u.timeit(f'rho-{i}'):
                 # lyapunov matrix
-                Xk = u.lyapunov_spectral(Hk.BB, sigma_k.BB)
+                Xk = u.lyapunov_spectral(Hk.RR, sigma_k.BB)
                 s.rho = u.erank(u.eye_like(Xk)) / u.erank(Xk)
                 s.step_div_1_adjusted = s.step_div_1 / s.rho
 

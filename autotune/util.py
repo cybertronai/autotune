@@ -125,38 +125,95 @@ def stable_kron(a, b):
     return kron(a / a_norm, b / b_norm) * a_norm * b_norm
 
 
-# TODO(y): rename to factored covariance?
 class FactoredMatrix:
-    """Factored representation of a matrix"""
+    """Matrix representation."""
     pass
 
-    def expand(self) -> torch.Tensor:
-        """Returns expanded representation (row-major form)"""
-        raise NotImplemented
+
+class Vec:
+    """Helper class representing Vec(mat)
+
+    Vec(mat) @ vec(anything) -> scalar (dot product)
+    Vec(x) @ kron -> vector
+    kron @ Vec(x) -> vector
+    Vec(x) @ kron @ Vec(x) -> scalar
+    """
+
+    mat: torch.Tensor
+    shape: Tuple
+    numel: int
+    rank: int
+
+    def __init__(self, mat, shape: Tuple = None):
+        mat = to_pytorch(mat)
+        if shape is not None:
+            mat = mat.reshape(shape)
+        self.mat = mat
+        self.shape = shape
+
+        assert np.prod(shape) == mat.numel()
+        self.rank = len(shape)
+        self.numel = self.mat.numel()
+
+        assert self.rank >= 0
+        assert self.rank <= 2
+
+    def vec_form(self):
+        """rank-1 representation
+        """
+
+        return u.vec(self.mat).flatten()
+
+    def matrix_form(self):
+        """rank-2 representation
+        """
+
+        return self.mat
+
+    def __matmul__(self, other):
+        if type(other) == Vec:
+            other = other.vec_form()
+        elif type(other) != torch.Tensor:
+            return NotImplemented
+        return self.vec_form() @ other
+
+    def __rmatmul__(self, other):
+        return self.__matmul__(other)
 
 
+# todo: rename to symmetric kron factored
 class KronFactored(FactoredMatrix):
-    AA: torch.Tensor  # forward factor
-    BB: torch.Tensor  # backward factor
+    LL: torch.Tensor  # left factor
+    RR: torch.Tensor  # right factorf
 
-    def __init__(self, AA: torch.Tensor, BB: torch.Tensor):
-        self.AA = AA
-        self.BB = BB
+    def __init__(self, LL, RR):
+        LL = to_pytorch(LL)
+        RR = to_pytorch(RR)
+        self.LL = LL
+        self.RR = RR
+        assert LL.shape[0] == LL.shape[1]
+        assert RR.shape[0] == RR.shape[1]
+
+        self.lsize = LL.shape[0]
+        self.rsize = RR.shape[0]
+
+    def normal_form(self):
+        return self.expand()
 
     def expand(self):
         """Returns expanded representation (row-major form)"""
-        return kron(self.BB, self.AA)
+        return kron(self.RR, self.LL)
 
     def expand_vec(self):
         """Returns expanded representation (col-major form, to match vec order in literature)"""
-        return kron(self.AA, self.BB)
+        return kron(self.LL, self.RR)
 
     def sym_l2_norm(self):
-        return sym_l2_norm(self.AA) * sym_l2_norm(self.BB)
+        return sym_l2_norm(self.LL) * sym_l2_norm(self.RR)
 
     def symsqrt(self, cond=None, return_rank=False):
-        a = symsqrt(self.AA, cond, return_rank)
-        b = symsqrt(self.BB, cond, return_rank)
+        a = symsqrt(self.LL, cond, return_rank)
+        b = symsqrt(self.RR, cond, return_rank)
         if not return_rank:
             return KronFactored(a, b)
         else:
@@ -165,23 +222,55 @@ class KronFactored(FactoredMatrix):
             return KronFactored(a, b), rank_a * rank_b
 
     def trace(self):
-        return torch.trace(self.AA) * torch.trace(self.BB)
+        return torch.trace(self.LL) * torch.trace(self.RR)
 
     def frobenius_norm(self):
-        return torch.norm(self.AA.flatten()) * torch.norm(self.BB.flatten())
+        return torch.norm(self.LL.flatten()) * torch.norm(self.RR.flatten())
 
     def pinv(self):
-        return KronFactored(torch.pinverse(self.AA), torch.pinverse(self.BB))
+        return KronFactored(torch.pinverse(self.LL), torch.pinverse(self.RR))
 
     def inv(self):
-        return KronFactored(torch.inverse(self.AA), torch.inverse(self.BB))
+        return KronFactored(torch.inverse(self.LL), torch.inverse(self.RR))
+
+    def qf(self, G):
+        """Returns quadratic form g @ H @ g' """
+        assert G.shape[1] == self.RR.shape[0]
+        assert G.shape[0] == self.LL.shape[0]
+        return torch.sum(G * (self.LL @ G @ self.RR))
+
+    def qf_vec(self, G):
+        """Returns quadratic form g' @ H @ g"""
+        assert G.shape[0] == self.RR.shape[0]
+        assert G.shape[1] == self.LL.shape[0]
+        return torch.sum(G * (self.RR @ G @ self.LL))
 
     # TODO(y): implement in-place ops
     def __truediv__(self, other):
-        return KronFactored(self.AA, self.BB/other)
+        return KronFactored(self.LL, self.RR / other)
 
-    def __matmul__(self, other: "KronFactored"):
-        return KronFactored(self.AA @ other.AA, self.BB @ other.BB)
+    def __matmul__(self, x):
+        if type(x) == KronFactored:
+            return KronFactored(self.LL @ x.LL, self.RR @ x.RR)
+        elif type(x) == Vec:  # kron @ vec(mat)
+            X = x.matrix_form()
+            assert X.shape == (self.rsize, self.lsize)
+            result = self.RR @ X @ self.LL.t()
+            result = u.vec(result)
+            return result.flatten()
+        else:
+            return NotImplemented
+
+    def __rmatmul__(self, x):
+        if type(x) == Vec:   # vec(mat) @ kron
+            X = x.matrix_form()
+            assert X.shape == (self.lsize, self.rsize)
+            result = self.RR.t() @ X @ self.LL
+            result = u.vec(result)
+            assert result.shape == (self.rsize * self.lsize, 1)
+            return result.flatten()
+        else:
+            return NotImplemented
 
 
 class MeanKronFactored(FactoredMatrix):
@@ -226,7 +315,7 @@ def expand_hess(*v) -> Union[torch.Tensor, List[torch.Tensor]]:
 
     Note: For consistency with PyTorch autograd, we use row-major order. This means the order of Kronecker
     multiplication needs to be reversed compared to literature which uses column-major order (implied by vec)."""
-    result = [kron(a.BB, a.AA) for a in v]
+    result = [kron(a.RR, a.LL) for a in v]
 
     if len(result) == 1:
         return result[0]
@@ -404,6 +493,7 @@ def lyapunov_svd2(A, C, rtol=1e-4, eps=1e-7, use_svd=False):
 
     return X
 
+
 def lyapunov_truncated(A, C, use_svd=False, top_k=None, check_error=False):
     """Truncated solution to AX+XA=C. top_k specified how many dimensions of A to use. If None, use threshold for
     acceptable condition."""
@@ -518,7 +608,9 @@ def from_numpy(x) -> torch.Tensor:
     else:
         return torch.tensor(x)
 
-def pytorch_dtype_to_numpy_dtype(dtype):
+
+def pytorch_dtype_to_floating_numpy_dtype(dtype):
+    """Converts PyTorch dtype to numpy floating point dtype, defaulting to np.float32 for non-floating point types."""
     if dtype == torch.float64:
         dtype = np.float64
     elif dtype == torch.float32:
@@ -530,31 +622,44 @@ def pytorch_dtype_to_numpy_dtype(dtype):
     return dtype
 
 
-def to_numpy(x, dtype=None) -> np.ndarray:
-    """Convert numeric object to numpy array.
-    dtype: numpy dtype
+def to_pytorch(x) -> torch.Tensor:
+    if type(x) == torch.Tensor:
+        return x
+    else:
+        return from_numpy(to_numpy(x))
+
+
+def to_numpy(x, dtype: np.dtype=None) -> np.ndarray:
+    """
+    Convert numeric object to floating point numpy array. If dtype can't be inferred, use pytorch default dtype.
+
+    Args:
+        x: numeric object
+        dtype: numpy dtype, must be floating point
+
+    Returns:
+        floating point numpy array
     """
 
-    if isinstance(x, KronFactored):
-        x = x.expand()
+    assert np.issubdtype(dtype, np.floating), "dtype must be real-valued floating point"
 
-    if dtype is None:
-        if type(x) == np.ndarray:
-            dtype = x.dtype
-        elif type(x) == torch.Tensor:
-            dtype = pytorch_dtype_to_numpy_dtype(x.dtype)
-        else:
-            dtype = pytorch_dtype_to_numpy_dtype(torch.get_default_dtype())
+    # Convert to normal_form expression from a special form (https://reference.wolfram.com/language/ref/Normal.html)
+    if hasattr(x, 'normal_form'):
+        x = x.normal_form()
 
-    if hasattr(x, 'numpy'):  # PyTorch tensor
-        result = x.detach().cpu().numpy().astype(dtype)
-    elif type(x) == np.ndarray:
-        result = x.astype(dtype)
-    else:  # Some Python type
-        result = np.array(x).astype(dtype)
+    if type(x) == np.ndarray:
+        assert np.issubdtype(x.dtype, np.floating), f"numpy type promotion not implemented for {x.dtype}"
+        return x
 
+    if type(x) == torch.Tensor:
+        dtype = pytorch_dtype_to_floating_numpy_dtype(x.dtype)
+        return x.detach().cpu().numpy().astype(dtype)
+
+    # Some Python type, use numpy conversion
+    result = np.array(x)
     assert np.issubdtype(result.dtype, np.number), f"Provided object ({result}) is not numeric, has type {result.dtype}"
-    return result
+    dtype = pytorch_dtype_to_floating_numpy_dtype(torch.get_default_dtype())
+    return result.astype(dtype)
 
 
 def to_numpys(*xs, dtype=np.float32):
@@ -1912,7 +2017,7 @@ def randomly_rotate(X: torch.Tensor) -> torch.Tensor:
     return rot_mat @ X
 
 
-def random_cov(rank, d, n=20) -> torch.Tensor:
+def random_cov(rank, d=None, n=20) -> torch.Tensor:
     """
 
     Args:
@@ -1923,6 +2028,8 @@ def random_cov(rank, d, n=20) -> torch.Tensor:
     Returns:
         covariance matrix of size d and rank rank
     """
+    if d is None:
+        d = rank
     assert d >= rank
     X = torch.randn((rank, n))
     X = torch.cat([X, torch.zeros(d-rank, n)])
@@ -1940,6 +2047,11 @@ def _to_mathematica(x):
     x = x.replace('tensor', '')
     return x
 
+
+def _from_mathematica(x):
+    x = x.replace('{', '[')
+    x = x.replace('}', ']')
+    return x
 
 def _dim_check(d, rank=0):
     assert d > 0
@@ -2004,3 +2116,7 @@ if __name__ == '__main__':
 #
 #     plt.show()
 
+
+def rmatmul(a: torch.Tensor, b):
+    # https://github.com/pytorch/pytorch/issues/26333
+    return b.__rmatmul__(a)

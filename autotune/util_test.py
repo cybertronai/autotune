@@ -129,48 +129,6 @@ def test_symsqrt():
     cov = u.KronFactored(X @ X.t(), Y @ Y.t())
     u.check_close(cov.sym_l2_norm(), 7 * 7 * 8 * 8)
 
-
-def test_kron():
-    torch.set_default_dtype(torch.float64)
-    a = torch.tensor([1, 2, 3, 4]).reshape(2, 2)
-    b = torch.tensor([5, 6, 7, 8]).reshape(2, 2)
-    u.check_close(u.KronFactored(a, b).trace(), 65)
-
-    a = torch.tensor([[2., 7, 9], [1, 9, 8], [2, 7, 5]])
-    b = torch.tensor([[6., 6, 1], [10, 7, 7], [7, 10, 10]])
-    Ck = u.KronFactored(a, b)
-    u.check_close(a.flatten().norm() * b.flatten().norm(), Ck.frobenius_norm())
-
-    u.check_close(Ck.frobenius_norm(), 4 * math.sqrt(11635.))
-
-    Ci = [[0, 5 / 102, -(7 / 204), 0, -(70 / 561), 49 / 561, 0, 125 / 1122, -(175 / 2244)],
-          [1 / 20, -(53 / 1020), 8 / 255, -(7 / 55), 371 / 2805, -(224 / 2805), 5 / 44, -(265 / 2244), 40 / 561],
-          [-(1 / 20), 3 / 170, 3 / 170, 7 / 55, -(42 / 935), -(42 / 935), -(5 / 44), 15 / 374, 15 / 374],
-          [0, -(5 / 102), 7 / 204, 0, 20 / 561, -(14 / 561), 0, 35 / 1122, -(49 / 2244)],
-          [-(1 / 20), 53 / 1020, -(8 / 255), 2 / 55, -(106 / 2805), 64 / 2805, 7 / 220, -(371 / 11220), 56 / 2805],
-          [1 / 20, -(3 / 170), -(3 / 170), -(2 / 55), 12 / 935, 12 / 935, -(7 / 220), 21 / 1870, 21 / 1870],
-          [0, 5 / 102, -(7 / 204), 0, 0, 0, 0, -(5 / 102), 7 / 204],
-          [1 / 20, -(53 / 1020), 8 / 255, 0, 0, 0, -(1 / 20), 53 / 1020, -(8 / 255)],
-          [-(1 / 20), 3 / 170, 3 / 170, 0, 0, 0, 1 / 20, -(3 / 170), -(3 / 170)]]
-    C = Ck.expand_vec()
-    C0 = u.to_numpy(C)
-    Ci = torch.tensor(Ci)
-    u.check_close(C @ Ci @ C, C)
-
-    u.check_close(Ck.inv().expand(), torch.inverse(Ck.expand()))
-    u.check_close(Ck.inv().expand_vec(), torch.inverse(Ck.expand_vec()))
-    u.check_close(Ck.pinv().expand(), torch.pinverse(Ck.expand()))
-
-    u.check_close(linalg.pinv(C0), Ci, rtol=1e-5, atol=1e-6)
-    u.check_close(torch.pinverse(C), Ci, rtol=1e-5, atol=1e-6)
-    u.check_close(Ck.inv().expand_vec(), Ci, rtol=1e-5, atol=1e-6)
-    u.check_close(Ck.pinv().expand_vec(), Ci, rtol=1e-5, atol=1e-6)
-
-    Ck2 = u.KronFactored(b, 2*a)
-    u.check_close((Ck @ Ck2).expand(), Ck.expand() @ Ck2.expand())
-    u.check_close((Ck @ Ck2).expand_vec(), Ck.expand_vec() @ Ck2.expand_vec())
-
-
 @pytest.mark.skip(reason="fails, need to redo pinv implementation")
 def atest_pinv():
     a = torch.tensor([[2., 7, 9], [1, 9, 8], [2, 7, 5]])
@@ -301,8 +259,75 @@ def test_misc():
     assert u.erank(a) == d
 
 
+
+
+def test_kron():
+    torch.set_default_dtype(torch.float64)
+    a = torch.tensor([1, 2, 3, 4]).reshape(2, 2)
+    b = torch.tensor([5, 6, 7, 8]).reshape(2, 2)
+    u.check_close(u.KronFactored(a, b).trace(), 65)
+
+    a = torch.tensor([[2., 7, 9], [1, 9, 8], [2, 7, 5]])
+    b = torch.tensor([[6., 6, 1], [10, 7, 7], [7, 10, 10]])
+    Ck = u.KronFactored(a, b)
+    u.check_close(a.flatten().norm() * b.flatten().norm(), Ck.frobenius_norm())
+
+    u.check_close(Ck.frobenius_norm(), 4 * math.sqrt(11635.))
+
+    Ci = [[0, 5 / 102, -(7 / 204), 0, -(70 / 561), 49 / 561, 0, 125 / 1122, -(175 / 2244)],
+          [1 / 20, -(53 / 1020), 8 / 255, -(7 / 55), 371 / 2805, -(224 / 2805), 5 / 44, -(265 / 2244), 40 / 561],
+          [-(1 / 20), 3 / 170, 3 / 170, 7 / 55, -(42 / 935), -(42 / 935), -(5 / 44), 15 / 374, 15 / 374],
+          [0, -(5 / 102), 7 / 204, 0, 20 / 561, -(14 / 561), 0, 35 / 1122, -(49 / 2244)],
+[-(1 / 20), 53 / 1020, -(8 / 255), 2 / 55, -(106 / 2805), 64 / 2805, 7 / 220, -(371 / 11220), 56 / 2805],
+          [1 / 20, -(3 / 170), -(3 / 170), -(2 / 55), 12 / 935, 12 / 935, -(7 / 220), 21 / 1870, 21 / 1870],
+          [0, 5 / 102, -(7 / 204), 0, 0, 0, 0, -(5 / 102), 7 / 204],
+          [1 / 20, -(53 / 1020), 8 / 255, 0, 0, 0, -(1 / 20), 53 / 1020, -(8 / 255)],
+          [-(1 / 20), 3 / 170, 3 / 170, 0, 0, 0, 1 / 20, -(3 / 170), -(3 / 170)]]
+    C = Ck.expand_vec()
+    C0 = u.to_numpy(C)
+    Ci = torch.tensor(Ci)
+    u.check_close(C @ Ci @ C, C)
+
+    u.check_close(Ck.inv().expand(), torch.inverse(Ck.expand()))
+    u.check_close(Ck.inv().expand_vec(), torch.inverse(Ck.expand_vec()))
+    u.check_close(Ck.pinv().expand(), torch.pinverse(Ck.expand()))
+
+    u.check_close(linalg.pinv(C0), Ci, rtol=1e-5, atol=1e-6)
+    u.check_close(torch.pinverse(C), Ci, rtol=1e-5, atol=1e-6)
+    u.check_close(Ck.inv().expand_vec(), Ci, rtol=1e-5, atol=1e-6)
+    u.check_close(Ck.pinv().expand_vec(), Ci, rtol=1e-5, atol=1e-6)
+
+    Ck2 = u.KronFactored(b, 2*a)
+    u.check_close((Ck @ Ck2).expand(), Ck.expand() @ Ck2.expand())
+    u.check_close((Ck @ Ck2).expand_vec(), Ck.expand_vec() @ Ck2.expand_vec())
+
+    d2 = 3
+    d1 = 2
+    G = torch.randn(d2, d1)
+    g = u.vec(G)
+    H = u.KronFactored(u.random_cov(d1), u.random_cov(d2))
+    u.check_equal(H.qf_vec(G), (g.t() @ H.expand_vec() @ g).item())
+
+    Gt = G.t()
+    gt = g.reshape(1, -1)
+    #     u.check_equal(H.qf(Gt), (gt @ H.expand() @ gt.t()).item())
+
+    vecX = u.Vec([1, 2, 3, 4], shape=(2, 2))
+    K = u.KronFactored([[5, 6], [7, 8]], [[9, 10], [11, 12]])
+
+    u.check_equal(vecX @ K, [644, 706, 748, 820])
+    u.check_equal(K @ vecX, [543, 655, 737, 889])
+
+    u.check_equal(u.rmatmul(vecX @ K, vecX), 7538)
+    u.check_equal(vecX @ (vecX @ K), 7538)
+
+    #dd = Vec(mat)
+    #dd @ Hk @ dd / (dd @ dd)
+    #dd @ H @ dd.t() / (dd.flatten().norm() ** 2)
+
 if __name__ == '__main__':
     # test_truncated_lyapunov()
     # test_lyapunov_lstsq()
     # test_robust_svd()
-    u.run_all_tests(sys.modules[__name__])
+    test_kron()
+#    u.run_all_tests(sys.modules[__name__])
