@@ -610,9 +610,9 @@ def compute_stats_factored(model):
             Bc = B-torch.mean(B, dim=0)
             AAc = ein('ni,nj->ij', Ac, Ac)
             BBc = ein('ni,nj->ij', Bc, Bc)
-            sigma_k = u.KronFactored(AA, BBc / n) / n   # only center backprops, centering both leads to underestimate of cov
-            sigma_k2 = u.KronFactored(AAc, BBc / n) / n   # fully centered for pinv
-            sigma_k3 = u.KronFactored(AA, BB / n) / n   # fully uncentered for pinv
+            sigma_k = u.KronFactored(AA, BBc / n)   # only center backprops, centering both leads to underestimate of cov
+            sigma_k2 = u.KronFactored(AAc, BBc / n)   # fully centered for pinv
+            sigma_k3 = u.KronFactored(AA, BB / n)   # fully uncentered for pinv
 
             s.sparsity = torch.sum(layer.output <= 0) / layer.output.numel()  # proportion of activations that are zero
             s.mean_activation = torch.mean(A)
@@ -627,7 +627,9 @@ def compute_stats_factored(model):
                 sigma_u = G.t() @ G / n
                 sigma = sigma_u - g.t() @ g
                 s.sigma_l2 = sigma_k.sym_l2_norm()
-                print('kron dist centered', u.symsqrt_dist(sigma_k.expand(), sigma))
+                print('kron dist1 centered', u.symsqrt_dist(sigma_k.expand(), sigma))
+                print('kron dist2 centered', u.symsqrt_dist(sigma_k2.expand(), sigma))
+                print('kron dist3 centered', u.symsqrt_dist(sigma_k3.expand(), sigma))
                 print('kron dist uncentered', u.symsqrt_dist(Sk_u.expand(), sigma_u))
                 print("l2 dist centered", sigma_k.sym_l2_norm(), u.sym_l2_norm(sigma))
                 print("l2 dist uncentered", Sk_u.sym_l2_norm(), u.sym_l2_norm(sigma_u))
