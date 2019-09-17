@@ -142,6 +142,8 @@ class Vec:
         mat = to_pytorch(mat)
         if shape is not None:
             mat = mat.reshape(shape)
+        else:
+            shape = mat.shape
         self.mat = mat
         self.shape = shape
 
@@ -158,6 +160,9 @@ class Vec:
     def matrix_form(self):
         return self.mat
 
+    def normal_form(self):
+        return self.vec_form()
+
     def __matmul__(self, other):
         if type(other) == Vec:
             other = other.vec_form()
@@ -169,6 +174,12 @@ class Vec:
 
     def __rmatmul__(self, other):
         return self.__matmul__(other)
+
+    def norm(self):
+        return self.mat.flatten().norm()
+
+    def t(self):
+        return Vec(self.mat.t())
 
 
 # TODO(y): efficiency, add symmetric Kron factored to avoid extra transposes
@@ -198,15 +209,15 @@ class KronFactored(FactoredMatrix):
         return KronFactored(LL=self.RR, RR=self.LL)
 
     def normal_form(self):
-        return self.expand_vec()
+        return self.expand()
 
     def expand(self):
         """Returns expanded representation (row-major form)"""
-        return kron(self.RR, self.LL)
+        return kron(self.LL, self.RR)
 
     def expand_vec(self):
         """Returns expanded representation (col-major form, to match vec order in literature)"""
-        return kron(self.LL, self.RR)
+        return kron(self.RR, self.LL)
 
     def sym_l2_norm(self):
         return sym_l2_norm(self.LL) * sym_l2_norm(self.RR)
@@ -255,20 +266,15 @@ class KronFactored(FactoredMatrix):
         elif type(x) == Vec:  # kron @ vec(mat)
             X = x.matrix_form()
             assert X.shape == (self.rsize, self.lsize)
-            result = self.RR @ X @ self.LL.t()
-            result = u.vec(result)
-            return result.flatten()
+            return Vec(self.RR @ X @ self.LL.t())
         else:
             return NotImplemented
 
     def __rmatmul__(self, x):
         if type(x) == Vec:   # vec(mat) @ kron
             X = x.matrix_form()
-            assert X.shape == (self.lsize, self.rsize)
-            result = self.RR.t() @ X @ self.LL
-            result = u.vec(result)
-            assert result.shape == (self.rsize * self.lsize, 1)
-            return result.flatten()
+            assert X.shape == (self.rsize, self.lsize)
+            return Vec(self.RR.t() @ X @ self.LL)
         else:
             return NotImplemented
 
@@ -2099,6 +2105,12 @@ def rmul(a: torch.Tensor, b):
     # https://github.com/pytorch/pytorch/issues/26333
     return b.__rmul__(a)
 
+
+def matmul(a, b):
+    try:
+        return a @ b
+    except TypeError:
+        return rmatmul(a, b)
 
 def rmatmul(a: torch.Tensor, b):
     return b.__rmatmul__(a)

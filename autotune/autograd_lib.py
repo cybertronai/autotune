@@ -509,7 +509,7 @@ def compute_stats(model):
             def curv_direction(dd: torch.Tensor):
                 """Curvature in direction dd (directional eigenvalue). """
                 assert u.is_row_matrix(dd)
-                return u.to_scalar(u.rmatmul(dd @ H, dd.t()) / (dd.flatten().norm() ** 2))
+                return u.to_scalar(dd @ H @ dd.t() / (dd.flatten().norm() ** 2))
 
             with u.timeit(f"pinvH-{i}"):
                 pinvH = u.pinv(H)
@@ -600,8 +600,14 @@ def compute_stats_factored(model):
             AA = ein('ni,nj->ij', A, A)
             BB = ein('ni,nj->ij', B, B)
 
+            di = layer.weight.shape[1]
+            do = layer.weight.shape[0]
+
             # kronecker factored hess and sigma
-            Hk: u.KronFactored = param.hess2.flip()   # TODO: need to flip because Hessian computation uses AA * BB instead of BB * AA
+            Hk: u.KronFactored = param.hess2 # param.hess2.flip()   # TODO: need to flip because Hessian computation uses AA * BB instead of BB * AA
+            assert Hk.LL.shape == (di, di)
+            assert Hk.RR.shape == (do, do)
+
             Sk_u = u.KronFactored(BB, AA) / n
 
             u.check_close(G, ein('ni,nj->nij', B, A).reshape((n, -1)))
@@ -610,7 +616,7 @@ def compute_stats_factored(model):
             Bc = B-torch.mean(B, dim=0)
             AAc = ein('ni,nj->ij', Ac, Ac)
             BBc = ein('ni,nj->ij', Bc, Bc)
-            sigma_k = u.KronFactored(BBc, AA) / n   # only center backprops, centering both leads to underestimate of cov
+            sigma_k = u.KronFactored(AA, BBc) / n   # only center backprops, centering both leads to underestimate of cov
             # sigma_k2 = u.KronFactored(AAc, BBc / n)   # fully centered for pinv
             # sigma_k3 = u.KronFactored(AA, BB / n)   # fully uncentered for pinv
 
@@ -618,8 +624,6 @@ def compute_stats_factored(model):
             s.mean_activation = torch.mean(A)
             s.mean_backprop = torch.mean(B)
 
-            di = AA.shape[0]
-            do = BB.shape[0]
             vecG = u.Vec(g, shape=(do, di))
 
             u.nan_check(G)
@@ -663,7 +667,7 @@ def compute_stats_factored(model):
                 Returns:
                    loss improvement if we take step eps in direction dd.
                 """
-                H = Hk.normal_form()
+                H = Hk.expand_vec()
                 assert u.is_row_matrix(dd)
                 return u.to_scalar(eps * (dd @ g.t()) - 0.5 * eps ** 2 * dd @ H @ dd.t())
 
@@ -677,10 +681,11 @@ def compute_stats_factored(model):
                 Returns:
                    loss improvement if we take step eps in direction dd.
                 """
-                eps * (dd @ vecG - dd @ Hk @ dd)
+                #eps * (dd @ vecG - dd @ Hk @ dd)
                 #                H = Hk.expand()
                 #assert u.is_row_matrix(dd)
-                #return u.to_scalar(eps * (dd @ g.t()) - 0.5 * eps ** 2 * dd @ H @ dd.t())
+                return eps * (dd @ vecG) - 0.5 * eps ** 2 * (dd @ Hk @ vecG)
+
 
             def curv_direction(dd: torch.Tensor):
                 """Curvature in direction dd (directional eigenvalue). """
@@ -690,34 +695,76 @@ def compute_stats_factored(model):
                 # dd = dd.reshape(Hk.RR.shape[0], Hk.LL.shape[0])
                 return u.to_scalar(dd @ H @ dd.t() / (dd.flatten().norm() ** 2))
 
-            def curv_direction2(dd: u.Vec):
-                """Curvature in direction dd (directional eigenvalue). """
-                return dd @ Hk @ dd / dd @ dd
-
-
             with u.timeit(f"pinvH-{i}"):
                 # pinvH = u.pinv(H)
                 pinvH = Hk.pinv()
 
             with u.timeit(f'curv-{i}'):
-                #                s.grad_curv = vecG @ Hk @ vecG / (vecG @ vecG)
+
+
+                # hess testing
+
+                H = Hk.expand_vec()
+                u.seed_random(1)
+                X = u.Vec(torch.rand(10, 4))
+                print('matmul', u.matmul(X@Hk,X))
+                print('expand', X @ Hk.expand() @ X.vec_form())
+                #print('matmul-flip', u.matmul(X@Hk.flip(),X))
+                #print('expand-vec', X @ Hk.expand_vec() @ X.vec_form())
+                # sys.exit()
+
 
                 s.grad_curv = curv_direction(g)  # curvature (eigenvalue) in direction g
+                s.grad_curv = u.matmul(vecG @ Hk, vecG) / (vecG @ vecG)
 
-                ndir = g @ pinvH.normal_form()  # newton direction (TODO(y): replace with lstsqsolve)
+                ndir = g @ pinvH.expand_vec()   # why expand_vec?
                 s.newton_curv = curv_direction(ndir)
+
+                ndir2 = vecG @ pinvH
+                s.newton_curv = u.matmul(ndir2 @ Hk, ndir2) / (ndir2 @ ndir2)
+
                 setattr(layer.weight, 'pre', pinvH)  # save Newton preconditioner
                 s.step_openai = 1 / s.grad_curv if s.grad_curv else 1234567
                 s.step_div_inf = 2 / s.H_l2  # divegent step size for batch_size=infinity
                 s.step_div_1 = torch.tensor(2) / Hk.trace()  # divergent step for batch_size=1
 
-                s.newton_fro = ndir.flatten().norm()  # frobenius norm of Newton update
-                s.regret_newton = u.to_scalar(g @ pinvH.normal_form() @ g.t() / 2)  # replace with "quadratic_form"
-                s.regret_gradient = loss_direction(g, s.step_openai)
+                s.newton_fro = ndir.norm()  # frobenius norm of Newton update, TODO(y): replace with ndir2
+
+                def loss_direction2(d: u.Vec, step):  # improvement in loss if we go eps units in direction dir
+                    return step * (d @ vecG) - 0.5 * step ** 2 * (d @ Hk @ vecG)
+
+
+                print('g', g)
+                print('G', vecG.matrix_form())
+                print('gg', vecG.normal_form())
+
+                print('exp1', g @ pinvH.expand_vec() @ g.t()/2)
+                print('exp2', vecG.t() @ pinvH.flip() @ vecG.t()/2)
+
+
+                ndir3 = vecG.t() @ pinvH.flip()
+                def loss_direction3(d: u.Vec, step):  # improvement in loss if we go eps units in direction dir
+                    return step * (d @ vecG.t()) - 0.5 * step ** 2 * (u.matmul(d @ Hk.flip(), vecG))
+                print('newton_dir---', loss_direction3(ndir3, 1))  # 0.0727
+
+                # need g @ pinvH.expand_vec() @ g.t() / 2
+
+                s.regret_gradient = loss_direction2(vecG, s.step_openai)
+                newton1 = loss_direction(ndir, 1)  # replace with "quadratic_form"
+                print('newton1', newton1)  # 0.03841648995876312
+                newton1a = u.to_scalar(g @ pinvH.expand_vec() @ g.t() / 2)  # replace with "quadratic_form"
+                print('newton1a', newton1a)   # truth, 0.038
+                print('newton_hacked', vecG.t() @ pinvH.flip() @ vecG.t()/2)  # truth
+                newton_dir3 = loss_direction3(ndir3, 1)
+                print('newton_dir3', newton_dir3)   # 0.0727
+                newton2 = loss_direction2(ndir2, 1)   # 0.0727
+                print('newton2', newton2) # 0.0727
+                s.regret_newton = vecG.t() @ pinvH.flip() @ vecG.t()/2
+                #s.regret_newton = loss_direction(ndir2, 1)
 
             with u.timeit(f'rho-{i}'):
                 # lyapunov matrix
-                Xk = u.lyapunov_spectral(Hk.RR, sigma_k.RR)
+                Xk = u.lyapunov_spectral(Hk.RR, sigma_k.RR)   # compare backprops
                 s.rho = u.erank(u.eye_like(Xk)) / u.erank(Xk)
                 s.step_div_1_adjusted = s.step_div_1 / s.rho
 

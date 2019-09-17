@@ -317,9 +317,17 @@ def test_kron():
     u.check_equal(vecX @ K, [644, 706, 748, 820])
     u.check_equal(K @ vecX, [543, 655, 737, 889])
 
-    u.check_equal(u.rmatmul(vecX @ K, vecX), 7538)
+    u.check_equal(u.matmul(vecX @ K, vecX), 7538)
     u.check_equal(vecX @ (vecX @ K), 7538)
     u.check_equal(vecX @ vecX, 30)
+
+    vecX = u.Vec([1, 2], shape=(2, 1))
+    K = u.KronFactored([[5]], [[9, 10], [11, 12]])
+    u.check_equal(vecX @ K, [155, 170])
+    u.check_equal(K @ vecX, [145, 175])
+    u.check_equal(u.matmul(vecX @ K, vecX), 495)
+
+    u.check_equal(vecX.norm()**2, 5)
 
 
 if __name__ == '__main__':
