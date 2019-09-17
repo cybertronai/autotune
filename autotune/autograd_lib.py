@@ -685,9 +685,7 @@ def compute_stats_factored(model):
                 assert u.is_row_matrix(dd)
                 # dd = dd.flatten()
                 #                H = Hk.expand()
-                dd = dd.reshape(Hk.RR.shape[0], Hk.LL.shape[0])
-                # return Hk.quad(dd) / (dd.flatten().norm() ** 2)
-                new_curv = dd @ Hk @ dd
+                # dd = dd.reshape(Hk.RR.shape[0], Hk.LL.shape[0])
                 return u.to_scalar(dd @ H @ dd.t() / (dd.flatten().norm() ** 2))
 
             def curv_direction2(dd: u.Vec):
@@ -700,9 +698,9 @@ def compute_stats_factored(model):
                 pinvH = Hk.pinv()
 
             with u.timeit(f'curv-{i}'):
-                s.grad_curv = vecG @ Hk @ vecG / (vecG @ vecG)
+                #                s.grad_curv = vecG @ Hk @ vecG / (vecG @ vecG)
 
-                #                s.grad_curv = curv_direction(g)  # curvature (eigenvalue) in direction g
+                s.grad_curv = curv_direction(g)  # curvature (eigenvalue) in direction g
 
                 ndir = g @ pinvH.expand()  # newton direction (TODO(y): replace with lstsqsolve)
                 s.newton_curv = curv_direction(ndir)
@@ -717,7 +715,7 @@ def compute_stats_factored(model):
 
             with u.timeit(f'rho-{i}'):
                 # lyapunov matrix
-                Xk = u.lyapunov_spectral(Hk.RR, sigma_k.BB)
+                Xk = u.lyapunov_spectral(Hk.RR, sigma_k.RR)
                 s.rho = u.erank(u.eye_like(Xk)) / u.erank(Xk)
                 s.step_div_1_adjusted = s.step_div_1 / s.rho
 

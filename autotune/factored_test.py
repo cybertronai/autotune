@@ -28,6 +28,7 @@ from train_ciresan import validate
 @profile
 def main():
     u.seed_random(1)
+    u.install_pdb_handler()
 
     parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
     args = parser.parse_args()
