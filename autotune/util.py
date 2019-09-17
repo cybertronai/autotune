@@ -194,8 +194,11 @@ class KronFactored(FactoredMatrix):
         self.lsize = LL.shape[0]
         self.rsize = RR.shape[0]
 
+    def flip(self):
+        return KronFactored(LL=self.RR, RR=self.LL)
+
     def normal_form(self):
-        return self.expand()
+        return self.expand_vec()
 
     def expand(self):
         """Returns expanded representation (row-major form)"""

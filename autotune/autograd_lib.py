@@ -601,8 +601,8 @@ def compute_stats_factored(model):
             BB = ein('ni,nj->ij', B, B)
 
             # kronecker factored hess and sigma
-            Hk: u.KronFactored = param.hess2
-            Sk_u = u.KronFactored(AA, BB / n)
+            Hk: u.KronFactored = param.hess2.flip()   # TODO: need to flip because Hessian computation uses AA * BB instead of BB * AA
+            Sk_u = u.KronFactored(BB, AA) / n
 
             u.check_close(G, ein('ni,nj->nij', B, A).reshape((n, -1)))
 
@@ -610,9 +610,9 @@ def compute_stats_factored(model):
             Bc = B-torch.mean(B, dim=0)
             AAc = ein('ni,nj->ij', Ac, Ac)
             BBc = ein('ni,nj->ij', Bc, Bc)
-            sigma_k = u.KronFactored(AA, BBc / n)   # only center backprops, centering both leads to underestimate of cov
-            sigma_k2 = u.KronFactored(AAc, BBc / n)   # fully centered for pinv
-            sigma_k3 = u.KronFactored(AA, BB / n)   # fully uncentered for pinv
+            sigma_k = u.KronFactored(BBc, AA) / n   # only center backprops, centering both leads to underestimate of cov
+            # sigma_k2 = u.KronFactored(AAc, BBc / n)   # fully centered for pinv
+            # sigma_k3 = u.KronFactored(AA, BB / n)   # fully uncentered for pinv
 
             s.sparsity = torch.sum(layer.output <= 0) / layer.output.numel()  # proportion of activations that are zero
             s.mean_activation = torch.mean(A)
@@ -627,9 +627,9 @@ def compute_stats_factored(model):
                 sigma_u = G.t() @ G / n
                 sigma = sigma_u - g.t() @ g
                 s.sigma_l2 = sigma_k.sym_l2_norm()
-                print('kron dist1 centered', u.symsqrt_dist(sigma_k.expand(), sigma))
-                print('kron dist2 centered', u.symsqrt_dist(sigma_k2.expand(), sigma))
-                print('kron dist3 centered', u.symsqrt_dist(sigma_k3.expand(), sigma))
+                print('kron dist1 centered', u.symsqrt_dist(sigma_k.normal_form(), sigma))
+                # print('kron dist2 centered', u.symsqrt_dist(sigma_k2.expand(), sigma))
+                # print('kron dist3 centered', u.symsqrt_dist(sigma_k3.expand(), sigma))
                 print('kron dist uncentered', u.symsqrt_dist(Sk_u.expand(), sigma_u))
                 print("l2 dist centered", sigma_k.sym_l2_norm(), u.sym_l2_norm(sigma))
                 print("l2 dist uncentered", Sk_u.sym_l2_norm(), u.sym_l2_norm(sigma_u))
@@ -663,7 +663,7 @@ def compute_stats_factored(model):
                 Returns:
                    loss improvement if we take step eps in direction dd.
                 """
-                H = Hk.expand()
+                H = Hk.normal_form()
                 assert u.is_row_matrix(dd)
                 return u.to_scalar(eps * (dd @ g.t()) - 0.5 * eps ** 2 * dd @ H @ dd.t())
 
@@ -704,7 +704,7 @@ def compute_stats_factored(model):
 
                 s.grad_curv = curv_direction(g)  # curvature (eigenvalue) in direction g
 
-                ndir = g @ pinvH.expand()  # newton direction (TODO(y): replace with lstsqsolve)
+                ndir = g @ pinvH.normal_form()  # newton direction (TODO(y): replace with lstsqsolve)
                 s.newton_curv = curv_direction(ndir)
                 setattr(layer.weight, 'pre', pinvH)  # save Newton preconditioner
                 s.step_openai = 1 / s.grad_curv if s.grad_curv else 1234567
@@ -712,7 +712,7 @@ def compute_stats_factored(model):
                 s.step_div_1 = torch.tensor(2) / Hk.trace()  # divergent step for batch_size=1
 
                 s.newton_fro = ndir.flatten().norm()  # frobenius norm of Newton update
-                s.regret_newton = u.to_scalar(g @ pinvH.expand() @ g.t() / 2)  # replace with "quadratic_form"
+                s.regret_newton = u.to_scalar(g @ pinvH.normal_form() @ g.t() / 2)  # replace with "quadratic_form"
                 s.regret_gradient = loss_direction(g, s.step_openai)
 
             with u.timeit(f'rho-{i}'):
