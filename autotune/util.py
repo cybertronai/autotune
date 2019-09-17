@@ -125,18 +125,12 @@ def stable_kron(a, b):
     return kron(a / a_norm, b / b_norm) * a_norm * b_norm
 
 
-class FactoredMatrix:
-    """Matrix representation."""
-    pass
-
-
 class Vec:
-    """Helper class representing Vec(mat)
+    """Helper class representing x=Vec(X) and associated kronecker products
 
-    Vec(mat) @ vec(anything) -> scalar (dot product)
-    Vec(x) @ kron -> vector
-    kron @ Vec(x) -> vector
-    Vec(x) @ kron @ Vec(x) -> scalar
+    (L*R)x = vec(RXL')
+     x'(L*R) = vec(R'XL)
+     xx = dot-product
     """
 
     mat: torch.Tensor
@@ -159,15 +153,9 @@ class Vec:
         assert self.rank <= 2
 
     def vec_form(self):
-        """rank-1 representation
-        """
-
         return u.vec(self.mat).flatten()
 
     def matrix_form(self):
-        """rank-2 representation
-        """
-
         return self.mat
 
     def __matmul__(self, other):
@@ -175,13 +163,20 @@ class Vec:
             other = other.vec_form()
         elif type(other) != torch.Tensor:
             return NotImplemented
+
+        # TODO(y): efficiency, this can be done as scalar product/sum for two Vec instances
         return self.vec_form() @ other
 
     def __rmatmul__(self, other):
         return self.__matmul__(other)
 
 
-# todo: rename to symmetric kron factored
+# TODO(y): efficiency, add symmetric Kron factored to avoid extra transposes
+class FactoredMatrix:
+    """Matrix representation."""
+    pass
+
+
 class KronFactored(FactoredMatrix):
     LL: torch.Tensor  # left factor
     RR: torch.Tensor  # right factorf
@@ -191,6 +186,8 @@ class KronFactored(FactoredMatrix):
         RR = to_pytorch(RR)
         self.LL = LL
         self.RR = RR
+
+        # todo(y): remove this check onces it's split into KronFactored and SymmetricKronFactored
         assert LL.shape[0] == LL.shape[1]
         assert RR.shape[0] == RR.shape[1]
 
@@ -2094,6 +2091,15 @@ def eye_like(X:torch.Tensor) -> torch.Tensor:
     return torch.eye(d).type(X.dtype).to(X.device)
 
 
+
+def rmul(a: torch.Tensor, b):
+    # https://github.com/pytorch/pytorch/issues/26333
+    return b.__rmul__(a)
+
+
+def rmatmul(a: torch.Tensor, b):
+    return b.__rmatmul__(a)
+
 if __name__ == '__main__':
     run_all_tests(sys.modules[__name__])
 
@@ -2115,8 +2121,3 @@ if __name__ == '__main__':
 #     plt.setp(baseline, color='r', linewidth=2)
 #
 #     plt.show()
-
-
-def rmatmul(a: torch.Tensor, b):
-    # https://github.com/pytorch/pytorch/issues/26333
-    return b.__rmatmul__(a)

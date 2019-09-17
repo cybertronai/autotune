@@ -129,6 +129,7 @@ def test_symsqrt():
     cov = u.KronFactored(X @ X.t(), Y @ Y.t())
     u.check_close(cov.sym_l2_norm(), 7 * 7 * 8 * 8)
 
+
 @pytest.mark.skip(reason="fails, need to redo pinv implementation")
 def atest_pinv():
     a = torch.tensor([[2., 7, 9], [1, 9, 8], [2, 7, 5]])
@@ -259,8 +260,6 @@ def test_misc():
     assert u.erank(a) == d
 
 
-
-
 def test_kron():
     torch.set_default_dtype(torch.float64)
     a = torch.tensor([1, 2, 3, 4]).reshape(2, 2)
@@ -278,7 +277,7 @@ def test_kron():
           [1 / 20, -(53 / 1020), 8 / 255, -(7 / 55), 371 / 2805, -(224 / 2805), 5 / 44, -(265 / 2244), 40 / 561],
           [-(1 / 20), 3 / 170, 3 / 170, 7 / 55, -(42 / 935), -(42 / 935), -(5 / 44), 15 / 374, 15 / 374],
           [0, -(5 / 102), 7 / 204, 0, 20 / 561, -(14 / 561), 0, 35 / 1122, -(49 / 2244)],
-[-(1 / 20), 53 / 1020, -(8 / 255), 2 / 55, -(106 / 2805), 64 / 2805, 7 / 220, -(371 / 11220), 56 / 2805],
+          [-(1 / 20), 53 / 1020, -(8 / 255), 2 / 55, -(106 / 2805), 64 / 2805, 7 / 220, -(371 / 11220), 56 / 2805],
           [1 / 20, -(3 / 170), -(3 / 170), -(2 / 55), 12 / 935, 12 / 935, -(7 / 220), 21 / 1870, 21 / 1870],
           [0, 5 / 102, -(7 / 204), 0, 0, 0, 0, -(5 / 102), 7 / 204],
           [1 / 20, -(53 / 1020), 8 / 255, 0, 0, 0, -(1 / 20), 53 / 1020, -(8 / 255)],
@@ -297,7 +296,7 @@ def test_kron():
     u.check_close(Ck.inv().expand_vec(), Ci, rtol=1e-5, atol=1e-6)
     u.check_close(Ck.pinv().expand_vec(), Ci, rtol=1e-5, atol=1e-6)
 
-    Ck2 = u.KronFactored(b, 2*a)
+    Ck2 = u.KronFactored(b, 2 * a)
     u.check_close((Ck @ Ck2).expand(), Ck.expand() @ Ck2.expand())
     u.check_close((Ck @ Ck2).expand_vec(), Ck.expand_vec() @ Ck2.expand_vec())
 
@@ -320,10 +319,8 @@ def test_kron():
 
     u.check_equal(u.rmatmul(vecX @ K, vecX), 7538)
     u.check_equal(vecX @ (vecX @ K), 7538)
+    u.check_equal(vecX @ vecX, 30)
 
-    #dd = Vec(mat)
-    #dd @ Hk @ dd / (dd @ dd)
-    #dd @ H @ dd.t() / (dd.flatten().norm() ** 2)
 
 if __name__ == '__main__':
     # test_truncated_lyapunov()

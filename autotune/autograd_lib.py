@@ -618,6 +618,10 @@ def compute_stats_factored(model):
             s.mean_activation = torch.mean(A)
             s.mean_backprop = torch.mean(B)
 
+            di = AA.shape[0]
+            do = BB.shape[0]
+            vecG = u.Vec(g, shape=(do, di))
+
             u.nan_check(G)
             with u.timeit(f'sigma-{i}'):
                 sigma_u = G.t() @ G / n
@@ -661,6 +665,21 @@ def compute_stats_factored(model):
                 assert u.is_row_matrix(dd)
                 return u.to_scalar(eps * (dd @ g.t()) - 0.5 * eps ** 2 * dd @ H @ dd.t())
 
+            def loss_direction2(dd: u.Vec, eps):
+                """
+
+                Args:
+                    dd: direction, as a n-by-1 matrix
+                    eps: scalar length
+
+                Returns:
+                   loss improvement if we take step eps in direction dd.
+                """
+                eps * (dd @ vecG - dd @ Hk @ dd)
+                #                H = Hk.expand()
+                #assert u.is_row_matrix(dd)
+                #return u.to_scalar(eps * (dd @ g.t()) - 0.5 * eps ** 2 * dd @ H @ dd.t())
+
             def curv_direction(dd: torch.Tensor):
                 """Curvature in direction dd (directional eigenvalue). """
                 assert u.is_row_matrix(dd)
@@ -671,12 +690,19 @@ def compute_stats_factored(model):
                 new_curv = dd @ Hk @ dd
                 return u.to_scalar(dd @ H @ dd.t() / (dd.flatten().norm() ** 2))
 
+            def curv_direction2(dd: u.Vec):
+                """Curvature in direction dd (directional eigenvalue). """
+                return dd @ Hk @ dd / dd @ dd
+
+
             with u.timeit(f"pinvH-{i}"):
                 # pinvH = u.pinv(H)
                 pinvH = Hk.pinv()
 
             with u.timeit(f'curv-{i}'):
-                s.grad_curv = curv_direction(g)  # curvature (eigenvalue) in direction g
+                s.grad_curv = vecG @ Hk @ vecG / (vecG @ vecG)
+
+                #                s.grad_curv = curv_direction(g)  # curvature (eigenvalue) in direction g
 
                 ndir = g @ pinvH.expand()  # newton direction (TODO(y): replace with lstsqsolve)
                 s.newton_curv = curv_direction(ndir)
