@@ -244,6 +244,11 @@ class KronFactored(FactoredMatrix):
     def inv(self):
         return KronFactored(torch.inverse(self.LL), torch.inverse(self.RR))
 
+    @property
+    def shape(self):
+        return self.LL.shape, self.RR.shape
+
+
     def qf(self, G):
         """Returns quadratic form g @ H @ g' """
         assert G.shape[1] == self.RR.shape[0]
