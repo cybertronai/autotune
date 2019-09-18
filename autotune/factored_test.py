@@ -120,7 +120,7 @@ def _test_explicit_hessian():
     Y = B.t() @ X @ A
     loss = torch.sum(Y*Y) / 2
     hess = u.hessian(loss, X).reshape([4, 4])
-    hess_f = u.SymKronFactored(A @ A.t(), B @ B.t())
+    hess_f = u.KronFactored(A @ A.t(), B @ B.t())
 
     # row vectorization corresponds to dloss/(dvecr dvecr) instead of dloss/dvec dvec
     # this is equivalent to commuting original Hessian

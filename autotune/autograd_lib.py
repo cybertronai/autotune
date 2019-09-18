@@ -297,8 +297,8 @@ def compute_hess(model: nn.Module, method='exact', attr_name=None) -> None:
                 assert method == 'kron'
                 AA = torch.einsum("oni,onj->ij", A, A) / (o * n)  # remove factor of o because A is repeated o times
                 BB = torch.einsum("oni,onj->ij", B, B) / n
-                H = u.SymKronFactored(AA, BB)
-                H_bias = u.SymKronFactored(torch.eye(1), torch.einsum("oni,onj->ij", B, B) / n)  # TODO: reuse BB
+                H = u.KronFactored(AA, BB)
+                H_bias = u.KronFactored(torch.eye(1), torch.einsum("oni,onj->ij", B, B) / n)  # TODO: reuse BB
 
         elif layer_type == 'Conv2d':
             Kh, Kw = layer.kernel_size
@@ -361,12 +361,12 @@ def compute_hess(model: nn.Module, method='exact', attr_name=None) -> None:
                     H = u.MeanKronFactored(AA, BB)
                     # H = u.KronFactored(AA[0,...], BB[0,...])
                 else:
-                    H = u.SymKronFactored(AA, BB)
+                    H = u.KronFactored(AA, BB)
 
                 BB_bias = torch.einsum("onip->oni", B)  # group output channels
                 BB_bias = torch.einsum("oni,onj->onij", BB_bias, BB_bias) / n  # covariance
                 BB_bias = torch.einsum("onij->ij", BB_bias)  # sum out outputs + examples
-                H_bias = u.SymKronFactored(torch.eye(1), BB_bias)
+                H_bias = u.KronFactored(torch.eye(1), BB_bias)
 
         setattr(layer.weight, hess_attr, H)
         if layer.bias is not None:
@@ -589,7 +589,7 @@ def compute_stats_factored(model):
             s = AttrDefault(str, {})  # dictionary-like object for layer stats
 
             do, di = layer.weight.shape
-            H: u.SymKronFactored = param.hess2
+            H: u.KronFactored = param.hess2
             assert H.shape == ((di, di), (do, do))
 
             G = param.grad1.reshape((n, -1))
@@ -605,7 +605,7 @@ def compute_stats_factored(model):
             Bc = B - torch.mean(B, dim=0)
             BBc = ein('ni,nj->ij', Bc, Bc)
 
-            sigma_k = u.SymKronFactored(AA, BBc) / n   # only center backprops, centering both leads to underestimate of cov
+            sigma_k = u.KronFactored(AA, BBc) / n   # only center backprops, centering both leads to underestimate of cov
             s.sparsity = torch.sum(layer.output <= 0) / layer.output.numel()  # proportion of activations that are zero
             s.mean_activation = torch.mean(A)
             s.mean_backprop = torch.mean(B)
