@@ -92,7 +92,6 @@ def test_factored_stats_values():
         new_values = params[0].stats
         golden_values = torch.load('test/factored.pt')
 
-        print(new_values.sigma_l2)
         for valname in new_values:
             print("Checking ", valname)
             if valname == 'sigma_l2':
@@ -120,7 +119,7 @@ def _test_explicit_hessian():
     Y = B.t() @ X @ A
     loss = torch.sum(Y*Y) / 2
     hess = u.hessian(loss, X).reshape([4, 4])
-    hess_f = u.KronFactored(A @ A.t(), B @ B.t())
+    hess_f = u.Kron(A @ A.t(), B @ B.t())
 
     # row vectorization corresponds to dloss/(dvecr dvecr) instead of dloss/dvec dvec
     # this is equivalent to commuting original Hessian
@@ -184,21 +183,26 @@ def _test_factored_hessian():
     u.check_close(hess0.reshape(hess1.shape), hess1, atol=1e-9, rtol=1e-6)
 
     # compute Hessian using factored method
-    autograd_lib.compute_hess(model, method='kron', attr_name='hess2')
+    autograd_lib.compute_hess(model, method='kron', attr_name='hess2', vecr_order=True)
     # s.regret_newton = vecG.t() @ pinvH.commute() @ vecG.t() / 2  # TODO(y): figure out why needed transposes
 
-    hess2 = model.layers[0].weight.hess2
+    hess2 = layer.weight.hess2
+    u.check_close(hess1, hess2, atol=1e-9, rtol=1e-6)
 
-    print('dist1', u.symsqrt_dist(hess1, hess2))
-    print('dist2', u.symsqrt_dist(hess1, hess2.commute()))
+    # Newton step in regular notation
+    g1 = layer.weight.grad.flatten()
+    newton1 = hess1 @ g1
 
-    # u.check_close(hess1, hess2, atol=1e-9, rtol=1e-6)
+    g2 = u.Vecr(layer.weight.grad)
+    newton2 = g2 @ hess2
 
-    #print(hess)
+    u.check_close(newton1, newton2, atol=1e-9, rtol=1e-6)
 
-    # autograd_lib.compute_stats_factored(model)
+    # compute regret in factored notation, compare against actual drop in loss
+    regret = g2 @ hess2.pinv() @ g2 / 2
 
-    #    stats = model.layers[0].weight.stats
+    # layer.weight.su
+
 
 
 if __name__ == '__main__':

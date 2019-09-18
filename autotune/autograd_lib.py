@@ -224,6 +224,7 @@ def compute_grad1(model: nn.Module, loss_type: str = 'mean') -> None:
 
             # B = B.reshape(n, -1, A.shape[-1])
             B = B.reshape(n, do, Oh * Ow)
+            # noinspection PyTypeChecker
             grad1 = torch.einsum('ijk,ilk->ijl', B, A)  # n, do, di * Kh * Kw
             assert grad1.shape == (n, do, di * Kh * Kw)
 
@@ -232,7 +233,7 @@ def compute_grad1(model: nn.Module, loss_type: str = 'mean') -> None:
                 setattr(layer.bias, 'grad1', torch.sum(B, dim=2))
 
 
-def compute_hess(model: nn.Module, method='exact', attr_name=None) -> None:
+def compute_hess(model: nn.Module, method='exact', attr_name=None, vecr_order=False) -> None:
     """Compute Hessian (torch.Tensor) for each parameter and save it under 'param.hess' by default.
     Hessian can be a Tensor or a tensor-like object like KronFactored.
 
@@ -247,7 +248,7 @@ def compute_hess(model: nn.Module, method='exact', attr_name=None) -> None:
             mean_kron: mean of kronecker products, one kronecker product per datapoint
             experimental_kfac: experimental method for Conv2d
         attr_name: which attribute of Parameter object to use for storing the Hessian.
-
+        vecr_order: determines whether Hessian computed with respect to vectorized parameters (math notation default) or row-vectorized parameters (more efficient in PyTorch)
     """
 
     assert method in _supported_methods
@@ -297,8 +298,8 @@ def compute_hess(model: nn.Module, method='exact', attr_name=None) -> None:
                 assert method == 'kron'
                 AA = torch.einsum("oni,onj->ij", A, A) / (o * n)  # remove factor of o because A is repeated o times
                 BB = torch.einsum("oni,onj->ij", B, B) / n
-                H = u.KronFactored(AA, BB)
-                H_bias = u.KronFactored(torch.eye(1), torch.einsum("oni,onj->ij", B, B) / n)  # TODO: reuse BB
+                H = u.Kron(AA, BB)
+                H_bias = u.Kron(torch.eye(1), torch.einsum("oni,onj->ij", B, B) / n)  # TODO: reuse BB
 
         elif layer_type == 'Conv2d':
             Kh, Kw = layer.kernel_size
@@ -361,17 +362,21 @@ def compute_hess(model: nn.Module, method='exact', attr_name=None) -> None:
                     H = u.MeanKronFactored(AA, BB)
                     # H = u.KronFactored(AA[0,...], BB[0,...])
                 else:
-                    H = u.KronFactored(AA, BB)
+                    H = u.Kron(AA, BB)
 
                 BB_bias = torch.einsum("onip->oni", B)  # group output channels
                 BB_bias = torch.einsum("oni,onj->onij", BB_bias, BB_bias) / n  # covariance
                 BB_bias = torch.einsum("onij->ij", BB_bias)  # sum out outputs + examples
-                H_bias = u.KronFactored(torch.eye(1), BB_bias)
+                H_bias = u.Kron(torch.eye(1), BB_bias)
+
+        if vecr_order:
+            H = H.commute()
+            H_bias = H_bias.commute()
 
         setattr(layer.weight, hess_attr, H)
         if layer.bias is not None:
             setattr(layer.bias, hess_attr, H_bias)
-        li+=1
+        li += 1
 
 
 def backprop_hess(output: torch.Tensor, hess_type: str) -> None:
@@ -589,7 +594,7 @@ def compute_stats_factored(model):
             s = AttrDefault(str, {})  # dictionary-like object for layer stats
 
             do, di = layer.weight.shape
-            H: u.KronFactored = param.hess2
+            H: u.Kron = param.hess2
             assert H.shape == ((di, di), (do, do))
 
             G = param.grad1.reshape((n, -1))
@@ -605,7 +610,7 @@ def compute_stats_factored(model):
             Bc = B - torch.mean(B, dim=0)
             BBc = ein('ni,nj->ij', Bc, Bc)
 
-            sigma_k = u.KronFactored(AA, BBc) / n   # only center backprops, centering both leads to underestimate of cov
+            sigma_k = u.Kron(AA, BBc) / n   # only center backprops, centering both leads to underestimate of cov
             s.sparsity = torch.sum(layer.output <= 0) / layer.output.numel()  # proportion of activations that are zero
             s.mean_activation = torch.mean(A)
             s.mean_backprop = torch.mean(B)

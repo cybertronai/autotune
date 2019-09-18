@@ -125,7 +125,12 @@ def stable_kron(a, b):
     return kron(a / a_norm, b / b_norm) * a_norm * b_norm
 
 
-class Vec:
+class SpecialForm:
+    def normal_form(self):
+        raise NotImplemented
+
+
+class Vec(SpecialForm):
     """Helper class representing x=Vec(X) and associated kronecker products
 
     x = vec(X)
@@ -193,7 +198,7 @@ class Vec:
         return str(to_numpy(self.normal_form()))
 
 
-class Vecr:
+class Vecr(SpecialForm):
     """Helper class representing row vectorization Vecr(X)=Vec(X') and associated kronecker products
 
     x=vecr(X)
@@ -260,13 +265,7 @@ class Vecr:
         return str(to_numpy(self.normal_form()))
 
 
-# TODO(y): efficiency, add symmetric Kron factored to avoid extra transposes
-class FactoredMatrix:
-    """Matrix representation."""
-    pass
-
-
-class KronFactored(FactoredMatrix):
+class Kron(SpecialForm):
     """Represents kronecker product of two symmetric matrices"""
     LL: torch.Tensor  # left factor
     RR: torch.Tensor  # right factor
@@ -287,7 +286,7 @@ class KronFactored(FactoredMatrix):
     def commute(self):
         """Commutes order of operation: A kron B -> B kron A """
 
-        return KronFactored(LL=self.RR, RR=self.LL)
+        return Kron(LL=self.RR, RR=self.LL)
 
     def normal_form(self):
         return self.expand()
@@ -307,11 +306,11 @@ class KronFactored(FactoredMatrix):
         a = symsqrt(self.LL, cond, return_rank)
         b = symsqrt(self.RR, cond, return_rank)
         if not return_rank:
-            return KronFactored(a, b)
+            return Kron(a, b)
         else:
             a, rank_a = a
             b, rank_b = b
-            return KronFactored(a, b), rank_a * rank_b
+            return Kron(a, b), rank_a * rank_b
 
     def trace(self):
         return torch.trace(self.LL) * torch.trace(self.RR)
@@ -320,10 +319,10 @@ class KronFactored(FactoredMatrix):
         return torch.norm(self.LL.flatten()) * torch.norm(self.RR.flatten())
 
     def pinv(self):
-        return KronFactored(torch.pinverse(self.LL), torch.pinverse(self.RR))
+        return Kron(torch.pinverse(self.LL), torch.pinverse(self.RR))
 
     def inv(self):
-        return KronFactored(torch.inverse(self.LL), torch.inverse(self.RR))
+        return Kron(torch.inverse(self.LL), torch.inverse(self.RR))
 
     @property
     def shape(self):
@@ -343,28 +342,20 @@ class KronFactored(FactoredMatrix):
 
     # TODO(y): implement in-place ops
     def __truediv__(self, other):
-        return KronFactored(self.LL, self.RR / other)
+        return Kron(self.LL, self.RR / other)
 
     def __matmul__(self, x):
-        if type(x) == KronFactored:
-            return KronFactored(self.LL @ x.LL, self.RR @ x.RR)
+        if type(x) == Kron:
+            return Kron(self.LL @ x.LL, self.RR @ x.RR)
         if type(x) not in [Vec, Vecr]:
             return NotImplemented
 
         X = x.matrix_form()
         if type(x) == Vec:  # kron @ vec(mat)
-            if X.shape != (self.rsize, self.lsize):
-                assert X.shape == (self.lsize, self.rsize), f"Not conformal, X has shape {X.shape}"
-                print("warning, have to rearrange X")
-                assert False, "not implemented"
-                X = X.t()
+            assert X.shape == (self.rsize, self.lsize), f"Dimension mismatch, {X.shape}, {self.lsize}, {self.rsize}"
             return Vec(self.RR @ X @ self.LL.t())
         elif type(x) == Vecr:
-            if X.shape != (self.lsize, self.rsize):
-                assert X.shape == (self.lsize, self.rsize), f"Not conformal, X has shape {X.shape}"
-                print("warning, have to transpose X")
-                assert False, "not implemented"
-                X = X.t()
+            assert X.shape == (self.lsize, self.rsize), f"Dimension mismatch, {X.shape}, {self.lsize}, {self.rsize}"
             return Vecr(self.LL @ X @ self.RR.t())
 
     def __rmatmul__(self, x):
@@ -372,22 +363,14 @@ class KronFactored(FactoredMatrix):
             return NotImplemented
         X = x.matrix_form()
         if type(x) == Vec:
-            if X.shape != (self.rsize, self.lsize):
-                assert X.shape == (self.lsize, self.rsize), f"Not conformal, X has shape {X.shape}"
-                print("warning, have to transpose X")
-                assert False, "not implemented"
-                X = X.t()
+            assert X.shape == (self.rsize, self.lsize), f"Dimension mismatch, {X.shape}, {self.lsize}, {self.rsize}"
             return Vec(self.RR.t() @ X @ self.LL)
         elif type(x) == Vecr:
-            if X.shape != (self.lsize, self.rsize):
-                assert X.shape == (self.lsize, self.rsize), f"Not conformal, X has shape {X.shape}"
-                print("warning, have to transpose X")
-                assert False, "not implemented"
-                X = X.t()
+            assert X.shape == (self.lsize, self.rsize), f"Dimension mismatch, {X.shape}, {self.lsize}, {self.rsize}"
             return Vecr(self.LL.t() @ X @ self.RR)
 
 
-class MeanKronFactored(FactoredMatrix):
+class MeanKronFactored(SpecialForm):
     """Factored representation as a mean of kronecker products"""
     AA: torch.Tensor  # stacked forward factors
     BB: torch.Tensor  # stacked backward factor

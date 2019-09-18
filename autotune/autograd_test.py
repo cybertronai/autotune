@@ -748,8 +748,8 @@ def test_kron_nano():
     autograd_lib.disable_hooks()
 
     for layer in model.layers:
-        Hk: u.KronFactored = layer.weight.hess_factored
-        Hk_bias: u.KronFactored = layer.bias.hess_factored
+        Hk: u.Kron = layer.weight.hess_factored
+        Hk_bias: u.Kron = layer.bias.hess_factored
         Hk, Hk_bias = u.expand_hess(Hk, Hk_bias)   # kronecker multiply the factors
 
         # old approach, using direct computation
@@ -803,8 +803,8 @@ def test_kron_tiny():
     autograd_lib.disable_hooks()
 
     for layer in model.layers:
-        H: u.KronFactored = layer.weight.hess_factored
-        H_bias: u.KronFactored = layer.bias.hess_factored
+        H: u.Kron = layer.weight.hess_factored
+        H_bias: u.Kron = layer.bias.hess_factored
         H, H_bias = u.expand_hess(H, H_bias)   # kronecker multiply the factors
 
         # old approach, using direct computation

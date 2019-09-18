@@ -114,7 +114,7 @@ def test_symsqrt():
     Y = torch.randn((d, n))
     Y = torch.cat([Y, torch.zeros_like(X)])
     Y = randomly_rotate(X)
-    cov = u.KronFactored(X @ X.t(), Y @ Y.t())
+    cov = u.Kron(X @ X.t(), Y @ Y.t())
     sqrt, rank = cov.symsqrt(return_rank=True)
     assert rank == d * d
     u.check_close(sqrt @ sqrt, cov, rtol=1e-4)
@@ -126,7 +126,7 @@ def test_symsqrt():
 
     Y = torch.tensor([[8., 0, 0, 0, 0]]).t()
     Y = randomly_rotate(Y)
-    cov = u.KronFactored(X @ X.t(), Y @ Y.t())
+    cov = u.Kron(X @ X.t(), Y @ Y.t())
     u.check_close(cov.sym_l2_norm(), 7 * 7 * 8 * 8)
 
 
@@ -134,7 +134,7 @@ def test_symsqrt():
 def atest_pinv():
     a = torch.tensor([[2., 7, 9], [1, 9, 8], [2, 7, 5]])
     b = torch.tensor([[6., 6, 1], [10, 7, 7], [7, 10, 10]])
-    C = u.KronFactored(a, b)
+    C = u.Kron(a, b)
     u.check_close(a.flatten().norm() * b.flatten().norm(), C.frobenius_norm())
 
     u.check_close(C.frobenius_norm(), 4 * math.sqrt(11635.))
@@ -264,11 +264,11 @@ def test_kron():
     torch.set_default_dtype(torch.float64)
     a = torch.tensor([1, 2, 3, 4]).reshape(2, 2)
     b = torch.tensor([5, 6, 7, 8]).reshape(2, 2)
-    u.check_close(u.KronFactored(a, b).trace(), 65)
+    u.check_close(u.Kron(a, b).trace(), 65)
 
     a = torch.tensor([[2., 7, 9], [1, 9, 8], [2, 7, 5]])
     b = torch.tensor([[6., 6, 1], [10, 7, 7], [7, 10, 10]])
-    Ck = u.KronFactored(a, b)
+    Ck = u.Kron(a, b)
     u.check_close(a.flatten().norm() * b.flatten().norm(), Ck.frobenius_norm())
 
     u.check_close(Ck.frobenius_norm(), 4 * math.sqrt(11635.))
@@ -296,7 +296,7 @@ def test_kron():
     u.check_close(Ck.inv().expand(), Ci, rtol=1e-5, atol=1e-6)
     u.check_close(Ck.pinv().expand(), Ci, rtol=1e-5, atol=1e-6)
 
-    Ck2 = u.KronFactored(b, 2 * a)
+    Ck2 = u.Kron(b, 2 * a)
     u.check_close((Ck @ Ck2).expand(), Ck.expand() @ Ck2.expand())
     u.check_close((Ck @ Ck2).expand_vec(), Ck.expand_vec() @ Ck2.expand_vec())
 
@@ -304,7 +304,7 @@ def test_kron():
     d1 = 2
     G = torch.randn(d2, d1)
     g = u.vec(G)
-    H = u.KronFactored(u.random_cov(d1), u.random_cov(d2))
+    H = u.Kron(u.random_cov(d1), u.random_cov(d2))
     #    u.check_equal(H.qf_vec(G), (g.t() @ H.expand_vec() @ g).item())
 
     Gt = G.t()
@@ -312,7 +312,7 @@ def test_kron():
     #     u.check_equal(H.qf(Gt), (gt @ H.expand() @ gt.t()).item())
 
     vecX = u.Vec([1, 2, 3, 4], shape=(2, 2))
-    K = u.KronFactored([[5, 6], [7, 8]], [[9, 10], [11, 12]])
+    K = u.Kron([[5, 6], [7, 8]], [[9, 10], [11, 12]])
 
     u.check_equal(vecX @ K, [644, 706, 748, 820])
     u.check_equal(K @ vecX, [543, 655, 737, 889])
@@ -322,7 +322,7 @@ def test_kron():
     u.check_equal(vecX @ vecX, 30)
 
     vecX = u.Vec([1, 2], shape=(1, 2))
-    K = u.KronFactored([[5]], [[9, 10], [11, 12]])
+    K = u.Kron([[5]], [[9, 10], [11, 12]])
     # Todo: figure out how to multiply not conformal Kronecker product
     #    u.check_equal(K @ vecX, [145, 175])
     #    u.check_equal(u.matmul(vecX @ K, vecX), 495)
@@ -335,25 +335,25 @@ def test_kron():
     B = torch.tensor([[9., 10], [11, 12]])
     x = u.Vec(X)
 
-    u.check_equal(u.Vec(A @ X @ B), x @ u.KronFactored(B, A.t()))
-    u.check_equal(u.Vec(A @ X @ B), u.KronFactored(B.t(), A) @ x)
-    u.check_equal(u.Vecr(A @ X @ B), u.KronFactored(A, B.t()) @ u.Vecr(X))
-    u.check_equal(u.Vecr(A @ X @ B), u.Vecr(X) @ u.KronFactored(A.t(), B))
+    u.check_equal(u.Vec(A @ X @ B), x @ u.Kron(B, A.t()))
+    u.check_equal(u.Vec(A @ X @ B), u.Kron(B.t(), A) @ x)
+    u.check_equal(u.Vecr(A @ X @ B), u.Kron(A, B.t()) @ u.Vecr(X))
+    u.check_equal(u.Vecr(A @ X @ B), u.Vecr(X) @ u.Kron(A.t(), B))
 
     def extra_checks(A, X, B):
         x = u.Vec(X)
-        u.check_equal(u.Vec(A @ X @ B), x @ u.KronFactored(B, A.t()))
-        u.check_equal(u.Vec(A @ X @ B), u.KronFactored(B.t(), A) @ x)
-        u.check_equal(u.Vecr(A @ X @ B), u.KronFactored(A, B.t()) @ u.Vecr(X))
-        u.check_equal(u.Vecr(A @ X @ B), u.Vecr(X) @ u.KronFactored(A.t(), B))
-        u.check_equal(u.Vecr(A @ X @ B), u.Vecr(X) @ u.KronFactored(A.t(), B).normal_form())
-        u.check_equal(u.Vecr(A @ X @ B), u.matmul(u.KronFactored(A, B.t()).normal_form(), u.Vecr(X)))
-        u.check_equal(u.Vec(A @ X @ B), u.matmul(u.KronFactored(B.t(), A).normal_form(), x))
-        u.check_equal(u.Vec(A @ X @ B), x @ u.KronFactored(B, A.t()).normal_form())
-        u.check_equal(u.Vec(A @ X @ B), x.normal_form() @ u.KronFactored(B, A.t()).normal_form())
-        u.check_equal(u.Vec(A @ X @ B), u.KronFactored(B.t(), A).normal_form() @ x.normal_form())
-        u.check_equal(u.Vecr(A @ X @ B), u.KronFactored(A, B.t()).normal_form() @ u.Vecr(X).normal_form())
-        u.check_equal(u.Vecr(A @ X @ B), u.Vecr(X).normal_form() @ u.KronFactored(A.t(), B).normal_form())
+        u.check_equal(u.Vec(A @ X @ B), x @ u.Kron(B, A.t()))
+        u.check_equal(u.Vec(A @ X @ B), u.Kron(B.t(), A) @ x)
+        u.check_equal(u.Vecr(A @ X @ B), u.Kron(A, B.t()) @ u.Vecr(X))
+        u.check_equal(u.Vecr(A @ X @ B), u.Vecr(X) @ u.Kron(A.t(), B))
+        u.check_equal(u.Vecr(A @ X @ B), u.Vecr(X) @ u.Kron(A.t(), B).normal_form())
+        u.check_equal(u.Vecr(A @ X @ B), u.matmul(u.Kron(A, B.t()).normal_form(), u.Vecr(X)))
+        u.check_equal(u.Vec(A @ X @ B), u.matmul(u.Kron(B.t(), A).normal_form(), x))
+        u.check_equal(u.Vec(A @ X @ B), x @ u.Kron(B, A.t()).normal_form())
+        u.check_equal(u.Vec(A @ X @ B), x.normal_form() @ u.Kron(B, A.t()).normal_form())
+        u.check_equal(u.Vec(A @ X @ B), u.Kron(B.t(), A).normal_form() @ x.normal_form())
+        u.check_equal(u.Vecr(A @ X @ B), u.Kron(A, B.t()).normal_form() @ u.Vecr(X).normal_form())
+        u.check_equal(u.Vecr(A @ X @ B), u.Vecr(X).normal_form() @ u.Kron(A.t(), B).normal_form())
 
     # shape checks
     d1, d2 = 3, 4
