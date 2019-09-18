@@ -359,6 +359,15 @@ def test_kron():
     d1, d2 = 3, 4
     extra_checks(torch.ones((d1, d1)), torch.ones((d1, d2)), torch.ones((d2, d2)))
 
+    A = torch.rand(d1, d1)
+    B = torch.rand(d2, d2)
+    #x = torch.rand((d1*d2))
+    #X = x.t().reshape(d1, d2)
+    # X = torch.rand((d1, d2))
+    # x = u.vec(X)
+    x = torch.rand((d1*d2))
+    #    print((u.vec(A@X@B)-u.kron(B.t(), A) @ x).norm())
+
 
 
 

@@ -642,7 +642,7 @@ def compute_stats_factored(model):
                     return step * (d @ vecG) - 0.5 * step ** 2 * (d @ H @ vecG)
 
                 s.regret_gradient = loss_direction(vecG, s.step_openai)
-                s.regret_newton = vecG.t() @ pinvH.commute() @ vecG.t() / 2   # TODO(y): figure out why needed transposes
+                s.regret_newton = vecG.commute() @ pinvH.commute() @ vecG.commute() / 2   # TODO(y): figure out why needed transposes
 
             with u.timeit(f'rho-{i}'):
                 # lyapunov matrix

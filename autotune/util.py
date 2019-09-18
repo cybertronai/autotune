@@ -355,13 +355,15 @@ class KronFactored(FactoredMatrix):
         if type(x) == Vec:  # kron @ vec(mat)
             if X.shape != (self.rsize, self.lsize):
                 assert X.shape == (self.lsize, self.rsize), f"Not conformal, X has shape {X.shape}"
-                print("warning, have to transpose X")
+                print("warning, have to rearrange X")
+                assert False, "not implemented"
                 X = X.t()
             return Vec(self.RR @ X @ self.LL.t())
         elif type(x) == Vecr:
             if X.shape != (self.lsize, self.rsize):
                 assert X.shape == (self.lsize, self.rsize), f"Not conformal, X has shape {X.shape}"
                 print("warning, have to transpose X")
+                assert False, "not implemented"
                 X = X.t()
             return Vecr(self.LL @ X @ self.RR.t())
 
@@ -373,12 +375,14 @@ class KronFactored(FactoredMatrix):
             if X.shape != (self.rsize, self.lsize):
                 assert X.shape == (self.lsize, self.rsize), f"Not conformal, X has shape {X.shape}"
                 print("warning, have to transpose X")
+                assert False, "not implemented"
                 X = X.t()
             return Vec(self.RR.t() @ X @ self.LL)
         elif type(x) == Vecr:
             if X.shape != (self.lsize, self.rsize):
                 assert X.shape == (self.lsize, self.rsize), f"Not conformal, X has shape {X.shape}"
                 print("warning, have to transpose X")
+                assert False, "not implemented"
                 X = X.t()
             return Vecr(self.LL.t() @ X @ self.RR)
 
