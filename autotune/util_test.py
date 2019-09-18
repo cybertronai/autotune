@@ -329,10 +329,56 @@ def test_kron():
 
     u.check_equal(vecX.norm()**2, 5)
 
+    # check kronecker rules
+    X = torch.tensor([[1., 2], [3, 4]])
+    A = torch.tensor([[5., 6], [7, 8]])
+    B = torch.tensor([[9., 10], [11, 12]])
+    x = u.Vec(X)
+
+    u.check_equal(u.Vec(A @ X @ B), x @ u.KronFactored(B, A.t()))
+    u.check_equal(u.Vec(A @ X @ B), u.KronFactored(B.t(), A) @ x)
+    u.check_equal(u.Vecr(A @ X @ B), u.KronFactored(A, B.t()) @ u.Vecr(X))
+    u.check_equal(u.Vecr(A @ X @ B), u.Vecr(X) @ u.KronFactored(A.t(), B))
+
+    def extra_checks(A, X, B):
+        u.check_equal(u.Vec(A @ X @ B), x @ u.KronFactored(B, A.t()))
+        u.check_equal(u.Vec(A @ X @ B), u.KronFactored(B.t(), A) @ x)
+        u.check_equal(u.Vecr(A @ X @ B), u.KronFactored(A, B.t()) @ u.Vecr(X))
+        u.check_equal(u.Vecr(A @ X @ B), u.Vecr(X) @ u.KronFactored(A.t(), B))
+        u.check_equal(u.Vecr(A @ X @ B), u.Vecr(X) @ u.KronFactored(A.t(), B).normal_form())
+        u.check_equal(u.Vecr(A @ X @ B), u.matmul(u.KronFactored(A, B.t()).normal_form(), u.Vecr(X)))
+        u.check_equal(u.Vec(A @ X @ B), u.matmul(u.KronFactored(B.t(), A).normal_form(), x))
+        u.check_equal(u.Vec(A @ X @ B), x @ u.KronFactored(B, A.t()).normal_form())
+        u.check_equal(u.Vec(A @ X @ B), x.normal_form() @ u.KronFactored(B, A.t()).normal_form())
+        u.check_equal(u.Vec(A @ X @ B), u.KronFactored(B.t(), A).normal_form() @ x.normal_form())
+        u.check_equal(u.Vecr(A @ X @ B), u.KronFactored(A, B.t()).normal_form() @ u.Vecr(X).normal_form())
+        u.check_equal(u.Vecr(A @ X @ B), u.Vecr(X).normal_form() @ u.KronFactored(A.t(), B).normal_form())
+
+    # shape checks
+    d1, d2, d3, d4 = 3, 4, 5, 6
+    extra_checks(torch.ones((d1, d2)), torch.ones((d2, d3)), torch.ones((d3, d4)))
+
+
+
+
+def test_contiguous():
+
+    d = 5
+    A = torch.rand((d, d))
+    B = torch.rand((d, d))
+    result = torch.einsum("ab,cd->acbd", A, B)
+    assert(result.is_contiguous())
+    result = torch.einsum("ab,cd->acbd", B, A)
+    assert(result.is_contiguous())
+    result = torch.einsum("ab,cd->acbd", B, A.t())
+    assert(not result.is_contiguous())
+
+
 
 if __name__ == '__main__':
     # test_truncated_lyapunov()
     # test_lyapunov_lstsq()
     # test_robust_svd()
+    # test_contiguous()
     test_kron()
 #    u.run_all_tests(sys.modules[__name__])

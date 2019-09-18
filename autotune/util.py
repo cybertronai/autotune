@@ -128,9 +128,11 @@ def stable_kron(a, b):
 class Vec:
     """Helper class representing x=Vec(X) and associated kronecker products
 
-    (L*R)x = vec(RXL')
-     x'(L*R) = vec(R'XL)
-     xx = dot-product
+    x = vec(X)
+    vec(AXB)' = x'(B*A')
+    vec(AXB) = (B'*A)x
+
+    xx = dot-product
     """
 
     mat: torch.Tensor
@@ -165,21 +167,97 @@ class Vec:
 
     def __matmul__(self, other):
         if type(other) == Vec:
-            other = other.vec_form()
+            return torch.sum(self.mat*other.mat)
         elif type(other) != torch.Tensor:
             return NotImplemented
 
-        # TODO(y): efficiency, this can be done as scalar product/sum for two Vec instances
         return self.vec_form() @ other
 
     def __rmatmul__(self, other):
-        return self.__matmul__(other)
+        if type(other) == Vec:
+            return other.__matmul__(self)
+        elif type(other) != torch.Tensor:
+            return NotImplemented
+        return other @ self.vec_form()
 
     def norm(self):
         return self.mat.flatten().norm()
 
-    def t(self):
-        return Vec(self.mat.t())
+    def commute(self):
+        """Transpose matrix inside of vec operation.
+        Equivalent to left multiplication by the commutation matrix."""
+
+        return Vecr(self.mat)
+
+    def __str__(self):
+        return str(to_numpy(self.normal_form()))
+
+
+class Vecr:
+    """Helper class representing row vectorization Vecr(X)=Vec(X') and associated kronecker products
+
+    x=vecr(X)
+    (A*B')x = vecr(AXB)
+     x'(A'*B) = vecr(AXB)'
+     xx = dot-product
+    """
+
+    mat: torch.Tensor
+    shape: Tuple
+    numel: int
+    rank: int
+
+    def __init__(self, mat, shape: Tuple = None):
+        mat = to_pytorch(mat)
+        if shape is not None:
+            mat = mat.reshape(shape)
+        else:
+            shape = mat.shape
+        self.mat = mat
+        self.shape = shape
+
+        assert np.prod(shape) == mat.numel()
+        self.rank = len(shape)
+        self.numel = self.mat.numel()
+
+        assert self.rank >= 0
+        assert self.rank <= 2
+
+    def vec_form(self):
+        return self.mat.flatten()
+
+    def matrix_form(self):
+        return self.mat
+
+    def normal_form(self):
+        return self.vec_form()
+
+    def __matmul__(self, other):
+        if type(other) == Vecr:
+            return torch.sum(self.mat*other.mat)
+        elif type(other) != torch.Tensor:
+            return NotImplemented
+
+        return self.vec_form() @ other
+
+    def __rmatmul__(self, other):
+        if type(other) == Vecr:
+            return other.__matmul__(self)
+        elif type(other) != torch.Tensor:
+            return NotImplemented
+        return other @ self.vec_form()
+
+    def norm(self):
+        return self.mat.flatten().norm()
+
+    def commute(self):
+        """Transpose matrix inside of vec operation.
+        Equivalent to left multiplication by the commutation matrix."""
+
+        return Vec(self.mat)
+
+    def __str__(self):
+        return str(to_numpy(self.normal_form()))
 
 
 # TODO(y): efficiency, add symmetric Kron factored to avoid extra transposes
@@ -190,7 +268,7 @@ class FactoredMatrix:
 
 class KronFactored(FactoredMatrix):
     LL: torch.Tensor  # left factor
-    RR: torch.Tensor  # right factorf
+    RR: torch.Tensor  # right factor
 
     def __init__(self, LL, RR):
         LL = to_pytorch(LL)
@@ -199,13 +277,13 @@ class KronFactored(FactoredMatrix):
         self.RR = RR
 
         # todo(y): remove this check onces it's split into KronFactored and SymmetricKronFactored
-        assert LL.shape[0] == LL.shape[1]
-        assert RR.shape[0] == RR.shape[1]
 
         self.lsize = LL.shape[0]
         self.rsize = RR.shape[0]
 
-    def flip(self):
+    def commute(self):
+        """Commutes order of operation: A kron B -> B kron A """
+
         return KronFactored(LL=self.RR, RR=self.LL)
 
     def normal_form(self):
@@ -248,7 +326,6 @@ class KronFactored(FactoredMatrix):
     def shape(self):
         return self.LL.shape, self.RR.shape
 
-
     def qf(self, G):
         """Returns quadratic form g @ H @ g' """
         assert G.shape[1] == self.RR.shape[0]
@@ -272,6 +349,10 @@ class KronFactored(FactoredMatrix):
             X = x.matrix_form()
             assert X.shape == (self.rsize, self.lsize)
             return Vec(self.RR @ X @ self.LL.t())
+        elif type(x) == Vecr:
+            X = x.matrix_form()
+            assert X.shape == (self.lsize, self.rsize)
+            return Vecr(self.LL @ X @ self.RR.t())
         else:
             return NotImplemented
 
@@ -280,6 +361,116 @@ class KronFactored(FactoredMatrix):
             X = x.matrix_form()
             assert X.shape == (self.rsize, self.lsize)
             return Vec(self.RR.t() @ X @ self.LL)
+        elif type(x) == Vecr:
+            X = x.matrix_form()
+            assert X.shape == (self.lsize, self.rsize)
+            return Vecr(self.LL.t() @ X @ self.RR)
+        else:
+            return NotImplemented
+
+
+class SymKronFactored(FactoredMatrix):
+    """Represents kronecker product of two symmetric matrices"""
+    LL: torch.Tensor  # left factor
+    RR: torch.Tensor  # right factor
+
+    def __init__(self, LL, RR):
+        LL = to_pytorch(LL)
+        RR = to_pytorch(RR)
+        self.LL = LL
+        self.RR = RR
+
+        # todo(y): remove this check onces it's split into KronFactored and SymmetricKronFactored
+        assert LL.shape[0] == LL.shape[1]
+        assert RR.shape[0] == RR.shape[1]
+
+        self.lsize = LL.shape[0]
+        self.rsize = RR.shape[0]
+
+    def commute(self):
+        """Commutes order of operation: A kron B -> B kron A """
+
+        return SymKronFactored(LL=self.RR, RR=self.LL)
+
+    def normal_form(self):
+        return self.expand()
+
+    def expand(self):
+        """Returns expanded representation (row-major form)"""
+        return kron(self.LL, self.RR)
+
+    def expand_vec(self):
+        """Returns expanded representation (col-major form, to match vec order in literature)"""
+        return kron(self.RR, self.LL)
+
+    def sym_l2_norm(self):
+        return sym_l2_norm(self.LL) * sym_l2_norm(self.RR)
+
+    def symsqrt(self, cond=None, return_rank=False):
+        a = symsqrt(self.LL, cond, return_rank)
+        b = symsqrt(self.RR, cond, return_rank)
+        if not return_rank:
+            return SymKronFactored(a, b)
+        else:
+            a, rank_a = a
+            b, rank_b = b
+            return SymKronFactored(a, b), rank_a * rank_b
+
+    def trace(self):
+        return torch.trace(self.LL) * torch.trace(self.RR)
+
+    def frobenius_norm(self):
+        return torch.norm(self.LL.flatten()) * torch.norm(self.RR.flatten())
+
+    def pinv(self):
+        return SymKronFactored(torch.pinverse(self.LL), torch.pinverse(self.RR))
+
+    def inv(self):
+        return SymKronFactored(torch.inverse(self.LL), torch.inverse(self.RR))
+
+    @property
+    def shape(self):
+        return self.LL.shape, self.RR.shape
+
+    def qf(self, G):
+        """Returns quadratic form g @ H @ g' """
+        assert G.shape[1] == self.RR.shape[0]
+        assert G.shape[0] == self.LL.shape[0]
+        return torch.sum(G * (self.LL @ G @ self.RR))
+
+    def qf_vec(self, G):
+        """Returns quadratic form g' @ H @ g"""
+        assert G.shape[0] == self.RR.shape[0]
+        assert G.shape[1] == self.LL.shape[0]
+        return torch.sum(G * (self.RR @ G @ self.LL))
+
+    # TODO(y): implement in-place ops
+    def __truediv__(self, other):
+        return SymKronFactored(self.LL, self.RR / other)
+
+    def __matmul__(self, x):
+        if type(x) == SymKronFactored:
+            return SymKronFactored(self.LL @ x.LL, self.RR @ x.RR)
+        elif type(x) == Vec:  # kron @ vec(mat)
+            X = x.matrix_form()
+            assert X.shape == (self.rsize, self.lsize)
+            return Vec(self.RR @ X @ self.LL.t())
+        elif type(x) == Vecr:
+            X = x.matrix_form()
+            assert X.shape == (self.lsize, self.rsize)
+            return Vecr(self.LL @ X @ self.RR.t())
+        else:
+            return NotImplemented
+
+    def __rmatmul__(self, x):
+        if type(x) == Vec:   # vec(mat) @ kron
+            X = x.matrix_form()
+            assert X.shape == (self.rsize, self.lsize)
+            return Vec(self.RR.t() @ X @ self.LL)
+        elif type(x) == Vecr:
+            X = x.matrix_form()
+            assert X.shape == (self.lsize, self.rsize)
+            return Vecr(self.LL.t() @ X @ self.RR)
         else:
             return NotImplemented
 
@@ -620,6 +811,20 @@ def from_numpy(x) -> torch.Tensor:
         return torch.tensor(x)
 
 
+_pytorch_floating_point_types = (torch.float16, torch.float32, torch.float64)
+
+_numpy_type_map = {
+    'float64': torch.DoubleTensor,
+    'float32': torch.FloatTensor,
+    'float16': torch.HalfTensor,
+    'int64': torch.LongTensor,
+    'int32': torch.IntTensor,
+    'int16': torch.ShortTensor,
+    'int8': torch.CharTensor,
+    'uint8': torch.ByteTensor,
+}
+
+
 def pytorch_dtype_to_floating_numpy_dtype(dtype):
     """Converts PyTorch dtype to numpy floating point dtype, defaulting to np.float32 for non-floating point types."""
     if dtype == torch.float64:
@@ -633,8 +838,20 @@ def pytorch_dtype_to_floating_numpy_dtype(dtype):
     return dtype
 
 
+def to_normal_form(x):
+    """Convert object to a normal expression, ie FactoredMatrix->Tensor, identity op for objects not in special form."""
+    if hasattr(x, 'normal_form'):
+        x = x.normal_form()
+        assert not hasattr(x, 'normal_form'), 'infinite loop detected while expanding normal form'
+    return x
+
+
 def to_pytorch(x) -> torch.Tensor:
+    """Convert numeric object to floating point PyTorch tensor."""
+    x = to_normal_form(x)
     if type(x) == torch.Tensor:
+        if x.dtype not in _pytorch_floating_point_types:
+            x = x.type(torch.get_default_dtype())
         return x
     else:
         return from_numpy(to_numpy(x))
@@ -841,6 +1058,8 @@ def robust_svd(mat: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Ten
 def symsqrt_dist(cov1: torch.Tensor, cov2: torch.Tensor) -> float:
     """Distance between square roots of matrices"""
 
+    cov1 = to_pytorch(cov1)
+    cov2 = to_pytorch(cov2)
     cov1 = symsqrt_svd(cov1)
     cov2 = symsqrt_svd(cov2)
     return torch.norm(cov1 - cov2).item()
