@@ -422,6 +422,7 @@ def backprop_hess(output: torch.Tensor, hess_type: str) -> None:
         for i in range(n):
             if torch.get_default_dtype() == torch.float64:
                 hess[i, :, :] = u.symsqrt_svd(hess[i, :, :])  # more stable method since we don't care about speed with float64
+                print('warning, slow method for cross-entropy')
             else:
                 hess[i, :, :] = u.symsqrt(hess[i, :, :])
             u.nan_check(hess[i, :, :])
@@ -632,7 +633,7 @@ def compute_stats_factored(model):
             BBc = ein('ni,nj->ij', Bc, Bc)
 
             sigma_k = u.Kron(AA, BBc) / n   # only center backprops, centering both leads to underestimate of cov
-            s.sparsity = torch.sum(layer.output <= 0) / layer.output.numel()  # proportion of activations that are zero
+            s.sparsity = torch.sum(layer.output <= 0).float() / layer.output.numel()  # proportion of activations that are zero
             s.mean_activation = torch.mean(A)
             s.mean_backprop = torch.mean(B)
 
@@ -677,7 +678,7 @@ def compute_stats_factored(model):
                 s.step_div_1_adjusted = s.step_div_1 / s.rho
 
             with u.timeit(f"batch-{i}"):
-                s.batch_openai = (H @ sigma_k).trace() / (vecG @ H @ vecG)
+                s.batch_openai = (H @ sigma_k).trace() / (vecG @ H @ vecG) / n   # TODO(y), this /n was needed to match scale of non-factored version, find out why
 
                 expected_grad_norm_sq = torch.norm(G, "fro") ** 2 / n  # expected gradient norm squared
                 s.diversity = expected_grad_norm_sq / torch.norm(g) ** 2  # Gradient diversity / n
