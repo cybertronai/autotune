@@ -356,6 +356,27 @@ class Kron(SpecialForm):
     def __truediv__(self, other):
         return Kron(self.LL, self.RR / other)
 
+    def __mul__(self, other):
+        other = u.to_scalar(other)
+        return Kron(self.LL, self.RR*other)
+
+    def __rmul__(self, other):
+        other = u.to_scalar(other)
+        return Kron(self.LL*other, self.RR)
+
+    # remove, scalar addition doesn't make sense because it breaks factoring
+    # def __add__(self, other):
+    #     if u.is_scalar(other):
+    #         return Kron(self.LL, self.RR+to_pytorch(other))
+    #     else:
+    #         return NotImplemented
+    #
+    # def __radd__(self, other):
+    #     if u.is_scalar(other):
+    #         return Kron(self.LL+to_pytorch(other), self.RR)
+    #     else:
+    #         return NotImplemented
+
     def __matmul__(self, x):
         if type(x) == Kron:
             return Kron(self.LL @ x.LL, self.RR @ x.RR)
@@ -711,6 +732,15 @@ def to_scalar(x):
     x = to_numpy(x).flatten()
     assert len(x) == 1
     return x[0]
+
+
+def is_scalar(x):
+    try:
+        x = to_scalar(x)
+    except:
+        return False
+    return True
+
 
 
 def from_numpy(x) -> torch.Tensor:
@@ -2080,8 +2110,9 @@ def kron_batch_sum(G: Tuple):
 def chop(mat: torch.Tensor, eps=1e-10) -> torch.Tensor:
     """Set values below max(mat)*eps to zero"""
 
-    zeros = torch.zeros_like(mat)
-    return torch.where(mat < eps, zeros, mat)
+    mat = to_normal_form(mat)
+    zeros = torch.zeros(mat.shape)
+    return torch.where(abs(mat) < eps, zeros, mat)
 
 
 def format_list(ll: List) -> str:

@@ -233,7 +233,7 @@ def compute_grad1(model: nn.Module, loss_type: str = 'mean') -> None:
                 setattr(layer.bias, 'grad1', torch.sum(B, dim=2))
 
 
-def compute_hess(model: nn.Module, method='exact', attr_name=None, vecr_order=False) -> None:
+def compute_hess(model: nn.Module, method='exact', attr_name=None, vecr_order=False, loss_aggregation='mean') -> None:
     """Compute Hessian (torch.Tensor) for each parameter and save it under 'param.hess' by default.
     Hessian can be a Tensor or a tensor-like object like KronFactored.
 
@@ -249,9 +249,11 @@ def compute_hess(model: nn.Module, method='exact', attr_name=None, vecr_order=Fa
             experimental_kfac: experimental method for Conv2d
         attr_name: which attribute of Parameter object to use for storing the Hessian.
         vecr_order: determines whether Hessian computed with respect to vectorized parameters (math notation default) or row-vectorized parameters (more efficient in PyTorch)
+        loss_aggregation: 'mean' or 'sum', determines whether final loss is sum or mean of per-example losses
     """
 
     assert method in _supported_methods
+    assert loss_aggregation in ['mean', 'sum']
 
     # TODO: get rid of hess_factored logic
 
@@ -273,11 +275,12 @@ def compute_hess(model: nn.Module, method='exact', attr_name=None, vecr_order=Fa
         assert hasattr(layer, 'activations'), "No activations detected, run forward after add_hooks(model)"
         assert hasattr(layer, 'hess_backprops_list'), "No backprops detected, run hess_backprop"
 
+        A = layer.activations
+        n = A.shape[0]
+
         if layer_type == 'Linear':
-            A = layer.activations
             B = torch.stack(layer.hess_backprops_list)
 
-            n = A.shape[0]
             di = A.shape[1]
             do = layer.hess_backprops_list[0].shape[1]
             o = B.shape[0]
@@ -307,7 +310,6 @@ def compute_hess(model: nn.Module, method='exact', attr_name=None, vecr_order=Fa
             n, do, Oh, Ow = layer.hess_backprops_list[0].shape
             o = len(layer.hess_backprops_list)
 
-            A = layer.activations
             A = torch.nn.functional.unfold(A, kernel_size=layer.kernel_size,
                                            stride=layer.stride,
                                            padding=layer.padding,
@@ -369,6 +371,10 @@ def compute_hess(model: nn.Module, method='exact', attr_name=None, vecr_order=Fa
                 BB_bias = torch.einsum("onij->ij", BB_bias)  # sum out outputs + examples
                 H_bias = u.Kron(torch.eye(1), BB_bias)
 
+        if loss_aggregation == 'sum':
+            H = n * H
+            H_bias = H * n
+
         if vecr_order:
             H = H.commute()
             H_bias = H_bias.commute()
@@ -388,7 +394,7 @@ def backprop_hess(output: torch.Tensor, hess_type: str) -> None:
     Args:
         output: prediction of neural network (ie, input of nn.CrossEntropyLoss())
         hess_type: 'LeastSquares' or 'CrossEntropy'. Type of Hessian propagation, "CrossEntropy" results in exact Hessian for CrossEntropy
-
+        model: optional model, used to freeze the parameters
     """
 
     global _global_enforce_fresh_backprop, _global_hooks_disabled, _global_backprops_prefix
