@@ -159,6 +159,37 @@ def atest_pinv():
     u.check_close(C.pinv(), Ci, rtol=1e-5, atol=1e-6)
 
 
+def test_pinverse():
+
+    def subtest(dtype):
+        # {{11041, 13359, 15023, 18177}, {13359, 16165, 18177, 21995}, {15023, 18177, 20453, 24747}, {18177, 21995, 24747, 29945}}
+        x = [[11041, 13359, 15023, 18177], [13359, 16165, 18177, 21995], [15023, 18177, 20453, 24747], [18177, 21995, 24747, 29945]]
+        x = u.to_pytorch(x).type(dtype)
+        # {{29945, -24747, -21995, 18177}, {-24747, 20453, 18177, -15023}, {-21995, 18177, 16165, -13359}, {18177, -15023, -13359, 11041}}
+        y0 = [[29945, -24747, -21995, 18177], [-24747, 20453, 18177, -15023], [-21995, 18177, 16165, -13359], [18177, -15023, -13359, 11041]]
+        y0 = u.to_pytorch(y0)/16  # ground-truth
+        y0 = u.to_pytorch(y0).type(dtype)
+
+        #  print('discrepancy1 truth', torch.norm(x @ y0 @ x - x))
+        #  print('discrepancy2 truth', torch.norm(y0 @ x @ y0 - y0))
+        y1 = torch.pinverse(x)
+        # print('torch error', torch.norm(y0-y1))
+        if dtype == torch.float64:
+            assert torch.norm(y0-y1) < 2e-5  # 1.8943e-05
+        y2 = scipy.linalg.pinv(x)
+        # print('scipy error', torch.norm(y0-u.from_numpy(y2)))  # 2.5631e-05
+
+    subtest(torch.float64)
+    subtest(torch.float32)
+
+
+def test_l2_norm():
+    mat = torch.tensor([[1, 1], [0, 1]]).float()
+    u.check_equal(u.l2_norm(mat), 0.5 * (1 + math.sqrt(5)))
+    ii = torch.eye(5)
+    u.check_equal(u.l2_norm(ii), 1)
+
+
 def test_symsqrt_neg():
     """Test robustness to small negative eigenvalues."""
     u.seed_random(1)
@@ -369,8 +400,6 @@ def test_kron():
     #    print((u.vec(A@X@B)-u.kron(B.t(), A) @ x).norm())
 
 
-
-
 def test_contiguous():
 
     d = 5
@@ -384,11 +413,11 @@ def test_contiguous():
     assert(not result.is_contiguous())
 
 
-
 if __name__ == '__main__':
     # test_truncated_lyapunov()
     # test_lyapunov_lstsq()
     # test_robust_svd()
     # test_contiguous()
-    test_kron()
+    #    test_kron()
+    test_pinverse()
 #    u.run_all_tests(sys.modules[__name__])

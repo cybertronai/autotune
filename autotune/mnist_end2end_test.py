@@ -277,7 +277,7 @@ def test_main():
                 return u.to_scalar(dd @ H @ dd.t() / (dd.flatten().norm() ** 2))
 
             with u.timeit(f"pinvH-{i}"):
-                pinvH = u.pinv(H)
+                pinvH = H.pinverse()
 
             with u.timeit(f'curv-{i}'):
                 s.grad_curv = curv_direction(g)

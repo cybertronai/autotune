@@ -100,7 +100,8 @@ def test_autoencoder_newton():
         H = H.reshape(d ** 2, d ** 2)
 
         #  For col-major: W1 = u.unvec(u.vec(W) - u.pinv(H) @ grad, d)
-        W1 = u.untvec(u.tvec(W) - grad @ u.pinv(H), d)
+        # W1 = u.untvec(u.tvec(W) - grad @ u.pinv(H), d)
+        W1 = u.untvec(u.tvec(W) - grad @ H.pinverse(), d)
         W.data.copy_(W1)
 
 
@@ -1014,7 +1015,7 @@ def test_kron_1x2_conv():
 
 
 @pytest.mark.skip(reason="need to update golden values")
-def test_kron_conv_golden():
+def _test_kron_conv_golden():
     """Hardcoded error values to detect unexpected numeric changes."""
     u.seed_random(1)
 

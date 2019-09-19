@@ -250,23 +250,23 @@ def test_multilayer():
     # Reproduce multilayer example
     # https://www.wolframcloud.com/obj/yaroslavvb/newton/curvature-unit-tests.nb
 
-    torch.set_default_dtype(torch.float32)
+    torch.set_default_dtype(torch.float64)
 
     d1 = 2
     d2 = 4
     n = 3
     model = Net2(d1, d2)
 
-    W0 = torch.tensor([[3, 3], [0, 3], [1, -1], [-3, 1]]).float()
+    W0 = u.to_pytorch([[3, 3], [0, 3], [1, -1], [-3, 1]])
     model.W.weight.data.copy_(W0)
-    X2 = torch.tensor([[1], [-2], [-1], [3]]).float()
+    X2 = u.to_pytorch([[1], [-2], [-1], [3]])
     assert X2.shape == (d2, 1)
     model.X2t.weight.data.copy_(X2.t())
 
-    X1 = torch.tensor([[2, -2, 3], [-3, 1, -3]]).float()
+    X1 = u.to_pytorch([[2, -2, 3], [-3, 1, -3]])
     assert X1.shape == (d1, n)
 
-    Y = torch.tensor([[-2, -3, 0]]).float()
+    Y = u.to_pytorch([[-2, -3, 0]])
     assert Y.shape == (1, n)
 
     data = X1.t()  # PyTorch expects batch dimension first
@@ -419,14 +419,14 @@ def test_multilayer():
     g_norm = torch.norm(g)
 
     # predicted drop in loss if we take a Newton step
-    excess = to_scalar(g @ pinv(H) @ g.t() / 2)
+    excess = to_scalar(g @ H.pinverse() @ g.t() / 2)
     check_close(excess, 12747 / 68)
 
     def loss_direction(direction, eps):
         """loss improvement if we take step eps in direction dir"""
         return to_scalar(eps * (direction @ g.t()) - 0.5 * eps ** 2 * direction @ H @ direction.t())
 
-    newtonImprovement = loss_direction(g @ pinv(H), 1)
+    newtonImprovement = loss_direction(g @ H.pinverse(), 1)
     check_close(newtonImprovement, 12747/68)
 
     ############################
@@ -454,14 +454,14 @@ def test_multilayer():
     ############################
 
     # noise scale (Jain, minimax rate of estimator)
-    noise_variance = torch.trace(pinv(H) @ sigma)
+    noise_variance = torch.trace(H.pinverse() @ sigma)
     check_close(noise_variance, 333.706)
 
     isqrtH = pinv_square_root(H)
     #    isqrtH = torch.tensor(isqrtH)
     # measure of misspecification between model and actual noise (Jain, \rho)
     # formula (3) of "Parallelizing Stochastic Gradient Descent"
-    p_sigma = pinv(kron(H, torch.eye(d1 * d2)) + kron(torch.eye(d1 * d2), H)) @ vec(sigma)
+    p_sigma = torch.pinverse(kron(H, torch.eye(d1 * d2)) + kron(torch.eye(d1 * d2), H)) @ vec(sigma)
     p_sigma = unvec(p_sigma, d1 * d2)
     rho = d1 * d2 / erank(p_sigma) if sigma_norm > 0 else 1
     check_close(rho, 6.48399)

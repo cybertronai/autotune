@@ -387,7 +387,7 @@ def backprop_hess(output: torch.Tensor, hess_type: str) -> None:
 
     Args:
         output: prediction of neural network (ie, input of nn.CrossEntropyLoss())
-        hess_type: type of Hessian propagation, "CrossEntropy" results in exact Hessian for CrossEntropy
+        hess_type: 'LeastSquares' or 'CrossEntropy'. Type of Hessian propagation, "CrossEntropy" results in exact Hessian for CrossEntropy
 
     """
 

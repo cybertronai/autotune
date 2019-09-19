@@ -19,7 +19,6 @@ from PIL import Image
 
 import torch.nn.functional as F
 
-
 # to enable referring to functions in its own module as u.func
 u = sys.modules[__name__]
 
@@ -33,12 +32,13 @@ def get_condition(dtype):
     assert 'float' in str(dtype)
     if str(dtype).endswith('float32') or str(dtype).endswith('float16'):
         return 1e3 * 1.1920929e-07
-    else:   # assume float64
+    else:  # assume float64
         return 1e6 * 2.220446049250313e-16
 
 
 def v2c(vec):
     """Convert vector to column matrix."""
+    vec = to_pytorch(vec)
     assert len(vec.shape) == 1
     return torch.unsqueeze(vec, 1)
 
@@ -51,12 +51,14 @@ def v2c_np(vec):
 
 def v2r(vec: torch.Tensor) -> torch.Tensor:
     """Converts rank-1 tensor to row matrix"""
+    vec = to_pytorch(vec)
     assert len(vec.shape) == 1
     return vec.unsqueeze(0)
 
 
 def c2v(col: torch.Tensor) -> torch.Tensor:
     """Convert vector into row matrix."""
+    vec = to_pytorch(col)
     assert len(col.shape) == 2
     assert col.shape[1] == 1
     return torch.reshape(col, [-1])
@@ -64,6 +66,7 @@ def c2v(col: torch.Tensor) -> torch.Tensor:
 
 def vec(mat):
     """vec operator, stack columns of the matrix into single column matrix."""
+    vec = to_pytorch(mat)
     assert len(mat.shape) == 2
     return mat.t().reshape(-1, 1)
 
@@ -71,6 +74,15 @@ def vec(mat):
 def test_vec():
     mat = torch.tensor([[1, 3, 5], [2, 4, 6]])
     check_equal(c2v(vec(mat)), [1, 2, 3, 4, 5, 6])
+
+
+def test_kron_trace():
+    n = 5
+    m = 4
+    A = torch.rand((m, m))
+    B = torch.rand((n, n))
+    C = kron(A, B)
+    u.check_close(torch.trace(C), u.kron_trace((A, B)))
 
 
 def tvec(mat):
@@ -87,7 +99,7 @@ def test_tvec():
 def unvec(a, rows):
     """reverse of vec, rows specifies number of rows in the final matrix."""
     assert len(a.shape) == 2
-    assert a.shape[1] == 1
+    assert a.shape[1] == 1, f"argument expected to be a column matrix, instead got shape {a.shape}"
     assert a.shape[0] % rows == 0
     cols = a.shape[0] // rows
     return a.reshape(cols, -1).t()
@@ -172,7 +184,7 @@ class Vec(SpecialForm):
 
     def __matmul__(self, other):
         if type(other) == Vec:
-            return torch.sum(self.mat*other.mat)
+            return torch.sum(self.mat * other.mat)
         elif type(other) != torch.Tensor:
             return NotImplemented
 
@@ -204,7 +216,7 @@ class Vecr(SpecialForm):
     x=vecr(X)
     (A*B')x = vecr(AXB)
      x'(A'*B) = vecr(AXB)'
-     xx = dot-product
+     xx = dotproduct
     """
 
     mat: torch.Tensor
@@ -239,7 +251,7 @@ class Vecr(SpecialForm):
 
     def __matmul__(self, other):
         if type(other) == Vecr:
-            return torch.sum(self.mat*other.mat)
+            return torch.sum(self.mat * other.mat)
         elif type(other) != torch.Tensor:
             return NotImplemented
 
@@ -347,27 +359,36 @@ class Kron(SpecialForm):
     def __matmul__(self, x):
         if type(x) == Kron:
             return Kron(self.LL @ x.LL, self.RR @ x.RR)
-        if type(x) not in [Vec, Vecr]:
-            return NotImplemented
+        elif type(x) in [Vec, Vecr]:
 
-        X = x.matrix_form()
-        if type(x) == Vec:  # kron @ vec(mat)
-            assert X.shape == (self.rsize, self.lsize), f"Dimension mismatch, {X.shape}, {self.lsize}, {self.rsize}"
-            return Vec(self.RR @ X @ self.LL.t())
-        elif type(x) == Vecr:
-            assert X.shape == (self.lsize, self.rsize), f"Dimension mismatch, {X.shape}, {self.lsize}, {self.rsize}"
-            return Vecr(self.LL @ X @ self.RR.t())
+            X = x.matrix_form()
+            if type(x) == Vec:  # kron @ vec(mat)
+                assert X.shape == (self.rsize, self.lsize), f"Dimension mismatch, {X.shape}, {self.lsize}, {self.rsize}"
+                return Vec(self.RR @ X @ self.LL.t())
+            elif type(x) == Vecr:
+                assert X.shape == (self.lsize, self.rsize), f"Dimension mismatch, {X.shape}, {self.lsize}, {self.rsize}"
+                return Vecr(self.LL @ X @ self.RR.t())
+        elif type(x) is torch.Tensor:
+            return self.normal_form() @ x
+        else:
+            return NotImplemented
 
     def __rmatmul__(self, x):
-        if type(x) not in [Vec, Vecr]:
+        if type(x) in [Vec, Vecr]:
+            X = x.matrix_form()
+            if type(x) == Vec:
+                assert X.shape == (self.rsize, self.lsize), f"Dimension mismatch, {X.shape}, {self.lsize}, {self.rsize}"
+                return Vec(self.RR.t() @ X @ self.LL)
+            elif type(x) == Vecr:
+                assert X.shape == (self.lsize, self.rsize), f"Dimension mismatch, {X.shape}, {self.lsize}, {self.rsize}"
+                return Vecr(self.LL.t() @ X @ self.RR)
+        elif type(x) is torch.Tensor:
+            return x @ self.normal_form()
+        else:
             return NotImplemented
-        X = x.matrix_form()
-        if type(x) == Vec:
-            assert X.shape == (self.rsize, self.lsize), f"Dimension mismatch, {X.shape}, {self.lsize}, {self.rsize}"
-            return Vec(self.RR.t() @ X @ self.LL)
-        elif type(x) == Vecr:
-            assert X.shape == (self.lsize, self.rsize), f"Dimension mismatch, {X.shape}, {self.lsize}, {self.rsize}"
-            return Vecr(self.LL.t() @ X @ self.RR)
+
+    def __str__(self):
+        return f"Kron(\n{self.LL},\n {self.RR})"
 
 
 class MeanKronFactored(SpecialForm):
@@ -455,13 +476,6 @@ def l2_norm(mat: torch.Tensor):
     return torch.max(s)
 
 
-def test_l2_norm():
-    mat = torch.tensor([[1, 1], [0, 1]]).float()
-    check_equal(l2_norm(mat), 0.5 * (1 + math.sqrt(5)))
-    ii = torch.eye(5)
-    check_equal(l2_norm(ii), 1)
-
-
 def sym_l2_norm(mat: torch.Tensor):
     """Largest eigenvalue assuming that matrix is symmetric."""
 
@@ -500,7 +514,7 @@ def rank(A):
     """Rank of a matrix"""
     U, S, V = torch.svd(A)
     cond = get_condition(A.dtype)
-    cutoff = torch.max(S)*cond
+    cutoff = torch.max(S) * cond
     return torch.sum(S > cutoff).type(torch.get_default_dtype())
 
 
@@ -527,12 +541,12 @@ def lyapunov_spectral(A, B, cond=None):
 
     C = U.t() @ B @ U
     s = s.unsqueeze(1) + s.unsqueeze(0)
-    si = torch.where(s > 0, 1/s, s)
+    si = torch.where(s > 0, 1 / s, s)
     Y = C * si
     X = U @ Y @ U.t()
 
     # cancel small asymetries introduces by multiplication by small numbers
-    X = (X + X.t())/2
+    X = (X + X.t()) / 2
     return X
 
 
@@ -578,7 +592,7 @@ def lyapunov_svd2(A, C, rtol=1e-4, eps=1e-7, use_svd=False):
         S, U = torch.symeig(A, eigenvectors=True)
     S = S.diag() @ torch.ones_like(A)
     factor = (S + S.t())
-    cutoff = max(S)*get_condition(S)
+    cutoff = max(S) * get_condition(S)
     factor = torch.where(factor > cutoff, 1 / factor, factor)
     X = U @ ((U.t() @ C @ U) * factor) @ U.t()
     error = A @ X + X @ A - C
@@ -650,7 +664,7 @@ def truncated_lyapunov_rho(A, C):
     erank: effective rank of X
     ."""
 
-    C = 2*C    # to center spectrum at 1
+    C = 2 * C  # to center spectrum at 1
     assert A.shape[0] == A.shape[1]
     assert len(A.shape) == 2
     cond = get_condition(A.dtype)
@@ -678,8 +692,8 @@ def truncated_lyapunov_rho(A, C):
     # S = torch.symeig(X).eigenvalues
     # S = u.filter_evals(S)
 
-    erank = torch.sum(S)/torch.max(S)
-    rho = A.shape[0]/erank
+    erank = torch.sum(S) / torch.max(S)
+    rho = A.shape[0] / erank
     spectrum = filter_evals(S)
 
     return rho, erank, spectrum
@@ -752,9 +766,9 @@ def to_pytorch(x) -> torch.Tensor:
         return from_numpy(to_numpy(x))
 
 
-def to_numpy(x, dtype: np.dtype=None) -> np.ndarray:
+def to_numpy(x, dtype: np.dtype = None) -> np.ndarray:
     """
-    Convert numeric object to floating point numpy array. If dtype can't be inferred, use pytorch default dtype.
+    Convert numeric object to floating point numpy array. If dtype is not specified, use pytorch default dtype.
 
     Args:
         x: numeric object
@@ -772,17 +786,17 @@ def to_numpy(x, dtype: np.dtype=None) -> np.ndarray:
 
     if type(x) == np.ndarray:
         assert np.issubdtype(x.dtype, np.floating), f"numpy type promotion not implemented for {x.dtype}"
-        return x
 
     if type(x) == torch.Tensor:
         dtype = pytorch_dtype_to_floating_numpy_dtype(x.dtype)
         return x.detach().cpu().numpy().astype(dtype)
 
     # Some Python type, use numpy conversion
-    result = np.array(x)
+    result = np.array(x, dtype=dtype)
     assert np.issubdtype(result.dtype, np.number), f"Provided object ({result}) is not numeric, has type {result.dtype}"
-    dtype = pytorch_dtype_to_floating_numpy_dtype(torch.get_default_dtype())
-    return result.astype(dtype)
+    if dtype is None:
+        return result.astype(pytorch_dtype_to_floating_numpy_dtype(torch.get_default_dtype()))
+    return result
 
 
 def to_numpys(*xs, dtype=np.float32):
@@ -808,7 +822,6 @@ def khatri_rao_t(A: torch.Tensor, B: torch.Tensor):
     assert A.shape[0] == B.shape[0]
     # noinspection PyTypeChecker
     return torch.einsum("ki,kj->kij", A, B).reshape(A.shape[0], A.shape[1] * B.shape[1])
-
 
 
 # Autograd functions, from https://gist.github.com/apaszke/226abdf867c4e9d6698bd198f3b45fb7
@@ -841,6 +854,7 @@ def pinv(mat: torch.Tensor, cond=None) -> torch.Tensor:
     # Take cut-off logic from scipy
     # https://github.com/ilayn/scipy/blob/0f4c793601ecdd74fc9826ac02c9b953de99403a/scipy/linalg/basic.py#L1307
 
+    assert False, "Disabled due to numerical instability, see test_pinverse"
     nan_check(mat)
     u, s, v = robust_svd(mat)
     if cond in [None, -1]:
@@ -945,7 +959,7 @@ def robust_svd(mat: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Ten
         s = torch.symeig(mat).eigenvalues
         eps = get_condition(mat.dtype) * torch.max(abs(s))
         print(f"Warning, SVD diverged with {e}, regularizing with {eps}")
-        mat = mat + torch.eye(mat.shape[0])*eps*2
+        mat = mat + torch.eye(mat.shape[0]) * eps * 2
         U, S, V = torch.svd(mat)
     return U, S, V
 
@@ -964,7 +978,7 @@ def check_symmetric(mat):
     try:
         u.check_close(mat, mat.t())
     except:
-        discrepancy = torch.max(abs(mat-mat.t())/mat)
+        discrepancy = torch.max(abs(mat - mat.t()) / mat)
         print(f"warning, matrix not symmetric: {discrepancy}")
 
 
@@ -1058,6 +1072,7 @@ def unfreeze(layer: nn.Module):
 def mark_expensive(layer: nn.Module):
     setattr(layer, 'expensive', True)
 
+
 def nest_stats(tag: str, stats) -> Dict:
     """Nest given dict of stats under tag using TensorBoard syntax /nest1/tag"""
     result = {}
@@ -1096,11 +1111,11 @@ class TinyMNIST(datasets.MNIST):
         """
         super().__init__(dataset_root, download=True, train=train)
 
-        assert loss_type is None or original_targets is None    # can't specify both loss type and original targets
+        assert loss_type is None or original_targets is None  # can't specify both loss type and original targets
         assert loss_type in [None, 'LeastSquares', 'CrossEntropy']
 
         if loss_type is None and original_targets is None:
-            original_targets = False    # default to LeastSquares targets
+            original_targets = False  # default to LeastSquares targets
         if loss_type is not None:
             original_targets = True
 
@@ -1597,10 +1612,10 @@ def log_scalar(**metrics) -> None:
 
 # for line profiling
 try:
-  # noinspection PyUnboundLocalVariable
-  profile  # throws an exception when profile isn't defined
+    # noinspection PyUnboundLocalVariable
+    profile  # throws an exception when profile isn't defined
 except NameError:
-  profile = lambda x: x   # if it's not defined simply ignore the decorator.
+    profile = lambda x: x  # if it's not defined simply ignore the decorator.
 
 
 @profile
@@ -2018,14 +2033,6 @@ def kron_trace(H: Tuple[torch.Tensor, torch.Tensor]):
     return torch.trace(A) * torch.trace(B)
 
 
-def test_kron_trace():
-    n = 5
-    m = 4
-    A = torch.rand((m, m))
-    B = torch.rand((n, n))
-    C = kron(A, B)
-    u.check_close(torch.trace(C), u.kron_trace((A, B)))
-
 
 def kron_trace_matmul(H, sigma):
     """
@@ -2093,8 +2100,10 @@ def create_local_logdir(logdir) -> str:
 
 class NoOp:
     """Dummy callable that accepts every signature"""
+
     def __getattr__(self, *_args):
         def no_op(*_args, **_kwargs): pass
+
         return no_op
 
 
@@ -2109,6 +2118,7 @@ def install_pdb_handler():
 
     def handler(_signum, _frame):
         pdb.set_trace()
+
     signal.signal(signal.SIGQUIT, handler)
 
     # Drop into PDB on exception
@@ -2157,7 +2167,7 @@ def random_cov(rank, d=None, n=20) -> torch.Tensor:
         d = rank
     assert d >= rank
     X = torch.randn((rank, n))
-    X = torch.cat([X, torch.zeros(d-rank, n)])
+    X = torch.cat([X, torch.zeros(d - rank, n)])
     X = randomly_rotate(X)
     return X @ X.t() / n
 
@@ -2174,9 +2184,11 @@ def _to_mathematica(x):
 
 
 def _from_mathematica(x):
+    x = x.replace('\n', '')
     x = x.replace('{', '[')
     x = x.replace('}', ']')
     return x
+
 
 def _dim_check(d, rank=0):
     assert d > 0
@@ -2209,15 +2221,14 @@ def is_col_matrix(dd):
 
 
 def is_square_matrix(dd):
-    return len(dd.shape) == 2 and dd.shape[0] == dd.shape[1] and dd.shape[0]>=1
+    return len(dd.shape) == 2 and dd.shape[0] == dd.shape[1] and dd.shape[0] >= 1
 
 
-def eye_like(X:torch.Tensor) -> torch.Tensor:
+def eye_like(X: torch.Tensor) -> torch.Tensor:
     """Create identity matrix of same shape as X."""
     assert is_square_matrix(X)
     d = X.shape[0]
     return torch.eye(d).type(X.dtype).to(X.device)
-
 
 
 def rmul(a: torch.Tensor, b):
@@ -2231,14 +2242,13 @@ def matmul(a, b):
     except TypeError:
         return rmatmul(a, b)
 
+
 def rmatmul(a: torch.Tensor, b):
     return b.__rmatmul__(a)
 
+
 if __name__ == '__main__':
     run_all_tests(sys.modules[__name__])
-
-
-
 
 # import matplotlib.pyplot as plt
 #
