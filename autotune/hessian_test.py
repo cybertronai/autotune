@@ -103,7 +103,7 @@ from torch import nn as nn
 from torch.utils.tensorboard import SummaryWriter
 
 
-def _test_explicit_hessian():
+def test_explicit_hessian():
     """Check computation of hessian of loss(B'WA) from https://github.com/yaroslavvb/kfac_pytorch/blob/master/derivation.pdf
 
 

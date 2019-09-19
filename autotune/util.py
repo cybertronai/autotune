@@ -558,7 +558,7 @@ def lyapunov_spectral(A, B, cond=None):
     if cond is None:
         cond = get_condition(s.dtype)
     cutoff = cond * max(s)
-    s = torch.where(s > cutoff, s, torch.tensor(0.))
+    s = torch.where(s > cutoff, s, torch.tensor(0.).to(s.device))
 
     C = U.t() @ B @ U
     s = s.unsqueeze(1) + s.unsqueeze(0)
@@ -884,7 +884,7 @@ def pinv(mat: torch.Tensor, cond=None) -> torch.Tensor:
     # Take cut-off logic from scipy
     # https://github.com/ilayn/scipy/blob/0f4c793601ecdd74fc9826ac02c9b953de99403a/scipy/linalg/basic.py#L1307
 
-    assert False, "Disabled due to numerical instability, see test_pinverse"
+    # assert False, "Disabled due to numerical instability, see test_pinverse"
     nan_check(mat)
     u, s, v = robust_svd(mat)
     if cond in [None, -1]:

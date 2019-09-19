@@ -418,6 +418,7 @@ def backprop_hess(output: torch.Tensor, hess_type: str) -> None:
         hess = diag_part - outer_prod_part
         assert hess.shape == (n, o, o)
 
+        # TODO(speed): currently slow, 200 batch => 2 seconds with 10 classes
         for i in range(n):
             if torch.get_default_dtype() == torch.float64:
                 hess[i, :, :] = u.symsqrt_svd(hess[i, :, :])  # more stable method since we don't care about speed with float64
@@ -431,7 +432,7 @@ def backprop_hess(output: torch.Tensor, hess_type: str) -> None:
         assert len(output.shape) == 2
         batch_size, output_size = output.shape
 
-        id_mat = torch.eye(output_size)
+        id_mat = torch.eye(output_size).to(output.device).type(output.dtype)
         for out_idx in range(output_size):
             hess.append(torch.stack([id_mat[out_idx]] * batch_size))
 
@@ -601,11 +602,25 @@ def compute_stats_factored(model):
 
             do, di = layer.weight.shape
             H: u.Kron = param.hess2
-            assert H.shape == ((di, di), (do, do))
+
+            if param is layer.weight:
+                assert H.shape == ((di, di), (do, do))
+            else:
+                assert H.shape == ((1, 1), (do, do))
+
+
+            # TODO(y): fix stats for bias
+            if param is layer.bias:
+                continue
 
             G = param.grad1.reshape((n, -1))
             g = G.mean(dim=0, keepdim=True)
-            vecG = u.Vec(g, shape=(do, di))
+
+            if param is layer.weight:
+                vecG = u.Vec(g, shape=(do, di))
+            else:   # bias
+                vecG = u.Vec(g, shape=(do, 1))
+
             u.nan_check(G)
 
             A = layer.activations
@@ -625,7 +640,7 @@ def compute_stats_factored(model):
                 s.sigma_l2 = sigma_k.sym_l2_norm()
                 s.sigma_erank = sigma_k.trace() / s.sigma_l2
 
-            u.nan_check(param.hess)
+            # u.nan_check(param.hess)
 
             with u.timeit(f"H_l2-{i}"):
                 s.H_l2 = H.sym_l2_norm()
