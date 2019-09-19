@@ -292,6 +292,7 @@ def test_misc():
 
 
 def test_kron():
+    """Test kron, vec and vecr identities"""
     torch.set_default_dtype(torch.float64)
     a = torch.tensor([1, 2, 3, 4]).reshape(2, 2)
     b = torch.tensor([5, 6, 7, 8]).reshape(2, 2)
@@ -336,11 +337,9 @@ def test_kron():
     G = torch.randn(d2, d1)
     g = u.vec(G)
     H = u.Kron(u.random_cov(d1), u.random_cov(d2))
-    #    u.check_equal(H.qf_vec(G), (g.t() @ H.expand_vec() @ g).item())
 
     Gt = G.t()
     gt = g.reshape(1, -1)
-    #     u.check_equal(H.qf(Gt), (gt @ H.expand() @ gt.t()).item())
 
     vecX = u.Vec([1, 2, 3, 4], shape=(2, 2))
     K = u.Kron([[5, 6], [7, 8]], [[9, 10], [11, 12]])
@@ -354,9 +353,6 @@ def test_kron():
 
     vecX = u.Vec([1, 2], shape=(1, 2))
     K = u.Kron([[5]], [[9, 10], [11, 12]])
-    # Todo: figure out how to multiply not conformal Kronecker product
-    #    u.check_equal(K @ vecX, [145, 175])
-    #    u.check_equal(u.matmul(vecX @ K, vecX), 495)
 
     u.check_equal(vecX.norm()**2, 5)
 
@@ -366,6 +362,7 @@ def test_kron():
     B = torch.tensor([[9., 10], [11, 12]])
     x = u.Vec(X)
 
+    # kron/vec/vecr identities
     u.check_equal(u.Vec(A @ X @ B), x @ u.Kron(B, A.t()))
     u.check_equal(u.Vec(A @ X @ B), u.Kron(B.t(), A) @ x)
     u.check_equal(u.Vecr(A @ X @ B), u.Kron(A, B.t()) @ u.Vecr(X))

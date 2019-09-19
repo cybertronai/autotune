@@ -1,14 +1,8 @@
 # Test exact Hessian computation
 
-import os
-import sys
-
 # import torch
 import torch
 import torch.nn as nn
-from torchcurv.optim import SecondOrderOptimizer
-
-import util as u
 
 
 class Net(nn.Module):
@@ -87,18 +81,11 @@ def test_simple_hessian():
     u.check_close(model(As[0]), [-18., -3.])
 
 
-import argparse
-import os
-import sys
-import time
-
 import autograd_lib
 import globals as gl
 # import torch
 import torch
 import util as u
-import wandb
-from attrdict import AttrDefault
 from torch import nn as nn
 from torch.utils.tensorboard import SummaryWriter
 
@@ -160,6 +147,7 @@ def test_explicit_hessian():
     autograd_lib.backprop_hess(Y, hess_type='LeastSquares')
     autograd_lib.compute_hess(model, method='kron', attr_name='hess_kron', vecr_order=False, loss_aggregation='sum')
     param = model.layers[0].weight
+
     hess2 = param.hess_kron
     print(hess2)
 
@@ -184,7 +172,8 @@ def test_explicit_hessian():
     newton_step1 = (ihess2 @ u.Vec(param.grad)).matrix_form()
 
     # Method2: row major order
-    newton_step2 = ihess2.commute() @ u.Vecr(param.grad)
+    ihess2_rowmajor = ihess2.commute()
+    newton_step2 = ihess2_rowmajor @ u.Vecr(param.grad)
     newton_step2 = newton_step2.matrix_form()
 
     u.check_equal(newton_step0, newton_step1)
@@ -303,7 +292,7 @@ def _test_factored_hessian():
 
 if __name__ == '__main__':
     #  _test_factored_hessian()
-    _test_explicit_hessian()
+    test_explicit_hessian()
     #    u.run_all_tests(sys.modules[__name__])
 
     # u.run_all_tests(sys.modules[__name__])

@@ -7,6 +7,7 @@ import sys
 import time
 from typing import Callable, List
 
+import autograd_lib
 import globals as gl
 # import torch
 import scipy
@@ -49,7 +50,7 @@ def main():
     d = [784, 2500, 2000, 1500, 1000, 500, 10]
     o = 10
     n = args.stats_batch_size
-    model = u.SimpleFullyConnected(d, nonlin=args.nonlin, bias=args.bias, dropout=args.dropout)
+    model = u.SimpleFullyConnected2(d, nonlin=args.nonlin, bias=args.bias, dropout=args.dropout)
     model = model.to(gl.device)
 
     try:
@@ -80,6 +81,8 @@ def main():
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.stats_batch_size, shuffle=False, drop_last=False)
 
     loss_fn = torch.nn.CrossEntropyLoss()
+    autograd_lib.add_hooks(model)
+    autograd_lib.disable_hooks()
 
     gl.token_count = 0
     last_outer = 0
@@ -91,8 +94,8 @@ def main():
         last_outer = time.perf_counter()
 
         # compute validation loss
-        model.eval()
         if args.swa:
+            model.eval()
             with u.timeit('swa'):
                 base_opt = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
                 opt = torchcontrib.optim.SWA(base_opt, swa_start=0, swa_freq=1, swa_lr=args.lr)
@@ -123,110 +126,36 @@ def main():
         else:
             data, targets = next(stats_iter)
 
-        model.skip_forward_hooks = False
-        model.skip_backward_hooks = False
-
-        # get gradient values
+        autograd_lib.enable_hooks()
+        autograd_lib.clear_backprops(model)
+        autograd_lib.clear_hess_backprops(model)
         with u.timeit("backprop_g"):
-            gl.backward_idx = 0
-            u.clear_backprops(model)
             output = model(data)
             loss = loss_fn(output, targets)
             loss.backward(retain_graph=True)
-        u.log_scalar(loss=loss.item())
+        with u.timeit("backprop_H"):
+            autograd_lib.backprop_hess(output, hess_type='CrossEntropy')
+        autograd_lib.disable_hooks()   # TODO(y): use remove_hooks
 
-        # get Hessian values
-        hessian_activations = []
-        hessian_backprops = []
-        hessians = []   # list of Hessians in Kronecker form
+        with u.timeit("compute_grad1"):
+            autograd_lib.compute_grad1(model)
+        with u.timeit("compute_hess"):
+            autograd_lib.compute_hess(model, method='kron', attr_name='hess2')
 
-        model.skip_forward_hooks = True
+        autograd_lib.compute_stats_factored(model)
+
         for (i, layer) in enumerate(model.layers):
-            if args.skip_stats:
-                continue
+            param_names = {layer.weight: "weight", layer.bias: "bias"}
+            for param in [layer.weight, layer.bias]:
 
-            s = AttrDefault(str, {})  # dictionary-like object for layer stats
+                if param is None:
+                    continue
 
-            #############################
-            # Gradient stats
-            #############################
-            A_t = layer.activations
-            assert A_t.shape == (n, d[i])
-
-            # add factor of n because backprop takes loss averaged over batch, while we need per-example loss
-            B_t = layer.backprops[0] * n
-            assert B_t.shape == (n, d[i + 1])
-
-            G = (B_t, A_t)
-            #    g = G.sum(dim=0, keepdim=True) / n  # average gradient
-            g = u.kron_sum(G) / n
-            assert g.shape == (1, d[i] * d[i + 1])
-
-            s.sparsity = torch.sum(layer.output <= 0) / layer.output.numel()
-            s.mean_activation = torch.mean(A_t)
-            s.mean_backprop = torch.mean(B_t)
-
-            # empirical Fisher
-            with u.timeit(f'sigma-{i}'):
-                # efisher = u.kron_cov(G)  # G.t() @ G / n
-                sigma = u.kron_sigma(G, g)  #  efisher - g.t() @ g
-                s.sigma_l2 = u.kron_sym_l2_norm(sigma)
-                s.sigma_erank = u.kron_trace(sigma)/s.sigma_l2  # torch.trace(sigma)/s.sigma_l2
-
-            #############################
-            # Hessian stats
-            #############################
-
-            # this is a pair of left/right Kronecker fctors
-            H = hessians[i]
-
-            with u.timeit(f"invH-{i}"):
-                invH = u.kron_inverse(H)
-
-            with u.timeit(f"H_l2-{i}"):
-                s.H_l2 = u.kron_sym_l2_norm(H)
-                s.iH_l2 = u.kron_sym_l2_norm(invH)
-
-            with u.timeit(f"norms-{i}"):
-                s.H_fro = u.kron_fro_norm(H)
-                s.invH_fro = u.kron_fro_norm(invH)
-                s.grad_fro = u.kron_fro_norm(g)  # g.flatten().norm()
-                s.param_fro = layer.weight.data.flatten().norm()
-
-            u.kron_nan_check(H)
-
-            with u.timeit(f"pinvH-{i}"):
-                pinvH = u.kron_pinv(H)
-
-            def kron_curv_direction(dd: torch.Tensor):
-                """Curvature in direction dd, using factored form"""
-                # dd @ H @ dd.t(), computed by kron_quadratic_form(H, dd)
-                return u.to_scalar(u.kron_quadratic_form(H, dd) / (dd.flatten().norm() ** 2))
-
-            def kron_loss_direction(dd: torch.Tensor, eps):
-                """loss improvement if we take step eps in direction dd"""
-
-                # kron_matmul(dd, g) = dd @ g.t()
-                return u.to_scalar(eps * (u.kron_matmul(dd, g)) - 0.5 * eps ** 2 * u.kron_quadratic_form(H, dd))
-
-            with u.timeit(f'curv-{i}'):
-                s.grad_curv = kron_curv_direction(g)
-                s.step_openai = 1 / s.grad_curv if s.grad_curv else 999
-                s.step_max = 2 / s.H_l2
-                s.step_min = torch.tensor(2) / u.kron_trace(H)
-
-                s.regret_gradient = kron_loss_direction(g, s.step_openai)
-
-            with u.timeit(f"batch-{i}"):
-                # torch.trace(H @ sigma)                         # (g @ H @ g.t())
-                s.batch_openai = u.kron_trace_matmul(H, sigma) / u.kron_quadratic_form(H, g)
-                s.diversity = torch.norm(G, "fro") ** 2 / torch.norm(g) ** 2
-
-                # torch.trace(H)
-                s.H_erank = u.kron_trace(H) / s.H_l2
-                s.batch_jain_simple = 1 + s.H_erank
-
-            u.log_scalars(u.nest_stats(layer.name, s))
+                if not hasattr(param, 'stats'):
+                    continue
+                s = param.stats
+                param_name = param_names[param]
+                u.log_scalars(u.nest_stats(f"{param_name}", s))
 
         # gradient steps
         model.train()
@@ -295,7 +224,7 @@ if __name__ == '__main__':
     parser.add_argument('--save-model', action='store_true', default=False,
                         help='For Saving the current Model')
 
-    parser.add_argument('--wandb', type=int, default=1, help='log to weights and biases')
+    parser.add_argument('--wandb', type=int, default=0, help='log to weights and biases')
     parser.add_argument('--autograd_check', type=int, default=0, help='autograd correctness checks')
     parser.add_argument('--logdir', type=str, default='/tmp/runs/curv_train_tiny/run')
 
@@ -321,9 +250,8 @@ if __name__ == '__main__':
     parser.add_argument('--weight_decay', type=float, default=1e-5)
     parser.add_argument('--momentum', type=float, default=0.9)
     parser.add_argument('--dropout', type=int, default=0)
-    parser.add_argument('--swa', type=int, default=1)
+    parser.add_argument('--swa', type=int, default=0)
     parser.add_argument('--lmb', type=float, default=1e-3)
-
 
     args = parser.parse_args()
 

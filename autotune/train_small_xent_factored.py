@@ -117,7 +117,7 @@ def main():
                 loss = loss_fn(output, targets)
                 loss.backward(retain_graph=True)
             with u.timeit("backprop_H"):
-                autograd_lib.backprop_hess(output, hess_type='LeastSquares')
+                autograd_lib.backprop_hess(output, hess_type='CrossEntropy')
             autograd_lib.disable_hooks()   # TODO(y): use remove_hooks
 
             with u.timeit("compute_grad1"):

@@ -105,8 +105,10 @@ def test_factored_stats_values():
                 continue   # batch sizes depend on sigma which is approximate
             elif valname in ['noise_variance_pinv']:
                 pass  # went from 0.22 to 0.014 after kron factoring (0.01 with full centering, 0.3 with no centering)
+            elif valname in ['sparsity']:
+                pass   # had a bug in old calc (using integer arithmetic)
             else:
-                u.check_close(new_values[valname], golden_values[valname], rtol=1e-4, atol=1e-6)
+                u.check_close(new_values[valname], golden_values[valname], rtol=1e-4, atol=1e-6, label=valname)
 
     gl.event_writer.close()
 

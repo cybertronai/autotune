@@ -937,7 +937,7 @@ def symsqrt(mat, cond=None, return_rank=False):
     nan_check(mat)
     s, u = torch.symeig(mat, eigenvectors=True)
 
-    check_symmetric(mat)
+    # check_symmetric(mat)
 
     # todo(y): dedupe with getcond
     cond_dict = {torch.float32: 1e3 * 1.1920929e-07, torch.float64: 1E6 * 2.220446049250313e-16}
@@ -1012,13 +1012,13 @@ def check_symmetric(mat):
         print(f"warning, matrix not symmetric: {discrepancy}")
 
 
-def check_close(a0, b0, rtol=1e-5, atol=1e-8) -> None:
+def check_close(a0, b0, rtol=1e-5, atol=1e-8, label: str= '') -> None:
     """Convenience method for check_equal with tolerances defaulting to typical errors observed in neural network
     ops in float32 precision."""
-    return check_equal(a0, b0, rtol=rtol, atol=atol)
+    return check_equal(a0, b0, rtol=rtol, atol=atol, label=label)
 
 
-def check_equal(observed, truth, rtol=1e-9, atol=1e-12) -> None:
+def check_equal(observed, truth, rtol=1e-9, atol=1e-12, label: str= '') -> None:
     """
     Assert fail any entries in two arrays are not close to each to desired tolerance. See np.allclose for meaning of rtol, atol
 
@@ -1029,6 +1029,7 @@ def check_equal(observed, truth, rtol=1e-9, atol=1e-12) -> None:
     assert truth.shape == observed.shape, f"Observed shape {observed.shape}, expected shape {truth.shape}"
     # run np.testing.assert_allclose for extra info on discrepancies
     if not np.allclose(observed, truth, rtol=rtol, atol=atol, equal_nan=True):
+        print(f'Numerical testing failed for {label}')
         np.testing.assert_allclose(truth, observed, rtol=rtol, atol=atol, equal_nan=True)
 
 
@@ -1299,6 +1300,7 @@ def get_parent_model(module_or_param) -> Optional[nn.Module]:
 
 def capture_activations(module: nn.Module, input: List[torch.Tensor], output: torch.Tensor):
     """Saves activations (layer input) into layer.activations. """
+
     model = get_parent_model(module)
     if getattr(model, 'skip_forward_hooks', False):
         return
