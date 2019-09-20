@@ -340,6 +340,8 @@ def compute_hess(model: nn.Module, method='exact', attr_name=None, vecr_order=Fa
             do = layer.hess_backprops_list[0].shape[1]
             o = B.shape[0]
 
+            original_A = A
+
             A = torch.stack([A] * o)
 
             if method == 'exact':
@@ -354,10 +356,15 @@ def compute_hess(model: nn.Module, method='exact', attr_name=None, vecr_order=Fa
                 H_bias = torch.einsum('oni,onj->ij', B, B) / n
             else:  # TODO(y): can optimize this case by not stacking A
                 assert method == 'kron'
-                AA = torch.einsum("oni,onj->ij", A, A) / (o * n)  # # TODO(y): makes more sense to apply o factor to B
-                BB = torch.einsum("oni,onj->ij", B, B) / n
-                H = u.Kron(AA, BB)
+                #AA = torch.einsum("oni,onj->ij", A, A) / (o * n)  # # TODO(y): makes more sense to apply o factor to B
+                #BB = torch.einsum("oni,onj->ij", B, B) / n
+                #                H = u.Kron(AA, BB)
                 H_bias = u.Kron(torch.eye(1), torch.einsum("oni,onj->ij", B, B) / n)  # TODO: reuse BB
+
+                hess = u.KronFactoredCov(di, do)
+                hess.add_samples(original_A, B)
+                H = hess.value()
+
 
         elif layer_type == 'Conv2d':
             Kh, Kw = layer.kernel_size

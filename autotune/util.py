@@ -289,18 +289,25 @@ class KronFactoredCov(SpecialForm):
     """Kronecker factored covariance matrix. Covariance matrix of random variable ba' constructed from paired
     samples of a and b. Each sample of a can correspond to multiple samples of b, reprented by an extra batch dimension in b sample matrix."""
 
-    a_samples: int            # number of a samples
-    b_samples: int            # number of b samples
-    AA: torch.Tensor    # sum of a covariances
-    BB: torch.Tensor    # sum of b covariances
-    AB: torch.Tensor    # cross covariance
-    ab_samples: int
-    a_dim: int   # dimension of a samples
-    b_dim: int   # dimension of b samples
+    a_num: int            # number of a samples
+    b_num: int            # number of b samples
+    ab_num: int           # number of samples used for AB cross-covariance estimate
+    a_dim: int            # dimension of a samples
+    b_dim: int            # dimension of b samples
+    AA: torch.Tensor      # sum of a covariances
+    BB: torch.Tensor      # sum of b covariances
+    AB: torch.Tensor      # sum of a,b cross covariances
 
     def __init__(self, a_dim, b_dim):
         self.a_dim = a_dim
         self.b_dim = b_dim
+        self.AA = torch.zeros(a_dim, a_dim)
+        self.BB = torch.zeros(b_dim, b_dim)
+        self.AB = torch.zeros(a_dim, b_dim)
+
+        self.a_num = 0
+        self.b_num = 0
+        self.ab_num = 0
 
     def add_samples(self, A: torch.Tensor, B: torch.Tensor):
         """
@@ -319,10 +326,10 @@ class KronFactoredCov(SpecialForm):
 
             self.AA += torch.einsum("ni,nj->ij", A, A)
             self.BB += torch.einsum("ni,nj->ij", B, B)
-            self.a_samples += n
-            self.b_samples += n
             self.AB += torch.einsum("ni,nj->ij", A, B)
-            self.ab_samples += n
+            self.a_num += n
+            self.b_num += n
+            self.ab_num += n
 
         elif len(A.shape) == 2 and len(B.shape) == 3:
             # TODO(y): this can be done more efficiently without stacking A
@@ -333,23 +340,22 @@ class KronFactoredCov(SpecialForm):
             o = B.shape[0]
             A = torch.stack([A] * o)
 
-            # TODO(y): the o*n normalization for one factor and n normalization for second is what's needed
-            # to make it work for Hessian covariance, figure out how to simplify this
             self.AA += torch.einsum("oni,onj->ij", A, A)
-            self.a_samples += (o * n)
             self.BB += torch.einsum("oni,onj->ij", B, B)
-            self.b_samples += n
-            self.AB += torch.einsum("ni,nj->ij", A, B)
-            self.ab_samples += o*n
+            self.AB += torch.einsum("oni,onj->ij", A, B)
+            # TODO(y): fix inconsistent counts, current version is what was needed to make Hessians match autograd
+            self.a_num += (o * n)
+            self.b_num += n
+            self.ab_num += o * n
         else:
             assert False, f"Broadcasting not implemented for shapes {A.shape} and {B.shape}"
 
     def value(self) -> "Kron":
-        return Kron(self.AA/self.a_samples, self.BB/self.b_samples)
+        return Kron(self.AA / self.a_num, self.BB / self.b_num)
 
     def cross(self) -> torch.Tensor:
         """Return cross covariance matrix AB'"""
-        return self.AB/self.ab_samples
+        return self.AB/self.ab_num
 
 
 class Kron(SpecialForm):
