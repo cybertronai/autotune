@@ -80,8 +80,6 @@ def main():
     parser.add_argument('--stats_steps', type=int, default=1000000, help="total number of curvature stats collections")
 
     parser.add_argument('--full_batch', type=int, default=0, help='do stats on the whole dataset')
-    parser.add_argument('--train_batch_size', type=int, default=64)
-    parser.add_argument('--stats_batch_size', type=int, default=10000)
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--weight_decay', type=float, default=2e-5)
     parser.add_argument('--momentum', type=float, default=0.9)
@@ -89,6 +87,8 @@ def main():
     parser.add_argument('--swa', type=int, default=0)
     parser.add_argument('--lmb', type=float, default=1e-3)
 
+    parser.add_argument('--train_batch_size', type=int, default=64)
+    parser.add_argument('--stats_batch_size', type=int, default=10000)
     parser.add_argument('--uniform', type=int, default=0, help='use uniform architecture (all layers same size)')
     parser.add_argument('--run_name', type=str, default='noname')
 

@@ -7,9 +7,9 @@ import os
 import ncluster
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--image_name', type=str, default='pytorch-efa01')
-parser.add_argument('--instance_type', type=str, default="p3.16xlarge")
-parser.add_argument('--name', type=str, default='large_gpubox', help="job name")
+parser.add_argument('--image_name', type=str, default='Deep Learning AMI (Ubuntu) Version 24.1') # pytorch-efa01')
+parser.add_argument('--instance_type', type=str, default="p3dn.24xlarge")
+parser.add_argument('--name', type=str, default='huge_gpubox', help="job name")
 parser.add_argument('--run_name', type=str, default='kfac-pytorch',
                     help="name of run for loggin")
 

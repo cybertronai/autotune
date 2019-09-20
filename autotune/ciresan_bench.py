@@ -38,6 +38,7 @@ class Net(nn.Module):
         result = self.w(x)
         return result
 
+last_time = 0
 
 class timeit:
     """Decorator to measure length of time spent in the block in millis and log
@@ -52,9 +53,12 @@ class timeit:
         return self
 
     def __exit__(self, *args):
+        global last_time
         self.end = time.perf_counter()
         interval_ms = 1000 * (self.end - self.start)
+        torch.cuda.synchronize()
         print(f"{interval_ms:8.2f}   {self.tag}")
+        last_time = interval_ms
 
 
 def get_mkl_version():
@@ -93,8 +97,10 @@ def linalg_bench():
     print("Scipy version: ", scipy.version.full_version)
     print("Numpy version: ", np.version.full_version)
 
+    times = {}
+    dimlist = [768, 2500, 2000, 1500, 1000, 500]
     for device in ['cpu', 'cuda']:
-        for d in [768, 768]:
+        for d in dimlist*2:
             print(f"{d}-by-{d} matrix: ", device)
             n = 10000
             assert n > 2*d   # to prevent singularity
@@ -106,15 +112,19 @@ def linalg_bench():
                 H = H.to(device)
                 S = S.to(device)
 
-            torch.cuda.synchronize()
+            with timeit(f"symeig"):
+                result = torch.symeig(H, eigenvectors=False)
+            times.setdefault(d, []).append(last_time)
+            
             with timeit(f"symeig"):
                 result = torch.symeig(H, eigenvectors=True)
-                torch.cuda.synchronize()
+            times.setdefault(d, []).append(last_time)
 
-            torch.cuda.synchronize()
             with timeit(f"svd"):
                 result = torch.svd(H)
-                torch.cuda.synchronize()
+            times.setdefault(d, []).append(last_time)
+    for d in times:
+        print(f"{d}-by-{d}: {u.format_list(times[d][len(times[d])//2:])}")
 
 
 if __name__ == '__main__':

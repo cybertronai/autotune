@@ -199,6 +199,9 @@ class Vec(SpecialForm):
             return NotImplemented
         return other @ self.vec_form()
 
+    def __truediv__(self, other):
+        return Vec(self.mat / other)
+
     def norm(self):
         return self.mat.flatten().norm()
 
@@ -265,6 +268,9 @@ class Vecr(SpecialForm):
         elif type(other) != torch.Tensor:
             return NotImplemented
         return other @ self.vec_form()
+
+    def __truediv__(self, other):
+        return Vecr(self.mat / other)
 
     def norm(self):
         return self.mat.flatten().norm()
@@ -1884,7 +1890,7 @@ def setup_logdir(run_name: str, init_wandb=False):
     gl.run_name = os.path.basename(gl.logdir)
     gl.event_writer = SummaryWriter(gl.logdir)
 
-    if init_wandb:
+    if init_wandb or (gl.args and hasattr(gl.args, 'wandb') and gl.args.wandb):
         wandb.init(project=gl.project_name, name=gl.run_name)
         wandb.tensorboard.patch(tensorboardX=False)
         wandb.config.update(vars(gl.args))

@@ -58,6 +58,15 @@ _global_enforce_fresh_backprop: bool = False  # global switch to catch double ba
 _global_backprops_prefix = ''  # hooks save backprops to, ie param.{_backprops_prefix}backprops_list
 
 
+class LayerCov:
+    S: u.Kron         # sum of gg' where g=gradient of loss
+    sc: torch.Tensor  # unnormalized cross covariance
+    H: u.Kron         # sum of per-example Hessians
+    J: u.Kron         # sum of hh' where h=gradient of output
+    n: int            # number of terms in the sum
+
+
+
 class LayerStats:
     # Some notation/background from https://docs.google.com/document/d/19Jmh4spbSAnAGX_eq7WSFPgLzrpJEhiZRpjX1jSYObo/edit#heading=h.9fi55aowtmgy
     sparsity: torch.Tensor
@@ -464,16 +473,16 @@ def backprop_hess(output: torch.Tensor, hess_type: str, model: Optional[nn.Modul
         hess = diag_part - outer_prod_part
         assert hess.shape == (n, o, o)
 
-        # TODO(speed): currently slow, 200 batch => 2 seconds with 10 classes
-        for i in range(n):
-            if torch.get_default_dtype() == torch.float64:
-                hess[i, :, :] = u.symsqrt_svd(
-                    hess[i, :, :])  # more stable method since we don't care about speed with float64
-                print('warning, slow method for cross-entropy')
-            else:
-                hess[i, :, :] = u.symsqrt(hess[i, :, :])
-            u.nan_check(hess[i, :, :])
-        hess = hess.transpose(0, 1)
+        with u.timeit("xent-symsqrt"):
+            for i in range(n):
+                if torch.get_default_dtype() == torch.float64:
+                    hess[i, :, :] = u.symsqrt_svd(
+                        hess[i, :, :])  # more stable method since we don't care about speed with float64
+                    print('warning, slow method for cross-entropy')
+                else:
+                    hess[i, :, :] = u.symsqrt(hess[i, :, :])
+                u.nan_check(hess[i, :, :])
+            hess = hess.transpose(0, 1)
 
     elif hess_type == 'LeastSquares':
         hess = []
@@ -617,6 +626,14 @@ def compute_stats(model, attr_name='stats', factored=False, sigma_centering=True
 
             with u.timeit(f"batch-{i}"):
                 s.batch_openai = torch.trace(H @ sigma) / (g @ H @ g.t()).squeeze()
+                print('original sigma: ', torch.trace(H @ sigma)/(g @ H @ g.t()))
+                denom = (g @ H @ g.t())
+                print('subtracted1:', torch.trace(H @ (sigma - g.t() @ g))/denom)
+                print('subtracted2:', torch.trace(H @ sigma) / denom - torch.trace(H @ g.t() @ g)/denom)
+                print("left term: ", torch.trace(H @ sigma))
+                print("right term: ", torch.trace(H @ g.t() @ g))
+                print('denom: ', denom)
+
                 s.diversity = torch.norm(G, "fro") ** 2 / torch.norm(g) ** 2 / n  # Gradient diversity / n
                 s.noise_variance_pinv = torch.trace(pinvH @ sigma)  # todo(y): replace with lsqtsolve
                 s.H_erank = torch.trace(H) / s.H_l2
@@ -739,7 +756,10 @@ def compute_stats_factored(model, attr_name='stats', sigma_centering=True):
                     return step * (d @ vecG) - 0.5 * step ** 2 * (d @ H @ vecG)
 
                 s.regret_gradient = loss_direction(vecG, s.step_openai)
-                s.regret_newton = vecG.commute() @ pinvH.commute() @ vecG.commute() / 2  # TODO(y): figure out why needed transposes
+                # can compute newton regret more efficiently by doing row-vectorized instead of col-vectorized
+                vecG2 = u.Vecr(g, shape=(do, di))
+                pinvH_rowvec = pinvH.commute()   # original H was for col-vectorized order
+                s.regret_newton = vecG2 @ pinvH_rowvec @ vecG2 / 2
 
             with u.timeit(f'rho-{i}'):
                 # lyapunov matrix
@@ -748,8 +768,9 @@ def compute_stats_factored(model, attr_name='stats', sigma_centering=True):
                 s.step_div_1_adjusted = s.step_div_1 / s.rho
 
             with u.timeit(f"batch-{i}"):
-                s.batch_openai = (H @ sigma_k).trace() / (
-                            vecG @ H @ vecG)
+                s.batch_openai = (H @ sigma_k).trace() / (vecG @ H @ vecG)
+                if not sigma_centering:
+                    s.batch_openai -= 1
 
                 expected_grad_norm_sq = torch.norm(G, "fro") ** 2 / n  # expected gradient norm squared
                 s.diversity = expected_grad_norm_sq / torch.norm(g) ** 2  # Gradient diversity / n
