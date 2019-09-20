@@ -354,7 +354,7 @@ def compute_hess(model: nn.Module, method='exact', attr_name=None, vecr_order=Fa
                 H_bias = torch.einsum('oni,onj->ij', B, B) / n
             else:  # TODO(y): can optimize this case by not stacking A
                 assert method == 'kron'
-                AA = torch.einsum("oni,onj->ij", A, A) / (o * n)  # remove factor of o because A is repeated o times
+                AA = torch.einsum("oni,onj->ij", A, A) / (o * n)  # # TODO(y): makes more sense to apply o factor to B
                 BB = torch.einsum("oni,onj->ij", B, B) / n
                 H = u.Kron(AA, BB)
                 H_bias = u.Kron(torch.eye(1), torch.einsum("oni,onj->ij", B, B) / n)  # TODO: reuse BB
@@ -625,7 +625,8 @@ def compute_stats(model, attr_name='stats', factored=False, sigma_centering=True
                 s.step_div_1_adjusted = s.step_div_1 / s.rho
 
             with u.timeit(f"batch-{i}"):
-                s.batch_openai = torch.trace(H @ sigma) / (g @ H @ g.t()).squeeze()
+                #s.batch_openai = torch.trace(H @ sigma) / (g @ H @ g.t()).squeeze()
+                s.batch_openai = torch.trace(H @ sigma) / (g @ H @ g.t())
                 print('original sigma: ', torch.trace(H @ sigma)/(g @ H @ g.t()))
                 denom = (g @ H @ g.t())
                 print('subtracted1:', torch.trace(H @ (sigma - g.t() @ g))/denom)

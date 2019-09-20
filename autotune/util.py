@@ -285,6 +285,73 @@ class Vecr(SpecialForm):
         return str(to_numpy(self.normal_form()))
 
 
+class KronFactoredCov(SpecialForm):
+    """Kronecker factored covariance matrix. Covariance matrix of random variable ba' constructed from paired
+    samples of a and b. Each sample of a can correspond to multiple samples of b, reprented by an extra batch dimension in b sample matrix."""
+
+    a_samples: int            # number of a samples
+    b_samples: int            # number of b samples
+    AA: torch.Tensor    # sum of a covariances
+    BB: torch.Tensor    # sum of b covariances
+    AB: torch.Tensor    # cross covariance
+    ab_samples: int
+    a_dim: int   # dimension of a samples
+    b_dim: int   # dimension of b samples
+
+    def __init__(self, a_dim, b_dim):
+        self.a_dim = a_dim
+        self.b_dim = b_dim
+
+    def add_samples(self, A: torch.Tensor, B: torch.Tensor):
+        """
+
+        Args:
+            A: (*, d1) matrix of samples of a where * is zero or more batch dimensions
+            B: (*, d2) matrix of samples of b where * is zero or more batch dimensions
+
+        For  variable batch dimensions, currently only supports A having 1 batch dimension, and B having 1 or 2 batch dimensions
+        """
+        if is_matrix(A) and is_matrix(B):
+            n = A.shape[0]
+            assert B.shape[0] == n, f"Number of samples do not match, got {A.shape}, {B.shape}"
+            assert A.shape[1] == self.a_dim
+            assert B.shape[1] == self.b_dim
+
+            self.AA += torch.einsum("ni,nj->ij", A, A)
+            self.BB += torch.einsum("ni,nj->ij", B, B)
+            self.a_samples += n
+            self.b_samples += n
+            self.AB += torch.einsum("ni,nj->ij", A, B)
+            self.ab_samples += n
+
+        elif len(A.shape) == 2 and len(B.shape) == 3:
+            # TODO(y): this can be done more efficiently without stacking A
+            n = A.shape[0]
+            assert n == B.shape[1], f"Number of samples do not match, got {A.shape}, {B.shape}"
+            assert A.shape[1] == self.a_dim
+            assert B.shape[2] == self.b_dim
+            o = B.shape[0]
+            A = torch.stack([A] * o)
+
+            # TODO(y): the o*n normalization for one factor and n normalization for second is what's needed
+            # to make it work for Hessian covariance, figure out how to simplify this
+            self.AA += torch.einsum("oni,onj->ij", A, A)
+            self.a_samples += (o * n)
+            self.BB += torch.einsum("oni,onj->ij", B, B)
+            self.b_samples += n
+            self.AB += torch.einsum("ni,nj->ij", A, B)
+            self.ab_samples += o*n
+        else:
+            assert False, f"Broadcasting not implemented for shapes {A.shape} and {B.shape}"
+
+    def value(self) -> "Kron":
+        return Kron(self.AA/self.a_samples, self.BB/self.b_samples)
+
+    def cross(self) -> torch.Tensor:
+        """Return cross covariance matrix AB'"""
+        return self.AB/self.ab_samples
+
+
 class Kron(SpecialForm):
     """Represents kronecker product of two symmetric matrices"""
     LL: torch.Tensor  # left factor
@@ -2283,6 +2350,11 @@ def is_col_matrix(dd):
 
 def is_square_matrix(dd):
     return len(dd.shape) == 2 and dd.shape[0] == dd.shape[1] and dd.shape[0] >= 1
+
+
+def is_matrix(dd):
+    shape = dd.shape
+    assert len(shape) == 2 and shape[0] >= 1 and shape[1] >= 1, f"input {dd} not a matrix with shape {shape}"
 
 
 def eye_like(X: torch.Tensor) -> torch.Tensor:
