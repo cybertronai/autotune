@@ -180,11 +180,11 @@ def main():
 
                     def loss_direction(dd: torch.Tensor, eps):
                         """loss improvement if we take step eps in direction dd"""
-                        return u.to_scalar(eps * (dd @ g.t()) - 0.5 * eps ** 2 * dd @ H @ dd.t())
+                        return u.to_python_scalar(eps * (dd @ g.t()) - 0.5 * eps ** 2 * dd @ H @ dd.t())
 
                     def curv_direction(dd: torch.Tensor):
                         """Curvature in direction dd"""
-                        return u.to_scalar(dd @ H @ dd.t() / (dd.flatten().norm() ** 2))
+                        return u.to_python_scalar(dd @ H @ dd.t() / (dd.flatten().norm() ** 2))
 
                     with u.timeit(f"pinvH-{i}"):
                         pinvH = u.pinv(H)
@@ -199,7 +199,7 @@ def main():
                         s.step_div_1 = torch.tensor(2) / torch.trace(H)   # divergent step for batch_size=1
 
                         s.newton_fro = ndir.flatten().norm()  # frobenius norm of Newton update
-                        s.regret_newton = u.to_scalar(g @ pinvH @ g.t() / 2)   # replace with "quadratic_form"
+                        s.regret_newton = u.to_python_scalar(g @ pinvH @ g.t() / 2)   # replace with "quadratic_form"
                         s.regret_gradient = loss_direction(g, s.step_openai)
 
                     with u.timeit(f'rho-{i}'):

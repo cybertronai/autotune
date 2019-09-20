@@ -193,13 +193,13 @@ def main():
             #  u.dump(sigma, f'/tmp/sigmas/H-{step}-{i}')
             def loss_direction(dd: torch.Tensor, eps):
                 """loss improvement if we take step eps in direction dd"""
-                return u.to_scalar(eps * (dd @ g.t()) - 0.5 * eps ** 2 * dd @ H @ dd.t())
+                return u.to_python_scalar(eps * (dd @ g.t()) - 0.5 * eps ** 2 * dd @ H @ dd.t())
 
             def curv_direction(dd: torch.Tensor):
                 """Curvature in direction dd"""
-                return u.to_scalar(dd @ H @ dd.t() / dd.flatten().norm()**2)
+                return u.to_python_scalar(dd @ H @ dd.t() / dd.flatten().norm() ** 2)
 
-            s.regret_newton = u.to_scalar(g @ u.pinv(H) @ g.t() / 2)
+            s.regret_newton = u.to_python_scalar(g @ u.pinv(H) @ g.t() / 2)
             s.grad_curv = curv_direction(g)
             ndir = g @ u.pinv(H)   # newton direction
             s.newton_curv = curv_direction(ndir)

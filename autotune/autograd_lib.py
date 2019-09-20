@@ -38,7 +38,7 @@ L, lyap -- lyapunov matrix
 
 """
 
-from typing import List
+from typing import List, Optional
 
 import torch
 import torch.nn as nn
@@ -55,7 +55,53 @@ _supported_losses = ['LeastSquares', 'CrossEntropy']
 # module-level variables affecting state of autograd
 _global_hooks_disabled: bool = False  # work-around for https://github.com/pytorch/pytorch/issues/25723
 _global_enforce_fresh_backprop: bool = False  # global switch to catch double backprop errors on Hessian computation
-_global_backprops_prefix = ''    # hooks save backprops to, ie param.{_backprops_prefix}backprops_list
+_global_backprops_prefix = ''  # hooks save backprops to, ie param.{_backprops_prefix}backprops_list
+
+
+class LayerStats:
+    # Some notation/background from https://docs.google.com/document/d/19Jmh4spbSAnAGX_eq7WSFPgLzrpJEhiZRpjX1jSYObo/edit#heading=h.9fi55aowtmgy
+    sparsity: torch.Tensor
+    mean_activation: torch.Tensor
+    mean_backprop: torch.Tensor
+
+    sigma_l2: torch.Tensor  # l2 norm of centered gradient covariance (singlconnected noise covariant matrix)
+    sigma_erank: torch.Tensor  # trace/l2 norm
+
+    H_l2: torch.Tensor  # spectral norm of H (largest curvature)
+    H_fro: torch.Tensor  # Frobenius norm of hessian
+    grad_fro: torch.Tensor  # Frobenius norm of gradient update
+    param_fro: torch.Tensor  # Frobenius norm of parameter tensor
+
+    grad_curv: torch.Tensor  # curvature in direction of gradient
+    newton_curv: torch.Tensor  # curvature in direction of Newton step
+
+    step_openai: torch.Tensor  # optimal step length using gradient direction and Hessian curvature estimate
+    step_div_inf: torch.Tensor  # divergent step size for infinite batch (2/spectral radius)
+    step_div_1: torch.Tensor  # (2/trace, a bad attempt to approximate Jain divergent lr, should be 2/R^2)
+    newton_fro: torch.Tensor  # Frobenius norm of newton step
+    regret_gradient: torch.Tensor  # expected improvement if we took optimal step-size in gradient direction
+    reget_newton: torch.Tensor  # expected improvement if we took Newton step
+    batch_openai: torch.Tensor  # optimal batch size from gradient noise stat (loss change from noise part over loss change from deterministic part)
+    batch_jain_simple: torch.Tensor  # optimal batch-size assuming well-specified model (trace/sigma)
+    batch_jain_full: torch.Tensor  # optimal batch size using Jain/Kakade approach
+    noise_variance_pinv: torch.Tensor  # asymptotic minimax rate (called noise variance in 1.1.4 of Jain/Kakade)
+
+    # need: R^2 the largest Jacobian size
+    # need: angle between gradient and newton step
+
+    # 2 hessians, 2 covariance matrices, need l2, trace, rank, spectrum
+
+    def __iter__(self):
+        return iter(self.__dict__)
+
+    def __init__(self):
+        pass
+
+    def __getitem__(self, item):
+        return self.__dict__[item]
+
+    def items(self):
+        return self.__dict__.items()
 
 
 def add_hooks(model: nn.Module) -> None:
@@ -91,7 +137,6 @@ def remove_hooks(model: nn.Module) -> None:
     """
     Remove hooks added by add_hooks. Provides
     """
-
 
     assert model == 0, "not working, remove this after fix to https://github.com/pytorch/pytorch/issues/25723"
 
@@ -156,7 +201,8 @@ def _capture_backprops(layer: nn.Module, _input, output):
 
     backprops_list_attr = _global_backprops_prefix + 'backprops_list'
     if _global_enforce_fresh_backprop:
-        assert not hasattr(layer, backprops_list_attr), f"Seeing result of previous backprop in {backprops_list_attr}, use {_global_backprops_prefix}clear_backprops(model) to clear"
+        assert not hasattr(layer,
+                           backprops_list_attr), f"Seeing result of previous backprop in {backprops_list_attr}, use {_global_backprops_prefix}clear_backprops(model) to clear"
         _global_enforce_fresh_backprop = False
 
     if not hasattr(layer, backprops_list_attr):
@@ -385,7 +431,7 @@ def compute_hess(model: nn.Module, method='exact', attr_name=None, vecr_order=Fa
         li += 1
 
 
-def backprop_hess(output: torch.Tensor, hess_type: str) -> None:
+def backprop_hess(output: torch.Tensor, hess_type: str, model: Optional[nn.Module] = None) -> None:
     """
     Call backprop 1 or more times to accumulate values needed for Hessian computation.
 
@@ -403,7 +449,7 @@ def backprop_hess(output: torch.Tensor, hess_type: str) -> None:
     _global_enforce_fresh_backprop = True  # enforce empty backprops_list on first backprop
 
     old_backprops_prefix = _global_backprops_prefix
-    _global_backprops_prefix = 'hess_'    # backprops go into hess_backprops_list
+    _global_backprops_prefix = 'hess_'  # backprops go into hess_backprops_list
 
     valid_hess_types = ('LeastSquares', 'CrossEntropy', 'DebugLeastSquares')
     assert hess_type in valid_hess_types, f"Unexpected hessian type: {hess_type}, valid types are {valid_hess_types}"
@@ -421,7 +467,8 @@ def backprop_hess(output: torch.Tensor, hess_type: str) -> None:
         # TODO(speed): currently slow, 200 batch => 2 seconds with 10 classes
         for i in range(n):
             if torch.get_default_dtype() == torch.float64:
-                hess[i, :, :] = u.symsqrt_svd(hess[i, :, :])  # more stable method since we don't care about speed with float64
+                hess[i, :, :] = u.symsqrt_svd(
+                    hess[i, :, :])  # more stable method since we don't care about speed with float64
                 print('warning, slow method for cross-entropy')
             else:
                 hess[i, :, :] = u.symsqrt(hess[i, :, :])
@@ -450,11 +497,23 @@ def backprop_hess(output: torch.Tensor, hess_type: str) -> None:
     for o in range(o):
         output.backward(hess[o], retain_graph=True)
 
+    # side-effect of Hessian backprop is that .grad buffers are updated.
+    # Zero out those buffers to prevent accidental use
+    if model is not None:
+        model.zero_grad()
+
     _global_backprops_prefix = old_backprops_prefix
 
 
-def compute_stats(model):
-    """Combines activations and backprops to compute statistics for a model."""
+def compute_stats(model, attr_name='stats', factored=False, sigma_centering=True):
+    """
+
+    Combines activations and backprops to compute statistics for a model.
+    Args:
+        model:
+        attr_name: stats are saved under this attribute name on corresponding Parameter
+
+    """
 
     # obtain n
     n = 0
@@ -475,7 +534,7 @@ def compute_stats(model):
             if param is None:
                 continue
 
-            s = AttrDefault(str, {})  # dictionary-like object for layer stats
+            s = LayerStats()  # dictionary-like object for layer stats
 
             #############################
             # Gradient stats
@@ -483,7 +542,7 @@ def compute_stats(model):
             A_t = layer.activations
             B_t = layer.backprops_list[0] * n
 
-            s.sparsity = torch.sum(layer.output <= 0) / layer.output.numel()  # proportion of activations that are zero
+            s.sparsity = torch.sum(layer.output <= 0).float() / layer.output.numel()  # proportion of activations that are zero
             s.mean_activation = torch.mean(A_t)
             s.mean_backprop = torch.mean(B_t)
 
@@ -491,10 +550,15 @@ def compute_stats(model):
             G = param.grad1.reshape((n, -1))
             g = G.mean(dim=0, keepdim=True)
 
+            print(G)
             u.nan_check(G)
             with u.timeit(f'sigma-{i}'):
                 efisher = G.t() @ G / n
-                sigma = efisher - g.t() @ g
+                if sigma_centering:
+                    sigma = efisher - g.t() @ g
+                else:
+                    sigma = efisher
+
                 s.sigma_l2 = u.sym_l2_norm(sigma)
                 s.sigma_erank = torch.trace(sigma) / s.sigma_l2
 
@@ -522,12 +586,12 @@ def compute_stats(model):
                    loss improvement if we take step eps in direction dd.
                 """
                 assert u.is_row_matrix(dd)
-                return u.to_scalar(eps * (dd @ g.t()) - 0.5 * eps ** 2 * dd @ H @ dd.t())
+                return (eps * (dd @ g.t()) - 0.5 * eps ** 2 * dd @ H @ dd.t()).squeeze()
 
             def curv_direction(dd: torch.Tensor):
                 """Curvature in direction dd (directional eigenvalue). """
                 assert u.is_row_matrix(dd)
-                return u.to_scalar(dd @ H @ dd.t() / (dd.flatten().norm() ** 2))
+                return (dd @ H @ dd.t() / (dd.flatten().norm() ** 2)).squeeze()
 
             with u.timeit(f"pinvH-{i}"):
                 pinvH = u.pinv(H)
@@ -536,24 +600,25 @@ def compute_stats(model):
                 s.grad_curv = curv_direction(g)  # curvature (eigenvalue) in direction g
                 ndir = g @ pinvH  # newton direction (TODO(y): replace with lstsqsolve)
                 s.newton_curv = curv_direction(ndir)
+
                 setattr(layer.weight, 'pre', pinvH)  # save Newton preconditioner
                 s.step_openai = 1 / s.grad_curv if s.grad_curv else 1234567
                 s.step_div_inf = 2 / s.H_l2  # divegent step size for batch_size=infinity
                 s.step_div_1 = torch.tensor(2) / torch.trace(H)  # divergent step for batch_size=1
 
                 s.newton_fro = ndir.flatten().norm()  # frobenius norm of Newton update
-                s.regret_newton = u.to_scalar(g @ pinvH @ g.t() / 2)  # replace with "quadratic_form"
+                s.regret_newton = u.to_python_scalar(g @ pinvH @ g.t() / 2)  # replace with "quadratic_form"
                 s.regret_gradient = loss_direction(g, s.step_openai)
 
             # todo: Lyapunov has to be redone
             with u.timeit(f'rho-{i}'):
-                s.rho, s.lyap_erank, L_evals = u.truncated_lyapunov_rho(H, sigma)
+                s.rho, lyap_erank, L_evals = u.truncated_lyapunov_rho(H, sigma)
                 s.step_div_1_adjusted = s.step_div_1 / s.rho
 
             with u.timeit(f"batch-{i}"):
-                s.batch_openai = torch.trace(H @ sigma) / (g @ H @ g.t())
+                s.batch_openai = torch.trace(H @ sigma) / (g @ H @ g.t()).squeeze()
                 s.diversity = torch.norm(G, "fro") ** 2 / torch.norm(g) ** 2 / n  # Gradient diversity / n
-                s.noise_variance_pinv = torch.trace(pinvH @ sigma)   # todo(y): replace with lsqtsolve
+                s.noise_variance_pinv = torch.trace(pinvH @ sigma)  # todo(y): replace with lsqtsolve
                 s.H_erank = torch.trace(H) / s.H_l2
                 s.batch_jain_simple = 1 + s.H_erank
                 s.batch_jain_full = 1 + s.rho * s.H_erank
@@ -564,20 +629,20 @@ def compute_stats(model):
             H_evals = u.symeig_pos_evals(H)
             S_evals = u.symeig_pos_evals(sigma)
 
-            #s.H_evals = H_evals
-            #s.S_evals = S_evals
-            #s.L_evals = L_evals
+            # s.H_evals = H_evals
+            # s.S_evals = S_evals
+            # s.L_evals = L_evals
 
-            setattr(param, 'stats', s)
+            setattr(param, attr_name, s)
 
-            #u.log_spectrum(f'{param_name}/hess', H_evals)
-            #u.log_spectrum(f'{param_name}/sigma', S_evals)
-            #u.log_spectrum(f'{param_name}/lyap', L_evals)
+            # u.log_spectrum(f'{param_name}/hess', H_evals)
+            # u.log_spectrum(f'{param_name}/sigma', S_evals)
+            # u.log_spectrum(f'{param_name}/lyap', L_evals)
 
     return None
 
 
-def compute_stats_factored(model):
+def compute_stats_factored(model, attr_name='stats', sigma_centering=True):
     """Combines activations and backprops to compute statistics for a model. Assumes factored hessian was saved into 'hess2' of each param"""
 
     ein = torch.einsum
@@ -609,7 +674,6 @@ def compute_stats_factored(model):
             else:
                 assert H.shape == ((1, 1), (do, do))
 
-
             # TODO(y): fix stats for bias
             if param is layer.bias:
                 continue
@@ -619,7 +683,7 @@ def compute_stats_factored(model):
 
             if param is layer.weight:
                 vecG = u.Vec(g, shape=(do, di))
-            else:   # bias
+            else:  # bias
                 vecG = u.Vec(g, shape=(do, 1))
 
             u.nan_check(G)
@@ -628,12 +692,18 @@ def compute_stats_factored(model):
             B = layer.backprops_list[0] * n
 
             AA = ein('ni,nj->ij', A, A)
-            # BB = ein('ni,nj->ij', B, B)
+            BB = ein('ni,nj->ij', B, B)
             Bc = B - torch.mean(B, dim=0)
             BBc = ein('ni,nj->ij', Bc, Bc)
 
-            sigma_k = u.Kron(AA, BBc) / n   # only center backprops, centering both leads to underestimate of cov
-            s.sparsity = torch.sum(layer.output <= 0).float() / layer.output.numel()  # proportion of activations that are zero
+            # subtracting mean breaks Kronecker factoring, so this is approximate
+            if sigma_centering:
+                sigma_k = u.Kron(AA, BBc) / n  # only center backprops, centering both leads to underestimate of cov
+            else:
+                sigma_k = u.Kron(AA, BB) / n
+            sigma_k = sigma_k / n  # extra factor to average A's as well
+            s.sparsity = torch.sum(
+                layer.output <= 0).float() / layer.output.numel()  # proportion of activations that are zero
             s.mean_activation = torch.mean(A)
             s.mean_backprop = torch.mean(B)
 
@@ -669,16 +739,17 @@ def compute_stats_factored(model):
                     return step * (d @ vecG) - 0.5 * step ** 2 * (d @ H @ vecG)
 
                 s.regret_gradient = loss_direction(vecG, s.step_openai)
-                s.regret_newton = vecG.commute() @ pinvH.commute() @ vecG.commute() / 2   # TODO(y): figure out why needed transposes
+                s.regret_newton = vecG.commute() @ pinvH.commute() @ vecG.commute() / 2  # TODO(y): figure out why needed transposes
 
             with u.timeit(f'rho-{i}'):
                 # lyapunov matrix
-                Xk = u.lyapunov_spectral(H.RR, sigma_k.RR)   # compare backprops
+                Xk = u.lyapunov_spectral(H.RR, sigma_k.RR)  # compare backprops
                 s.rho = u.erank(u.eye_like(Xk)) / u.erank(Xk)
                 s.step_div_1_adjusted = s.step_div_1 / s.rho
 
             with u.timeit(f"batch-{i}"):
-                s.batch_openai = (H @ sigma_k).trace() / (vecG @ H @ vecG) / n   # TODO(y), this /n was needed to match scale of non-factored version, find out why
+                s.batch_openai = (H @ sigma_k).trace() / (
+                            vecG @ H @ vecG)
 
                 expected_grad_norm_sq = torch.norm(G, "fro") ** 2 / n  # expected gradient norm squared
                 s.diversity = expected_grad_norm_sq / torch.norm(g) ** 2  # Gradient diversity / n
@@ -690,4 +761,4 @@ def compute_stats_factored(model):
             param_name = f"{layer.name}={param_names[param]}"
             u.log_scalars(u.nest_stats(f"{param_name}", s))
 
-            setattr(param, 'stats', s)
+            setattr(param, attr_name, s)

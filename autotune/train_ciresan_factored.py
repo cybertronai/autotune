@@ -34,34 +34,82 @@ import torchcurv
 from torchcurv.optim import SecondOrderOptimizer, VIOptimizer
 from torchcurv.utils import Logger
 
+# for line profiling
+try:
+    # noinspection PyUnboundLocalVariable
+    profile  # throws an exception when profile isn't defined
+except NameError:
+    profile = lambda x: x  # if it's not defined simply ignore the decorator.
+
 
 def main():
-    attemp_count = 0
-    while os.path.exists(f"{args.logdir}{attemp_count:02d}"):
-        attemp_count += 1
-    logdir = f"{args.logdir}{attemp_count:02d}"
 
-    run_name = os.path.basename(logdir)
-    gl.event_writer = SummaryWriter(logdir)
-    print(f"Logging to {run_name}")
+    parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
+    parser.add_argument('--batch-size', type=int, default=64, metavar='N',
+                        help='input batch size for training (default: 64)')
+    parser.add_argument('--test-batch-size', type=int, default=1000, metavar='N',
+                        help='input batch size for testing (default: 1000)')
+    parser.add_argument('--epochs', type=int, default=10, metavar='N',
+                        help='number of epochs to train (default: 10)')
+    parser.add_argument('--no-cuda', action='store_true', default=False,
+                        help='disables CUDA training')
+    parser.add_argument('--seed', type=int, default=1, metavar='S',
+                        help='random seed (default: 1)')
+    parser.add_argument('--log-interval', type=int, default=10, metavar='N',
+                        help='how many batches to wait before logging training status')
+    parser.add_argument('--save-model', action='store_true', default=False,
+                        help='For Saving the current Model')
+
+    parser.add_argument('--wandb', type=int, default=0, help='log to weights and biases')
+    parser.add_argument('--autograd_check', type=int, default=0, help='autograd correctness checks')
+    parser.add_argument('--logdir', type=str, default='/tmp/runs/curv_train_tiny/run')
+
+    parser.add_argument('--nonlin', type=int, default=1, help="whether to add ReLU nonlinearity between layers")
+    parser.add_argument('--bias', type=int, default=1, help="whether to add bias between layers")
+
+    parser.add_argument('--layer', type=int, default=-1, help="restrict updates to this layer")
+    parser.add_argument('--data_width', type=int, default=28)
+    parser.add_argument('--targets_width', type=int, default=28)
+    parser.add_argument('--hess_samples', type=int, default=1, help='number of samples when sub-sampling outputs, 0 for exact hessian')
+    parser.add_argument('--hess_kfac', type=int, default=0, help='whether to use KFAC approximation for hessian')
+    parser.add_argument('--compute_rho', type=int, default=0, help='use expensive method to compute rho')
+    parser.add_argument('--skip_stats', type=int, default=1, help='skip all stats collection')
+
+    parser.add_argument('--dataset_size', type=int, default=60000)
+    parser.add_argument('--train_steps', type=int, default=1000, help="this many train steps between stat collection")
+    parser.add_argument('--stats_steps', type=int, default=1000000, help="total number of curvature stats collections")
+
+    parser.add_argument('--full_batch', type=int, default=0, help='do stats on the whole dataset')
+    parser.add_argument('--train_batch_size', type=int, default=64)
+    parser.add_argument('--stats_batch_size', type=int, default=10000)
+    parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--weight_decay', type=float, default=2e-5)
+    parser.add_argument('--momentum', type=float, default=0.9)
+    parser.add_argument('--dropout', type=int, default=0)
+    parser.add_argument('--swa', type=int, default=0)
+    parser.add_argument('--lmb', type=float, default=1e-3)
+
+    parser.add_argument('--uniform', type=int, default=0, help='use uniform architecture (all layers same size)')
+    parser.add_argument('--run_name', type=str, default='noname')
+
+    gl.args = parser.parse_args()
+    args = gl.args
     u.seed_random(1)
 
+    gl.project_name = 'train_ciresan'
+    u.setup_logdir(args.run_name)
+    print(f"Logging to {gl.logdir}")
+
     d1 = 28*28
-    d = [784, 2500, 2000, 1500, 1000, 500, 10]
+    if args.uniform:
+        d = [784, 784, 784, 784, 784, 784, 10]
+    else:
+        d = [784, 2500, 2000, 1500, 1000, 500, 10]
     o = 10
     n = args.stats_batch_size
     model = u.SimpleFullyConnected2(d, nonlin=args.nonlin, bias=args.bias, dropout=args.dropout)
     model = model.to(gl.device)
 
-    try:
-        # os.environ['WANDB_SILENT'] = 'true'
-        if args.wandb:
-            wandb.init(project='train_ciresan', name=run_name)
-            wandb.tensorboard.patch(tensorboardX=False)
-            wandb.config['train_batch'] = args.train_batch_size
-            wandb.config['stats_batch'] = args.stats_batch_size
-    except Exception as e:
-        print(f"wandb crash with {e}")
 
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
     dataset = u.TinyMNIST(data_width=args.data_width, targets_width=args.targets_width, original_targets=True,
@@ -126,23 +174,23 @@ def main():
         else:
             data, targets = next(stats_iter)
 
-        autograd_lib.enable_hooks()
-        autograd_lib.clear_backprops(model)
-        autograd_lib.clear_hess_backprops(model)
-        with u.timeit("backprop_g"):
-            output = model(data)
-            loss = loss_fn(output, targets)
-            loss.backward(retain_graph=True)
-        with u.timeit("backprop_H"):
-            autograd_lib.backprop_hess(output, hess_type='CrossEntropy')
-        autograd_lib.disable_hooks()   # TODO(y): use remove_hooks
+        if not args.skip_stats:
+            autograd_lib.enable_hooks()
+            autograd_lib.clear_backprops(model)
+            autograd_lib.clear_hess_backprops(model)
+            with u.timeit("backprop_g"):
+                output = model(data)
+                loss = loss_fn(output, targets)
+                loss.backward(retain_graph=True)
+            with u.timeit("backprop_H"):
+                autograd_lib.backprop_hess(output, hess_type='CrossEntropy')
+            autograd_lib.disable_hooks()   # TODO(y): use remove_hooks
 
-        with u.timeit("compute_grad1"):
-            autograd_lib.compute_grad1(model)
-        with u.timeit("compute_hess"):
-            autograd_lib.compute_hess(model, method='kron', attr_name='hess2')
-
-        autograd_lib.compute_stats_factored(model)
+            with u.timeit("compute_grad1"):
+                autograd_lib.compute_grad1(model)
+            with u.timeit("compute_hess"):
+                autograd_lib.compute_hess(model, method='kron', attr_name='hess2')
+            autograd_lib.compute_stats_factored(model)
 
         for (i, layer) in enumerate(model.layers):
             param_names = {layer.weight: "weight", layer.bias: "bias"}
@@ -208,51 +256,4 @@ def validate(model, val_loader, tag='validation'):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
-    parser.add_argument('--batch-size', type=int, default=64, metavar='N',
-                        help='input batch size for training (default: 64)')
-    parser.add_argument('--test-batch-size', type=int, default=1000, metavar='N',
-                        help='input batch size for testing (default: 1000)')
-    parser.add_argument('--epochs', type=int, default=10, metavar='N',
-                        help='number of epochs to train (default: 10)')
-    parser.add_argument('--no-cuda', action='store_true', default=False,
-                        help='disables CUDA training')
-    parser.add_argument('--seed', type=int, default=1, metavar='S',
-                        help='random seed (default: 1)')
-    parser.add_argument('--log-interval', type=int, default=10, metavar='N',
-                        help='how many batches to wait before logging training status')
-    parser.add_argument('--save-model', action='store_true', default=False,
-                        help='For Saving the current Model')
-
-    parser.add_argument('--wandb', type=int, default=0, help='log to weights and biases')
-    parser.add_argument('--autograd_check', type=int, default=0, help='autograd correctness checks')
-    parser.add_argument('--logdir', type=str, default='/tmp/runs/curv_train_tiny/run')
-
-    parser.add_argument('--nonlin', type=int, default=1, help="whether to add ReLU nonlinearity between layers")
-    parser.add_argument('--bias', type=int, default=1, help="whether to add bias between layers")
-
-    parser.add_argument('--layer', type=int, default=-1, help="restrict updates to this layer")
-    parser.add_argument('--data_width', type=int, default=28)
-    parser.add_argument('--targets_width', type=int, default=28)
-    parser.add_argument('--hess_samples', type=int, default=1, help='number of samples when sub-sampling outputs, 0 for exact hessian')
-    parser.add_argument('--hess_kfac', type=int, default=0, help='whether to use KFAC approximation for hessian')
-    parser.add_argument('--compute_rho', type=int, default=0, help='use expensive method to compute rho')
-    parser.add_argument('--skip_stats', type=int, default=1, help='skip all stats collection')
-
-    parser.add_argument('--dataset_size', type=int, default=60000)
-    parser.add_argument('--train_steps', type=int, default=1000, help="this many train steps between stat collection")
-    parser.add_argument('--stats_steps', type=int, default=1000000, help="total number of curvature stats collections")
-
-    parser.add_argument('--full_batch', type=int, default=0, help='do stats on the whole dataset')
-    parser.add_argument('--train_batch_size', type=int, default=64)
-    parser.add_argument('--stats_batch_size', type=int, default=10000)
-    parser.add_argument('--lr', type=float, default=1e-3)
-    parser.add_argument('--weight_decay', type=float, default=1e-5)
-    parser.add_argument('--momentum', type=float, default=0.9)
-    parser.add_argument('--dropout', type=int, default=0)
-    parser.add_argument('--swa', type=int, default=0)
-    parser.add_argument('--lmb', type=float, default=1e-3)
-
-    args = parser.parse_args()
-
     main()

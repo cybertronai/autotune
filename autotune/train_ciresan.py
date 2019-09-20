@@ -35,6 +35,53 @@ from torchcurv.utils import Logger
 
 
 def main():
+    parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
+    parser.add_argument('--batch-size', type=int, default=64, metavar='N',
+                        help='input batch size for training (default: 64)')
+    parser.add_argument('--test-batch-size', type=int, default=1000, metavar='N',
+                        help='input batch size for testing (default: 1000)')
+    parser.add_argument('--epochs', type=int, default=10, metavar='N',
+                        help='number of epochs to train (default: 10)')
+    parser.add_argument('--no-cuda', action='store_true', default=False,
+                        help='disables CUDA training')
+    parser.add_argument('--seed', type=int, default=1, metavar='S',
+                        help='random seed (default: 1)')
+    parser.add_argument('--log-interval', type=int, default=10, metavar='N',
+                        help='how many batches to wait before logging training status')
+    parser.add_argument('--save-model', action='store_true', default=False,
+                        help='For Saving the current Model')
+
+    parser.add_argument('--wandb', type=int, default=1, help='log to weights and biases')
+    parser.add_argument('--autograd_check', type=int, default=0, help='autograd correctness checks')
+    parser.add_argument('--logdir', type=str, default='/tmp/runs/curv_train_tiny/run')
+
+    parser.add_argument('--nonlin', type=int, default=1, help="whether to add ReLU nonlinearity between layers")
+    parser.add_argument('--bias', type=int, default=1, help="whether to add bias between layers")
+
+    parser.add_argument('--layer', type=int, default=-1, help="restrict updates to this layer")
+    parser.add_argument('--data_width', type=int, default=28)
+    parser.add_argument('--targets_width', type=int, default=28)
+    parser.add_argument('--hess_samples', type=int, default=1, help='number of samples when sub-sampling outputs, 0 for exact hessian')
+    parser.add_argument('--hess_kfac', type=int, default=0, help='whether to use KFAC approximation for hessian')
+    parser.add_argument('--compute_rho', type=int, default=0, help='use expensive method to compute rho')
+    parser.add_argument('--skip_stats', type=int, default=1, help='skip all stats collection')
+
+    parser.add_argument('--dataset_size', type=int, default=60000)
+    parser.add_argument('--train_steps', type=int, default=1000, help="this many train steps between stat collection")
+    parser.add_argument('--stats_steps', type=int, default=1000000, help="total number of curvature stats collections")
+
+    parser.add_argument('--full_batch', type=int, default=0, help='do stats on the whole dataset')
+    parser.add_argument('--train_batch_size', type=int, default=64)
+    parser.add_argument('--stats_batch_size', type=int, default=10000)
+    parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--weight_decay', type=float, default=1e-5)
+    parser.add_argument('--momentum', type=float, default=0.9)
+    parser.add_argument('--dropout', type=int, default=0)
+    parser.add_argument('--swa', type=int, default=1)
+    parser.add_argument('--lmb', type=float, default=1e-3)
+    parser.add_argument('--uniform', type=int, default=0, help="all layers same size")
+    args = parser.parse_args()
+
     attemp_count = 0
     while os.path.exists(f"{args.logdir}{attemp_count:02d}"):
         attemp_count += 1
@@ -46,7 +93,10 @@ def main():
     u.seed_random(1)
 
     d1 = 28*28
-    d = [784, 2500, 2000, 1500, 1000, 500, 10]
+    if args.uniform:
+        d = [784, 784, 784, 784, 784, 784, 10]
+    else:
+        d = [784, 2500, 2000, 1500, 1000, 500, 10]
     o = 10
     n = args.stats_batch_size
     model = u.SimpleFullyConnected(d, nonlin=args.nonlin, bias=args.bias, dropout=args.dropout)
@@ -201,13 +251,13 @@ def main():
             def kron_curv_direction(dd: torch.Tensor):
                 """Curvature in direction dd, using factored form"""
                 # dd @ H @ dd.t(), computed by kron_quadratic_form(H, dd)
-                return u.to_scalar(u.kron_quadratic_form(H, dd) / (dd.flatten().norm() ** 2))
+                return u.to_python_scalar(u.kron_quadratic_form(H, dd) / (dd.flatten().norm() ** 2))
 
             def kron_loss_direction(dd: torch.Tensor, eps):
                 """loss improvement if we take step eps in direction dd"""
 
                 # kron_matmul(dd, g) = dd @ g.t()
-                return u.to_scalar(eps * (u.kron_matmul(dd, g)) - 0.5 * eps ** 2 * u.kron_quadratic_form(H, dd))
+                return u.to_python_scalar(eps * (u.kron_matmul(dd, g)) - 0.5 * eps ** 2 * u.kron_quadratic_form(H, dd))
 
             with u.timeit(f'curv-{i}'):
                 s.grad_curv = kron_curv_direction(g)
@@ -279,52 +329,4 @@ def validate(model, val_loader, tag='validation'):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
-    parser.add_argument('--batch-size', type=int, default=64, metavar='N',
-                        help='input batch size for training (default: 64)')
-    parser.add_argument('--test-batch-size', type=int, default=1000, metavar='N',
-                        help='input batch size for testing (default: 1000)')
-    parser.add_argument('--epochs', type=int, default=10, metavar='N',
-                        help='number of epochs to train (default: 10)')
-    parser.add_argument('--no-cuda', action='store_true', default=False,
-                        help='disables CUDA training')
-    parser.add_argument('--seed', type=int, default=1, metavar='S',
-                        help='random seed (default: 1)')
-    parser.add_argument('--log-interval', type=int, default=10, metavar='N',
-                        help='how many batches to wait before logging training status')
-    parser.add_argument('--save-model', action='store_true', default=False,
-                        help='For Saving the current Model')
-
-    parser.add_argument('--wandb', type=int, default=1, help='log to weights and biases')
-    parser.add_argument('--autograd_check', type=int, default=0, help='autograd correctness checks')
-    parser.add_argument('--logdir', type=str, default='/tmp/runs/curv_train_tiny/run')
-
-    parser.add_argument('--nonlin', type=int, default=1, help="whether to add ReLU nonlinearity between layers")
-    parser.add_argument('--bias', type=int, default=1, help="whether to add bias between layers")
-
-    parser.add_argument('--layer', type=int, default=-1, help="restrict updates to this layer")
-    parser.add_argument('--data_width', type=int, default=28)
-    parser.add_argument('--targets_width', type=int, default=28)
-    parser.add_argument('--hess_samples', type=int, default=1, help='number of samples when sub-sampling outputs, 0 for exact hessian')
-    parser.add_argument('--hess_kfac', type=int, default=0, help='whether to use KFAC approximation for hessian')
-    parser.add_argument('--compute_rho', type=int, default=0, help='use expensive method to compute rho')
-    parser.add_argument('--skip_stats', type=int, default=1, help='skip all stats collection')
-
-    parser.add_argument('--dataset_size', type=int, default=60000)
-    parser.add_argument('--train_steps', type=int, default=1000, help="this many train steps between stat collection")
-    parser.add_argument('--stats_steps', type=int, default=1000000, help="total number of curvature stats collections")
-
-    parser.add_argument('--full_batch', type=int, default=0, help='do stats on the whole dataset')
-    parser.add_argument('--train_batch_size', type=int, default=64)
-    parser.add_argument('--stats_batch_size', type=int, default=10000)
-    parser.add_argument('--lr', type=float, default=1e-3)
-    parser.add_argument('--weight_decay', type=float, default=1e-5)
-    parser.add_argument('--momentum', type=float, default=0.9)
-    parser.add_argument('--dropout', type=int, default=0)
-    parser.add_argument('--swa', type=int, default=1)
-    parser.add_argument('--lmb', type=float, default=1e-3)
-
-
-    args = parser.parse_args()
-
     main()

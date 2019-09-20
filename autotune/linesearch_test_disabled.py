@@ -299,7 +299,7 @@ def test_lineasearch():
         stats.jacobian_sensitivity = Joutput.norm()
 
         # newton decrement
-        stats.loss_newton = u.to_scalar(g @ u.pinv(H) @ g.t() / 2)
+        stats.loss_newton = u.to_python_scalar(g @ u.pinv(H) @ g.t() / 2)
         u.check_close(stats.loss_newton, loss)
 
         # do line-search to find optimal step

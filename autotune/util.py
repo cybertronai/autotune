@@ -8,6 +8,8 @@ import time
 from typing import Any, Dict, Callable, Optional, Tuple, Union, Sequence, Iterable
 from typing import List
 
+import wandb
+
 import globals as gl
 import numpy as np
 import scipy
@@ -357,11 +359,11 @@ class Kron(SpecialForm):
         return Kron(self.LL, self.RR / other)
 
     def __mul__(self, other):
-        other = u.to_scalar(other)
+        other = to_python_scalar(other)
         return Kron(self.LL, self.RR*other)
 
     def __rmul__(self, other):
-        other = u.to_scalar(other)
+        other = to_python_scalar(other)
         return Kron(self.LL*other, self.RR)
 
     # remove, scalar addition doesn't make sense because it breaks factoring
@@ -725,7 +727,7 @@ def outer(x, y):
     return x.unsqueeze(1) @ y.unsqueeze(0)
 
 
-def to_scalar(x):
+def to_python_scalar(x):
     """Convert object to Python scalar."""
     if hasattr(x, 'item'):
         return x.item()
@@ -736,7 +738,7 @@ def to_scalar(x):
 
 def is_scalar(x):
     try:
-        x = to_scalar(x)
+        x = to_python_scalar(x)
     except:
         return False
     return True
@@ -1633,6 +1635,7 @@ class ReshapedConvolutional(SimpleConvolutional):
 
 
 def log_scalars(metrics: Dict[str, Any]) -> None:
+    assert gl.event_writer is not None, "initialize event_writer as gl.event_writer = SummaryWriter(logdir)"
     for tag in metrics:
         gl.event_writer.add_scalar(tag=tag, scalar_value=metrics[tag], global_step=gl.get_global_step())
 
@@ -1860,12 +1863,31 @@ class CrossEntropySoft(nn.Module):
         return loss
 
 
+
 def get_unique_logdir(root_logdir: str) -> str:
     """Increments suffix at the end of root_logdir until getting directory that doesn't exist locally, return that."""
     count = 0
     while os.path.exists(f"{root_logdir}{count:02d}"):
         count += 1
+
     return f"{root_logdir}{count:02d}"
+
+
+from torch.utils.tensorboard import SummaryWriter
+
+
+def setup_logdir(run_name: str, init_wandb=False):
+    """Creates unique logdir like project/runname02, sets up wandb if necessary"""
+    assert gl.project_name is not None
+
+    gl.logdir = u.get_unique_logdir(f'{gl.logdir_base}/{gl.project_name}/{run_name}')
+    gl.run_name = os.path.basename(gl.logdir)
+    gl.event_writer = SummaryWriter(gl.logdir)
+
+    if init_wandb:
+        wandb.init(project=gl.project_name, name=gl.run_name)
+        wandb.tensorboard.patch(tensorboardX=False)
+        wandb.config.update(vars(gl.args))
 
 
 ######################################################

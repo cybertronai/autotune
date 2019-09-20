@@ -416,15 +416,15 @@ def main():
         # newton decrement
         def loss_direction(direction, eps):
             """loss improvement if we take step eps in direction dir"""
-            return u.to_scalar(eps * (direction @ g.t()) - 0.5 * eps ** 2 * direction @ H @ direction.t())
+            return u.to_python_scalar(eps * (direction @ g.t()) - 0.5 * eps ** 2 * direction @ H @ direction.t())
 
-        s.regret_newton = u.to_scalar(g @ u.pinv(H) @ g.t() / 2)
+        s.regret_newton = u.to_python_scalar(g @ u.pinv(H) @ g.t() / 2)
 
         # TODO: gradient diversity is stuck at 1
         # TODO: newton/gradient angle
         # TODO: newton step magnitude
-        s.grad_curvature = u.to_scalar(g @ H @ g.t())  # curvature in direction of g
-        s.step_openai = u.to_scalar(s.grad_fro**2 / s.grad_curvature) if s.grad_curvature else 999
+        s.grad_curvature = u.to_python_scalar(g @ H @ g.t())  # curvature in direction of g
+        s.step_openai = u.to_python_scalar(s.grad_fro ** 2 / s.grad_curvature) if s.grad_curvature else 999
 
         s.regret_gradient = loss_direction(g, s.step_openai)
 

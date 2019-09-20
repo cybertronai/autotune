@@ -7,10 +7,16 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 
 event_writer: Optional[SummaryWriter] = None
+project_name: Optional[str] = 'train_ciresan'  # project name to use for wandb logging
+logdir_base: str = '/ncluster/runs'
+run_name: Optional[str] = None  # run name to use, corresponds to logging dir and wandb run name
+logdir: Optional[str] = None  # logdir
 token_count: int = 0   # TODO(y): rename to global-step. Meaning is context-specific, in case of sequences it's number of tokens
 
+args = None   #  global arg values
 debug_dump_stats: bool = False   # print activations/backprops to console
 debug_linalg_crashes: bool = False   # save matrices that cause linalg routines to crash
+
 
 # debug_hard_crashes_on_nans: bool = True  # crash if encountering NaN
 
@@ -33,3 +39,5 @@ def increment_global_step(incr: int):
 
 def get_global_step() -> int:
     return token_count
+
+
