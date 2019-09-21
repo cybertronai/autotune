@@ -368,9 +368,91 @@ def test_hessian_multibatch():
     u.check_close(cov.H.value(), hess2)
 
 
+def test_hessian_conv():
+    """Test conv hessian computation using factored and regular method."""
+
+    u.seed_random(1)
+    unfold = torch.nn.functional.unfold
+    fold = torch.nn.functional.fold
+
+    import numpy as np
+
+    u.seed_random(1)
+    N, Xc, Xh, Xw = 3, 2, 3, 7
+    dd = [Xc, 2]
+
+    Kh, Kw = 2, 3
+    Oh, Ow = Xh - Kh + 1, Xw - Kw + 1
+    model = u.SimpleConvolutional(dd, kernel_size=(Kh, Kw), bias=True).double()
+
+    weight_buffer = model.layers[0].weight.data
+
+    # output channels, input channels, height, width
+    assert weight_buffer.shape == (dd[1], dd[0], Kh, Kw)
+
+    input_dims = N, Xc, Xh, Xw
+    size = int(np.prod(input_dims))
+    X = torch.arange(0, size).reshape(*input_dims).double()
+
+    def loss_fn(data):
+        err = data.reshape(len(data), -1)
+        return torch.sum(err * err) / 2 / len(data)
+
+    layer = model.layers[0]
+    output = model(X)
+    loss = loss_fn(output)
+    loss.backward()
+
+    u.check_equal(layer.activations, X)
+
+    assert layer.backprops_list[0].shape == layer.output.shape
+    assert layer.output.shape == (N, dd[1], Oh, Ow)
+
+    out_unf = layer.weight.view(layer.weight.size(0), -1) @ unfold(layer.activations, (Kh, Kw))
+    assert out_unf.shape == (N, dd[1], Oh * Ow)
+    reshaped_bias = layer.bias.reshape(1, dd[1], 1)  # (Co,) -> (1, Co, 1)
+    out_unf = out_unf + reshaped_bias
+
+    u.check_equal(fold(out_unf, (Oh, Ow), (1, 1)), output)  # two alternative ways of reshaping
+    u.check_equal(out_unf.view(N, dd[1], Oh, Ow), output)
+
+    # Unfold produces patches with output dimension merged, while in backprop they are not merged
+    # Hence merge the output (width/height) dimension
+    assert unfold(layer.activations, (Kh, Kw)).shape == (N, Xc * Kh * Kw, Oh * Ow)
+    assert layer.backprops_list[0].shape == (N, dd[1], Oh, Ow)
+
+    grads_bias = layer.backprops_list[0].sum(dim=(2, 3)) * N
+    mean_grad_bias = grads_bias.sum(dim=0) / N
+    u.check_equal(mean_grad_bias, layer.bias.grad)
+
+    Bt = layer.backprops_list[0] * N   # remove factor of N applied during loss batch averaging
+    assert Bt.shape == (N, dd[1], Oh, Ow)
+    Bt = Bt.reshape(N, dd[1], Oh*Ow)
+    At = unfold(layer.activations, (Kh, Kw))
+    assert At.shape == (N, dd[0] * Kh * Kw, Oh*Ow)
+
+    grad_unf = torch.einsum('ijk,ilk->ijl', Bt, At)
+    assert grad_unf.shape == (N, dd[1], dd[0] * Kh * Kw)
+
+    grads = grad_unf.reshape((N, dd[1], dd[0], Kh, Kw))
+    u.check_equal(grads.mean(dim=0), layer.weight.grad)
+
+    # compute per-example gradients using autograd, compare against manual computation
+    for i in range(N):
+        u.clear_backprops(model)
+        output = model(X[i:i + 1, ...])
+        loss = loss_fn(output)
+        loss.backward()
+        u.check_equal(grads[i], layer.weight.grad)
+        u.check_equal(grads_bias[i], layer.bias.grad)
+
+
+
+
 if __name__ == '__main__':
     #  _test_factored_hessian()
-    test_hessian_multibatch()
+    # test_hessian_multibatch()
+    test_hessian_conv()
     #    u.run_all_tests(sys.modules[__name__])
 
     # u.run_all_tests(sys.modules[__name__])

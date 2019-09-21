@@ -58,7 +58,6 @@ _global_enforce_fresh_backprop: bool = False  # global switch to catch double ba
 _global_backprops_prefix = ''  # hooks save backprops to, ie param.{_backprops_prefix}backprops_list
 
 
-
 class LayerStats:
     # Some notation/background from https://docs.google.com/document/d/19Jmh4spbSAnAGX_eq7WSFPgLzrpJEhiZRpjX1jSYObo/edit#heading=h.9fi55aowtmgy
     sparsity: torch.Tensor
@@ -348,8 +347,8 @@ def compute_hess(model: nn.Module, method='exact', attr_name=None, vecr_order=Fa
                 H_bias = torch.einsum('oni,onj->ij', B, B) / n
             else:  # TODO(y): can optimize this case by not stacking A
                 assert method == 'kron'
-                #AA = torch.einsum("oni,onj->ij", A, A) / (o * n)  # # TODO(y): makes more sense to apply o factor to B
-                #BB = torch.einsum("oni,onj->ij", B, B) / n
+                # AA = torch.einsum("oni,onj->ij", A, A) / (o * n)  # # TODO(y): makes more sense to apply o factor to B
+                # BB = torch.einsum("oni,onj->ij", B, B) / n
                 #                H = u.Kron(AA, BB)
                 H_bias = u.Kron(torch.eye(1), torch.einsum("oni,onj->ij", B, B) / n)  # TODO: reuse BB
 
@@ -516,9 +515,9 @@ def backprop_hess(output: torch.Tensor, hess_type: str, model: Optional[nn.Modul
 class LayerCov:
     """Class representing second-order information associated with a layer."""
 
-    S: u.KronFactoredCov         # expected gradient outer product: E[gg'] where g=gradient of loss
-    J: u.KronFactoredCov         # expected Jacobian outer product: E[hh'] where h=gradient of network output
-    H: u.KronFactoredCov         # expected hessian: E[H] where H is per-example hessian
+    S: u.KronFactoredCov  # expected gradient outer product: E[gg'] where g=gradient of loss
+    J: u.KronFactoredCov  # expected Jacobian outer product: E[hh'] where h=gradient of network output
+    H: u.KronFactoredCov  # expected hessian: E[H] where H is per-example hessian
 
     def __init__(self):
         self.S = None
@@ -574,7 +573,6 @@ def compute_cov(model: nn.Module, loss_fn: Callable, stats_iter, batch_size, ste
             update_cov(model, 'activations', 'hess_backprops_list', 'H')
             clear_hess_backprops(model)
 
-
     disable_hooks()
 
 
@@ -590,7 +588,8 @@ def update_cov(model, a_attr, b_attr, target_attr):
         if not is_supported(layer):
             continue
 
-        #if hasattr(layer, a_attr) and hasattr(layer, b_attr):
+        layer_type = _layer_type(layer)
+
         if hasattr(layer, 'cov'):
             layer_cov = layer.cov
         else:
@@ -599,16 +598,32 @@ def update_cov(model, a_attr, b_attr, target_attr):
 
         a_vals = getattr(layer, a_attr)
         a_dim = a_vals.shape[-1]
+        b_vals = getattr(layer, b_attr)
+
+        if layer_type == 'Conv2d':
+            Kh, Kw = layer.kernel_size
+            di, do = layer.in_channels, layer.out_channels
+            n, do, Oh, Ow = a_vals.shape
+            o = len(layer.hess_backprops_list)
+
+            a_vals = torch.nn.functional.unfold(a_vals, kernel_size=layer.kernel_size,
+                                                stride=layer.stride,
+                                                padding=layer.padding,
+                                                dilation=layer.dilation)  # n, di * Kh * Kw, Oh * Ow
+            assert a_vals.shape == (n, di * Kh * Kw, Oh * Ow)
+            a_vals = torch.einsum("onis->oni", a_vals) / (Oh * Ow)  # group input channels
+            b_vals = [b.reshape(n, do, -1) for b in b_vals]
 
         # backward vals are in a list
-        # special handling for Hess backprops, multiple vals are stacked into rank 3 tensor
-        b_vals = getattr(layer, b_attr)
+        # special handling for backprops, multiple vals are stacked into rank 3 tensor
+
         assert type(b_vals) == list
         if len(b_vals) > 1:
             b_vals = torch.stack(b_vals)
 
         else:
             b_vals = b_vals[0]
+
         b_dim = b_vals.shape[-1]
 
         covmat = getattr(layer_cov, target_attr)
@@ -655,7 +670,8 @@ def compute_stats(model, attr_name='stats', factored=False, sigma_centering=True
             A_t = layer.activations
             B_t = layer.backprops_list[0] * n
 
-            s.sparsity = torch.sum(layer.output <= 0).float() / layer.output.numel()  # proportion of activations that are zero
+            s.sparsity = torch.sum(
+                layer.output <= 0).float() / layer.output.numel()  # proportion of activations that are zero
             s.mean_activation = torch.mean(A_t)
             s.mean_backprop = torch.mean(B_t)
 
@@ -729,12 +745,12 @@ def compute_stats(model, attr_name='stats', factored=False, sigma_centering=True
                 s.step_div_1_adjusted = s.step_div_1 / s.rho
 
             with u.timeit(f"batch-{i}"):
-                #s.batch_openai = torch.trace(H @ sigma) / (g @ H @ g.t()).squeeze()
+                # s.batch_openai = torch.trace(H @ sigma) / (g @ H @ g.t()).squeeze()
                 s.batch_openai = torch.trace(H @ sigma) / (g @ H @ g.t())
-                print('original sigma: ', torch.trace(H @ sigma)/(g @ H @ g.t()))
+                print('original sigma: ', torch.trace(H @ sigma) / (g @ H @ g.t()))
                 denom = (g @ H @ g.t())
-                print('subtracted1:', torch.trace(H @ (sigma - g.t() @ g))/denom)
-                print('subtracted2:', torch.trace(H @ sigma) / denom - torch.trace(H @ g.t() @ g)/denom)
+                print('subtracted1:', torch.trace(H @ (sigma - g.t() @ g)) / denom)
+                print('subtracted2:', torch.trace(H @ sigma) / denom - torch.trace(H @ g.t() @ g) / denom)
                 print("left term: ", torch.trace(H @ sigma))
                 print("right term: ", torch.trace(H @ g.t() @ g))
                 print('denom: ', denom)
@@ -863,7 +879,7 @@ def compute_stats_factored(model, attr_name='stats', sigma_centering=True):
                 s.regret_gradient = loss_direction(vecG, s.step_openai)
                 # can compute newton regret more efficiently by doing row-vectorized instead of col-vectorized
                 vecG2 = u.Vecr(g, shape=(do, di))
-                pinvH_rowvec = pinvH.commute()   # original H was for col-vectorized order
+                pinvH_rowvec = pinvH.commute()  # original H was for col-vectorized order
                 s.regret_newton = vecG2 @ pinvH_rowvec @ vecG2 / 2
 
             with u.timeit(f'rho-{i}'):
