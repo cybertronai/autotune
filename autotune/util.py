@@ -301,9 +301,9 @@ class KronFactoredCov(SpecialForm):
     def __init__(self, a_dim, b_dim):
         self.a_dim = a_dim
         self.b_dim = b_dim
-        self.AA = torch.zeros(a_dim, a_dim)
-        self.BB = torch.zeros(b_dim, b_dim)
-        self.AB = torch.zeros(a_dim, b_dim)
+        self.AA = torch.zeros(a_dim, a_dim).to(gl.device)
+        self.BB = torch.zeros(b_dim, b_dim).to(gl.device)
+        self.AB = torch.zeros(a_dim, b_dim).to(gl.device)
 
         self.a_num = 0
         self.b_num = 0
@@ -358,9 +358,45 @@ class KronFactoredCov(SpecialForm):
         """Return cross covariance matrix AB'"""
         return self.AB/self.ab_num
 
+    def wilks(self) -> torch.Tensor:
+        """Returns Wilk's statistic for the test of independence of two terms"""
+
+        with u.timeit('wilks'):
+            covA = self.AA / self.a_num
+            covB = self.BB / self.b_num
+            covAB = self.cross()
+            K = symsqrt(covA, inverse=True) @ covAB @ symsqrt(covB, inverse=True)
+            U, S, V = robust_svd(K)
+            vals = 1-square(torch.diag(S))
+            return torch.prod(vals)
+
+    def bartlett(self):
+        """Returns Bartlett statistic for the test of independence."""
+        q = self.a_dim
+        p = self.b_dim
+        n = self.ab_num
+        val = -(n - (p+q+3)/2) * torch.log(self.wilks())
+        print(val)
+        return val
+
+    def prob_dep(self):
+        """Returns probability of independence hypothesis holding."""
+        from scipy.stats import chi2
+        rv = chi2(self.a_dim * self.b_dim)
+        return rv.sf(to_numpy(self.bartlett()))
+
+    def sigmas_indep(self):
+        """Returns number of standard deviations away from independence."""
+        from scipy.stats import chi2
+        df = self.a_dim * self.b_dim
+        return (self.bartlett() - df) / 4 * np.sqrt(to_numpy(df))
+
     def __str__(self):
         return f"KronFactoredCov(AA=\n{self.AA},\n BB={self.BB})"
 
+
+def square(a: torch.Tensor):
+    return a*a
 
 class Kron(SpecialForm):
     """Represents kronecker product of two symmetric matrices"""
@@ -1024,7 +1060,7 @@ def filter_evals(vals, cond=None, remove_small=True, remove_negative=True):
     return vals
 
 
-def symsqrt(mat, cond=None, return_rank=False):
+def symsqrt(mat, cond=None, return_rank=False, inverse=False):
     """Computes the symmetric square root of a symmetric matrix. Throws away small and negative eigenvalues."""
 
     nan_check(mat)
@@ -1045,6 +1081,8 @@ def symsqrt(mat, cond=None, return_rank=False):
         return torch.zeros_like(mat)
 
     sigma_diag = torch.sqrt(s[above_cutoff])
+    if inverse:
+        sigma_diag = 1/sigma_diag
     u = u[:, above_cutoff]
 
     B = u @ torch.diag(sigma_diag) @ u.t()

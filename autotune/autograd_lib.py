@@ -465,7 +465,7 @@ def backprop_hess(output: torch.Tensor, hess_type: str, model: Optional[nn.Modul
     if hess_type == 'CrossEntropy':
         batch = F.softmax(output, dim=1)
 
-        mask = torch.eye(o).expand(n, o, o).to(gl.device)
+        mask = torch.eye(o).to(gl.device).expand(n, o, o)
         diag_part = batch.unsqueeze(2).expand(n, o, o) * mask
         outer_prod_part = torch.einsum('ij,ik->ijk', batch, batch)
         hess = diag_part - outer_prod_part
@@ -568,10 +568,12 @@ def compute_cov(model: nn.Module, loss_fn: Callable, stats_iter, batch_size, ste
             clear_backprops(model)
             model.zero_grad()
 
-        with u.timeit("backprop_H"):
-            backprop_hess(output, hess_type='CrossEntropy')
-            update_cov(model, 'activations', 'hess_backprops_list', 'H')
-            clear_hess_backprops(model)
+        # disable because super-slow
+        if not gl.hacks_disable_hess:
+            with u.timeit("backprop_H"):
+                backprop_hess(output, hess_type='CrossEntropy')
+                update_cov(model, 'activations', 'hess_backprops_list', 'H')
+                clear_hess_backprops(model)
 
     disable_hooks()
 

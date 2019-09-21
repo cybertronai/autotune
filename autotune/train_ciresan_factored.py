@@ -88,6 +88,7 @@ def main():
     parser.add_argument('--stats_num_batches', type=int, default=10)
     parser.add_argument('--uniform', type=int, default=0, help='use uniform architecture (all layers same size)')
     parser.add_argument('--run_name', type=str, default='noname')
+    parser.add_argument('--disable_hess', type=int, default=1, help='disable hessian because of sysmqrt slowness')
 
     gl.args = parser.parse_args()
     args = gl.args
@@ -161,8 +162,14 @@ def main():
                 param_names = {layer.weight: "weight", layer.bias: "bias"}
                 cov: autograd_lib.LayerCov = layer.cov
                 s = autograd_lib.LayerStats()
-                s.H_l2 = cov.H.value().sym_l2_norm()
-                print(f"layer-{i}={s.H_l2}")
+                # s.H_l2 = cov.H.value().sym_l2_norm()
+                #s.J_trace = cov.J.value().trace()
+                # setattr(s, 'J_trace', cov.J.value().trace())
+                # print(f"layer-{i}={s.J_trace}")
+                # print('log(prob(dep))', np.log(cov.J.prob_dep()))
+                print('sigmas', cov.J.sigmas_indep())
+                setattr(s, 'J_indep', cov.J.sigmas_indep())
+                setattr(s, 'S_indep', cov.S.sigmas_indep())
                 u.log_scalars(u.nest_stats(f"layer-{i}", s))
 
             # gradient steps

@@ -20,6 +20,9 @@ debug_linalg_crashes: bool = False   # save matrices that cause linalg routines 
 
 # debug_hard_crashes_on_nans: bool = True  # crash if encountering NaN
 
+hacks_disable_hess = False
+
+
 if torch.cuda.is_available():
     device = torch.device('cuda')
     print("Using GPU")
