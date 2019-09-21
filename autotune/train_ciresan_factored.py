@@ -29,10 +29,6 @@ import json
 import torch
 import torch.nn.functional as F
 import wandb
-from torchvision import datasets, transforms, models
-import torchcurv
-from torchcurv.optim import SecondOrderOptimizer, VIOptimizer
-from torchcurv.utils import Logger
 
 # for line profiling
 try:

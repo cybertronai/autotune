@@ -1,6 +1,8 @@
 # Test exact Hessian computation
 
 # import torch
+from typing import Callable
+
 import torch
 import torch.nn as nn
 
@@ -180,7 +182,7 @@ def test_explicit_hessian():
     u.check_equal(newton_step0, newton_step2)
 
 
-def _test_factored_hessian():
+def test_factored_hessian():
     """"Simple test to ensure Hessian computation is working.
 
     In a linear neural network with squared loss, Newton step will converge in one step.
@@ -290,9 +292,85 @@ def _test_factored_hessian():
     print(loss)
 
 
+def test_hessian_multibatch():
+    """Test that Kronecker-factored computations still work when splitting work over batches."""
+
+    u.seed_random(1)
+
+    # torch.set_default_dtype(torch.float64)
+
+    gl.project_name = 'test'
+    gl.logdir_base = '/tmp/runs'
+    run_name = 'test_hessian_multibatch'
+    u.setup_logdir(run_name=run_name)
+
+    loss_type = 'CrossEntropy'
+    data_width = 2
+    n = 4
+    d1 = data_width ** 2
+    o = 10
+    d = [d1, o]
+
+    model = u.SimpleFullyConnected2(d, bias=False, nonlin=False)
+    model = model.to(gl.device)
+
+    dataset = u.TinyMNIST(data_width=data_width, dataset_size=n, loss_type=loss_type)
+    stats_loader = torch.utils.data.DataLoader(dataset, batch_size=n, shuffle=False)
+    stats_iter = u.infinite_iter(stats_loader)
+
+    if loss_type == 'LeastSquares':
+        loss_fn = u.least_squares
+    else:  # loss_type == 'CrossEntropy':
+        loss_fn = nn.CrossEntropyLoss()
+
+    autograd_lib.add_hooks(model)
+    gl.reset_global_step()
+    last_outer = 0
+
+    stats_iter = u.infinite_iter(stats_loader)
+    stats_data, stats_targets = next(stats_iter)
+    data, targets = stats_data, stats_targets
+
+    # Capture Hessian and gradient stats
+    autograd_lib.enable_hooks()
+    autograd_lib.clear_backprops(model)
+
+    output = model(data)
+    loss = loss_fn(output, targets)
+    loss.backward(retain_graph=True)
+    layer = model.layers[0]
+
+    autograd_lib.clear_hess_backprops(model)
+    autograd_lib.backprop_hess(output, hess_type=loss_type)
+    autograd_lib.disable_hooks()
+
+    # compute Hessian using direct method, compare against PyTorch autograd
+    hess0 = u.hessian(loss, layer.weight)
+    autograd_lib.compute_hess(model)
+    hess1 = layer.weight.hess
+    u.check_close(hess0.reshape(hess1.shape), hess1, atol=1e-8, rtol=1e-6)
+
+    # compute Hessian using factored method. Because Hessian depends on examples, factoring is not exact, raise tolerance
+    autograd_lib.compute_hess(model, method='kron', attr_name='hess2', vecr_order=True)
+    hess2 = layer.weight.hess2
+    u.check_close(hess1, hess2, atol=1e-3, rtol=1e-1)
+
+    # compute Hessian using multibatch
+    # restart iterators
+    dataset = u.TinyMNIST(data_width=data_width, dataset_size=n, loss_type=loss_type)
+    assert n % 2 == 0
+    stats_loader = torch.utils.data.DataLoader(dataset, batch_size=n//2, shuffle=False)
+    stats_iter = u.infinite_iter(stats_loader)
+    autograd_lib.compute_cov(model, loss_fn, stats_iter, batch_size=n//2, steps=2)
+
+    cov: autograd_lib.LayerCov = layer.cov
+    hess2: u.Kron = hess2.commute()    # get back into AA x BB order
+    u.check_close(cov.H.value(), hess2)
+
+
 if __name__ == '__main__':
     #  _test_factored_hessian()
-    test_explicit_hessian()
+    test_hessian_multibatch()
     #    u.run_all_tests(sys.modules[__name__])
 
     # u.run_all_tests(sys.modules[__name__])

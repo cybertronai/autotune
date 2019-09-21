@@ -318,6 +318,7 @@ class KronFactoredCov(SpecialForm):
 
         For  variable batch dimensions, currently only supports A having 1 batch dimension, and B having 1 or 2 batch dimensions
         """
+
         if is_matrix(A) and is_matrix(B):
             n = A.shape[0]
             assert B.shape[0] == n, f"Number of samples do not match, got {A.shape}, {B.shape}"
@@ -356,6 +357,9 @@ class KronFactoredCov(SpecialForm):
     def cross(self) -> torch.Tensor:
         """Return cross covariance matrix AB'"""
         return self.AB/self.ab_num
+
+    def __str__(self):
+        return f"KronFactoredCov(AA=\n{self.AA},\n BB={self.BB})"
 
 
 class Kron(SpecialForm):
@@ -437,9 +441,17 @@ class Kron(SpecialForm):
     def __truediv__(self, other):
         return Kron(self.LL, self.RR / other)
 
+    def __add__(self, other):
+        other = to_python_scalar(other)
+        return Kron(self.LL, self.RR + other)
+
+    def __radd__(self, other):
+        other = to_python_scalar(other)
+        return Kron(self.LL+other, self.RR)
+
     def __mul__(self, other):
         other = to_python_scalar(other)
-        return Kron(self.LL, self.RR*other)
+        return Kron(self.LL, self.RR * other)
 
     def __rmul__(self, other):
         other = to_python_scalar(other)
@@ -2358,9 +2370,9 @@ def is_square_matrix(dd):
     return len(dd.shape) == 2 and dd.shape[0] == dd.shape[1] and dd.shape[0] >= 1
 
 
-def is_matrix(dd):
+def is_matrix(dd) -> bool:
     shape = dd.shape
-    assert len(shape) == 2 and shape[0] >= 1 and shape[1] >= 1, f"input {dd} not a matrix with shape {shape}"
+    return len(shape) == 2 and shape[0] >= 1 and shape[1] >= 1
 
 
 def eye_like(X: torch.Tensor) -> torch.Tensor:

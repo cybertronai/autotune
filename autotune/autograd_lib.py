@@ -38,7 +38,7 @@ L, lyap -- lyapunov matrix
 
 """
 
-from typing import List, Optional
+from typing import List, Optional, Callable
 
 import torch
 import torch.nn as nn
@@ -56,14 +56,6 @@ _supported_losses = ['LeastSquares', 'CrossEntropy']
 _global_hooks_disabled: bool = False  # work-around for https://github.com/pytorch/pytorch/issues/25723
 _global_enforce_fresh_backprop: bool = False  # global switch to catch double backprop errors on Hessian computation
 _global_backprops_prefix = ''  # hooks save backprops to, ie param.{_backprops_prefix}backprops_list
-
-
-class LayerCov:
-    S: u.Kron         # sum of gg' where g=gradient of loss
-    sc: torch.Tensor  # unnormalized cross covariance
-    H: u.Kron         # sum of per-example Hessians
-    J: u.Kron         # sum of hh' where h=gradient of output
-    n: int            # number of terms in the sum
 
 
 
@@ -519,6 +511,111 @@ def backprop_hess(output: torch.Tensor, hess_type: str, model: Optional[nn.Modul
         model.zero_grad()
 
     _global_backprops_prefix = old_backprops_prefix
+
+
+class LayerCov:
+    """Class representing second-order information associated with a layer."""
+
+    S: u.KronFactoredCov         # expected gradient outer product: E[gg'] where g=gradient of loss
+    J: u.KronFactoredCov         # expected Jacobian outer product: E[hh'] where h=gradient of network output
+    H: u.KronFactoredCov         # expected hessian: E[H] where H is per-example hessian
+
+    def __init__(self):
+        self.S = None
+        self.J = None
+        self.H = None
+
+
+def compute_cov(model: nn.Module, loss_fn: Callable, stats_iter, batch_size, steps, loss_type='CrossEntropy'):
+    """
+
+    Augments model layers with their associated covariance matrices. At the end of the run, every layer will have an
+    attribute 'cov' of type LayerCov
+
+    Args:
+        stats_iter: data iterator
+        loss_type:
+        model:
+        loss_fn:
+        batch_size: size of batch to use for estimation
+        steps: number of steps to use to aggregate stats
+
+    Returns:
+
+    """
+
+    assert loss_type == 'CrossEntropy', 'only cross entropy is implemented'
+
+    enable_hooks()
+
+    clear_backprops(model)
+    clear_hess_backprops(model)
+    model.zero_grad()
+
+    for i in range(steps):
+        data, targets = next(stats_iter)
+        output = model(data)
+        loss = loss_fn(output, targets)
+        assert len(data) == batch_size
+
+        with u.timeit("backprop_J"):
+            backprop_hess(output, hess_type='LeastSquares')
+            update_cov(model, 'activations', 'hess_backprops_list', 'J')
+            clear_hess_backprops(model)
+
+        with u.timeit("backprop_G"):
+            loss.backward(retain_graph=True)
+            update_cov(model, 'activations', 'backprops_list', 'S')
+            clear_backprops(model)
+            model.zero_grad()
+
+        with u.timeit("backprop_H"):
+            backprop_hess(output, hess_type='CrossEntropy')
+            update_cov(model, 'activations', 'hess_backprops_list', 'H')
+            clear_hess_backprops(model)
+
+
+    disable_hooks()
+
+
+def update_cov(model, a_attr, b_attr, target_attr):
+    """Update Kronecker-factored layer covariance of a,b values.
+    For every layer in the model, will perform
+        a = layer.{a_attr}
+        b = layer.{b_attr}
+        layer.cov.{target_attr}.add_samples(a, b)
+    """
+
+    for layer in model.modules():
+        if not is_supported(layer):
+            continue
+
+        #if hasattr(layer, a_attr) and hasattr(layer, b_attr):
+        if hasattr(layer, 'cov'):
+            layer_cov = layer.cov
+        else:
+            layer_cov = LayerCov()
+            setattr(layer, 'cov', layer_cov)
+
+        a_vals = getattr(layer, a_attr)
+        a_dim = a_vals.shape[-1]
+
+        # backward vals are in a list
+        # special handling for Hess backprops, multiple vals are stacked into rank 3 tensor
+        b_vals = getattr(layer, b_attr)
+        assert type(b_vals) == list
+        if len(b_vals) > 1:
+            b_vals = torch.stack(b_vals)
+
+        else:
+            b_vals = b_vals[0]
+        b_dim = b_vals.shape[-1]
+
+        covmat = getattr(layer_cov, target_attr)
+        if covmat is None:
+            covmat = u.KronFactoredCov(a_dim, b_dim)
+            setattr(layer_cov, target_attr, covmat)
+        covmat.add_samples(a_vals, b_vals)
 
 
 def compute_stats(model, attr_name='stats', factored=False, sigma_centering=True):
