@@ -84,7 +84,8 @@ def main():
     parser.add_argument('--lmb', type=float, default=1e-3)
 
     parser.add_argument('--train_batch_size', type=int, default=64)
-    parser.add_argument('--stats_batch_size', type=int, default=10000)
+    parser.add_argument('--stats_batch_size', type=int, default=100)
+    parser.add_argument('--stats_num_batches', type=int, default=10)
     parser.add_argument('--uniform', type=int, default=0, help='use uniform architecture (all layers same size)')
     parser.add_argument('--run_name', type=str, default='noname')
 
@@ -105,7 +106,6 @@ def main():
     n = args.stats_batch_size
     model = u.SimpleFullyConnected2(d, nonlin=args.nonlin, bias=args.bias, dropout=args.dropout)
     model = model.to(gl.device)
-
 
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
     dataset = u.TinyMNIST(data_width=args.data_width, targets_width=args.targets_width, original_targets=True,
@@ -137,22 +137,6 @@ def main():
             u.log_scalars({"time/outer": 1000*(time.perf_counter() - last_outer)})
         last_outer = time.perf_counter()
 
-        # compute validation loss
-        if args.swa:
-            model.eval()
-            with u.timeit('swa'):
-                base_opt = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
-                opt = torchcontrib.optim.SWA(base_opt, swa_start=0, swa_freq=1, swa_lr=args.lr)
-                for _ in range(100):
-                    optimizer.zero_grad()
-                    data, targets = next(train_iter)
-                    model.zero_grad()
-                    output = model(data)
-                    loss = loss_fn(output, targets)
-                    loss.backward()
-                    opt.step()
-                opt.swap_swa_sgd()
-
         with u.timeit("validate"):
             val_accuracy, val_loss = validate(model, test_loader, f'test (epoch {epoch})')
             train_accuracy, train_loss = validate(model, stats_loader, f'train (epoch {epoch})')
@@ -171,37 +155,17 @@ def main():
             data, targets = next(stats_iter)
 
         if not args.skip_stats:
-            autograd_lib.enable_hooks()
-            autograd_lib.clear_backprops(model)
-            autograd_lib.clear_hess_backprops(model)
-            with u.timeit("backprop_g"):
-                output = model(data)
-                loss = loss_fn(output, targets)
-                loss.backward(retain_graph=True)
-            with u.timeit("backprop_H"):
-                autograd_lib.backprop_hess(output, hess_type='CrossEntropy')
-            autograd_lib.disable_hooks()   # TODO(y): use remove_hooks
+            autograd_lib.compute_cov(model, loss_fn, stats_iter, batch_size=args.stats_batch_size, steps=args.stats_num_batches)
 
-            with u.timeit("compute_grad1"):
-                autograd_lib.compute_grad1(model)
-            with u.timeit("compute_hess"):
-                autograd_lib.compute_hess(model, method='kron', attr_name='hess2')
-            autograd_lib.compute_stats_factored(model)
+            for (i, layer) in enumerate(model.layers):
+                param_names = {layer.weight: "weight", layer.bias: "bias"}
+                cov: autograd_lib.LayerCov = layer.cov
+                s = autograd_lib.LayerStats()
+                s.H_l2 = cov.H.value().sym_l2_norm()
+                print(f"layer-{i}={s.H_l2}")
+                u.log_scalars(u.nest_stats(f"layer-{i}", s))
 
-        for (i, layer) in enumerate(model.layers):
-            param_names = {layer.weight: "weight", layer.bias: "bias"}
-            for param in [layer.weight, layer.bias]:
-
-                if param is None:
-                    continue
-
-                if not hasattr(param, 'stats'):
-                    continue
-                s = param.stats
-                param_name = param_names[param]
-                u.log_scalars(u.nest_stats(f"{param_name}", s))
-
-        # gradient steps
+            # gradient steps
         model.train()
         last_inner = 0
         for i in range(args.train_steps):
