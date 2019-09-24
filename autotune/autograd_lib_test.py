@@ -15,7 +15,7 @@ import torch.nn as nn
 def test_hooks():
 
     def simple_model(d, num_layers):
-        """Creates linear neural network initialized to identity"""
+        """Creates simple linear neural network initialized to identity"""
         layers = []
         for i in range(num_layers):
             layer = nn.Linear(d, d, bias=False)
@@ -27,21 +27,18 @@ def test_hooks():
     model = simple_model(d, num_layers=5)
     autograd_lib.register(model)
 
-    A1 = autograd_lib.ModuleDict()
-    A2 = autograd_lib.ModuleDict()
-    A3 = autograd_lib.ModuleDict()
-
+    A1, A2, A3 = {}, {}, {}
     x = torch.ones(1, d)
 
-    with autograd_lib.save_activations(A3):
+    with autograd_lib.save_activations(A1):
         y = model(2*x)
 
-    with autograd_lib.save_activations(A1):
-        with autograd_lib.save_activations(A2):
+    with autograd_lib.save_activations(A2):
+        with autograd_lib.save_activations(A3):
             y = model(x)
 
-    B1 = autograd_lib.ModuleDict()
-    B2 = autograd_lib.ModuleDict()
+    B1 = {}
+    B2 = {}
     with autograd_lib.save_backprops(B1):
         y.backward(x, retain_graph=True)
 
@@ -49,9 +46,9 @@ def test_hooks():
         y.backward(2*x)
 
     for layer in model:
-        assert A1[layer] == x
+        assert A1[layer] == 2*x
         assert A2[layer] == x
-        assert A3[layer] == 2*x
+        assert A3[layer] == x
         assert B1[layer] == [x]
         assert B2[layer] == [2*x]
 
