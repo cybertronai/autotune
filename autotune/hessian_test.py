@@ -368,6 +368,60 @@ def test_hessian_multibatch():
     u.check_close(cov.H.value(), hess2)
 
 
+def _test_refactored_stats():
+    gl.project_name = 'test'
+    gl.logdir_base = '/tmp/runs'
+    run_name = 'test_hessian_multibatch'
+    u.setup_logdir(run_name=run_name)
+
+    loss_type = 'CrossEntropy'
+    data_width = 2
+    n = 4
+    d1 = data_width ** 2
+    o = 10
+    d = [d1, o]
+
+    model = u.SimpleFullyConnected2(d, bias=False, nonlin=False)
+    model = model.to(gl.device)
+
+    dataset = u.TinyMNIST(data_width=data_width, dataset_size=n, loss_type=loss_type)
+    stats_loader = torch.utils.data.DataLoader(dataset, batch_size=n, shuffle=False)
+    stats_iter = u.infinite_iter(stats_loader)
+
+    if loss_type == 'LeastSquares':
+        loss_fn = u.least_squares
+    else:  # loss_type == 'CrossEntropy':
+        loss_fn = nn.CrossEntropyLoss()
+
+    autograd_lib.add_hooks(model)
+    gl.reset_global_step()
+    last_outer = 0
+
+    stats_iter = u.infinite_iter(stats_loader)
+    stats_data, stats_targets = next(stats_iter)
+    data, targets = stats_data, stats_targets
+
+    covG = {layer: u.KronFactoredCov for layer in model.layers}
+    covH = {layer: u.KronFactoredCov for layer in model.layers}
+    covJ = {layer: u.KronFactoredCov for layer in model.layers}
+
+    autograd_lib.register(model)
+
+    A = {}
+    with autograd_lib.forward_save_activations(A):
+        output = model(data)
+        loss = loss_fn(output, targets)
+
+    # saves backprop covariances
+    autograd_lib.backward_cov(covG, loss, A)
+    autograd_lib.backward_cov(covH, output, A, xent_square_root)
+    autograd_lib.backward_cov(covJ, output, A, identity)
+
+    grad_cov = KronFactored(covA, covG.cov, covG.cross)
+    hess = KronFactored(covA, covH.cov, covH.cross)
+    grad_cov = KronFactored(covA, covJ.cov, covJ.cross)
+
+
 def test_hessian_conv():
     """Test conv hessian computation using factored and regular method."""
 

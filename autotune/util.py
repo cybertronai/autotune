@@ -284,6 +284,9 @@ class Vecr(SpecialForm):
     def __str__(self):
         return str(to_numpy(self.normal_form()))
 
+class Cov(SpecialForm):
+    pass
+
 
 class KronFactoredCov(SpecialForm):
     """Kronecker factored covariance matrix. Covariance matrix of random variable ba' constructed from paired
@@ -361,22 +364,23 @@ class KronFactoredCov(SpecialForm):
     def wilks(self) -> torch.Tensor:
         """Returns Wilk's statistic for the test of independence of two terms"""
 
+        covA, covB = self.value()
+        covAB = self.cross()
+
         with u.timeit('wilks'):
-            covA = self.AA / self.a_num
-            covB = self.BB / self.b_num
-            covAB = self.cross()
-            K = symsqrt(covA, inverse=True) @ covAB @ symsqrt(covB, inverse=True)
+            K = isymsqrt(covA) @ covAB @ isymsqrt(covB)
             U, S, V = robust_svd(K)
-            vals = 1-square(torch.diag(S))
+            vals = 1. - square(torch.diag(S))
             return torch.prod(vals)
+
 
     def bartlett(self):
         """Returns Bartlett statistic for the test of independence."""
         q = self.a_dim
         p = self.b_dim
         n = self.ab_num
-        val = -(n - (p+q+3)/2) * torch.log(self.wilks())
-        print(val)
+        val = -(n - (p+q+3.)/2.) * torch.log(self.wilks())
+        print('bartlett, ', val, 'mean', q*p)
         return val
 
     def prob_dep(self):
@@ -389,7 +393,7 @@ class KronFactoredCov(SpecialForm):
         """Returns number of standard deviations away from independence."""
         from scipy.stats import chi2
         df = self.a_dim * self.b_dim
-        return (self.bartlett() - df) / 4 * np.sqrt(to_numpy(df))
+        return (self.bartlett() - df) / (4 * np.sqrt(to_numpy(df)))
 
     def __str__(self):
         return f"KronFactoredCov(AA=\n{self.AA},\n BB={self.BB})"
@@ -398,6 +402,8 @@ class KronFactoredCov(SpecialForm):
 def square(a: torch.Tensor):
     return a*a
 
+
+# TODO(y): rename into sym-kron
 class Kron(SpecialForm):
     """Represents kronecker product of two symmetric matrices"""
     LL: torch.Tensor  # left factor
@@ -406,12 +412,15 @@ class Kron(SpecialForm):
     def __init__(self, LL, RR):
         LL = to_pytorch(LL)
         RR = to_pytorch(RR)
+
+        assert is_matrix(LL), f"shape check fail with {LL.shape}"
+        assert is_matrix(RR), f"shape check fail with {RR.shape}"
         self.LL = LL
         self.RR = RR
 
         # todo(y): remove this check onces it's split into KronFactored and SymmetricKronFactored
-        assert LL.shape[0] == LL.shape[1]
-        assert RR.shape[0] == RR.shape[1]
+        assert LL.shape[0] == LL.shape[1],  f"shape check fail with {LL.shape}"
+        assert RR.shape[0] == RR.shape[1],  f"shape check fail with {RR.shape}"
 
         self.lsize = LL.shape[0]
         self.rsize = RR.shape[0]
@@ -540,6 +549,9 @@ class Kron(SpecialForm):
     def __str__(self):
         return f"Kron(\n{self.LL},\n {self.RR})"
 
+    def __iter__(self):
+        return iter([self.LL, self.RR])
+
 
 class MeanKronFactored(SpecialForm):
     """Factored representation as a mean of kronecker products"""
@@ -612,6 +624,13 @@ def has_nan(mat):
     return torch.sum(torch.isnan(mat)) > 0
 
 
+def fro_norm(mat: torch.Tensor):
+    return torch.norm(mat.flatten())
+
+
+frobenius_norm = fro_norm
+
+
 def l2_norm(mat: torch.Tensor):
     """Largest eigenvalue."""
     try:
@@ -673,12 +692,6 @@ def sym_erank(mat):
     return torch.trace(mat) / sym_l2_norm(mat)
 
 
-def regularize_mat(mat, eps):
-    rtol = l2_norm(mat) * eps
-    atol = 1e-12
-    return mat + torch.eye(mat.shape[0]) * (rtol + atol)
-
-
 def lyapunov_spectral(A, B, cond=None):
     u.check_symmetric(A)
     u.check_symmetric(B)
@@ -724,6 +737,11 @@ def lyapunov_svd(A, C, rtol=1e-4, eps=1e-7, use_svd=False):
         print(f"Warning, error {relative_error} encountered in lyapunov_svd")
 
     return X
+
+
+def deleteme():
+    t = torch.ones(3, dtype=torch.float64)
+    a = t / 2.
 
 
 def lyapunov_svd2(A, C, rtol=1e-4, eps=1e-7, use_svd=False):
@@ -1060,6 +1078,10 @@ def filter_evals(vals, cond=None, remove_small=True, remove_negative=True):
     return vals
 
 
+def isymsqrt(mat, *args):
+    return symsqrt(mat, inverse=True, *args)
+
+
 def symsqrt(mat, cond=None, return_rank=False, inverse=False):
     """Computes the symmetric square root of a symmetric matrix. Throws away small and negative eigenvalues."""
 
@@ -1114,15 +1136,43 @@ def robust_svd(mat: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Ten
     """Try to perform SVD and handle errors.
     """
 
+    assert is_matrix(mat), f"shape {mat.shape}"
     try:
         U, S, V = torch.svd(mat)
     except Exception as e:  # this can fail, see https://github.com/pytorch/pytorch/issues/25978
-        s = torch.symeig(mat).eigenvalues
-        eps = get_condition(mat.dtype) * torch.max(abs(s))
+        if is_square_matrix(mat):
+            s = torch.symeig(mat).eigenvalues
+            eps = get_condition(mat.dtype) * torch.max(abs(s))
+        else:
+            eps = get_condition(mat.dtype) * u.frobenius_norm(mat)/mat.shape[0]
         print(f"Warning, SVD diverged with {e}, regularizing with {eps}")
-        mat = mat + torch.eye(mat.shape[0]) * eps * 2
+        mat = regularize_mat2(mat, eps * 2)
         U, S, V = torch.svd(mat)
     return U, S, V
+
+
+def regularize_mat(mat, eps):
+    rtol = l2_norm(mat) * eps
+    atol = 1e-12
+    return mat + torch.eye(mat.shape[0]) * (rtol + atol)
+
+
+def regularize_mat2(mat, eps):
+    """Adds a multiple of identity to matrix."""
+    assert is_matrix(mat), f"{mat.shape}"
+    if mat.shape[0] == mat.shape[1]:
+        return mat + torch.eye(mat.shape[0]).to(gl.device) * eps
+    if mat.shape[0] > mat.shape[1]:
+        transpose = True
+        mat = mat.T
+    else:
+        transpose = False
+    reg = torch.cat([torch.eye(mat.shape[0]), torch.zeros(mat.shape[0], mat.shape[1]-mat.shape[0])], dim=1)
+    mat = mat + reg.to(gl.device)*eps
+    if transpose:
+        return mat.T
+    else:
+        return mat
 
 
 def symsqrt_dist(cov1: torch.Tensor, cov2: torch.Tensor) -> float:
@@ -1371,6 +1421,7 @@ class SimpleModel(nn.Module):
 # TODO(y): rename to LeastSquaresLoss
 def least_squares(data, targets=None):
     """Least squares loss (like MSELoss, but an extra 1/2 factor."""
+    assert is_matrix(data), f"Expected matrix, got {data.shape}"
     if targets is None:
         targets = torch.zeros_like(data)
     err = data - targets.view(-1, data.shape[1])
@@ -2415,6 +2466,7 @@ def is_matrix(dd) -> bool:
 
 def eye_like(X: torch.Tensor) -> torch.Tensor:
     """Create identity matrix of same shape as X."""
+    # TODO(y): dedup with regularize to support rectangular matrices
     assert is_square_matrix(X)
     d = X.shape[0]
     return torch.eye(d).type(X.dtype).to(X.device)

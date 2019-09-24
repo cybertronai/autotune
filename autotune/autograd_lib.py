@@ -906,3 +906,108 @@ def compute_stats_factored(model, attr_name='stats', sigma_centering=True):
             u.log_scalars(u.nest_stats(f"{param_name}", s))
 
             setattr(param, attr_name, s)
+
+
+### Refactoring
+
+
+class Settings(object):
+    forward_hooks: List[Callable]
+    backward_hooks: List[Callable]
+    model: Optional[nn.Module]
+
+
+class ModuleDict(dict):
+    pass
+
+
+settings = Settings()
+
+
+def _forward_hook(layer: nn.Module, input: List[torch.Tensor], output: torch.Tensor):
+    for hook in settings.forward_hooks:
+        hook(layer, input, output)
+
+
+def _backward_hook(layer: nn.Module, _input, output):
+    for hook in settings.backward_hooks:
+        hook(layer, _input, output)
+
+
+def register(model: nn.Module):
+    """
+    Registers given model with autograd_lib. This allows user to use decorators like
+    with forward_save_activations(A)
+    """
+    global settings
+    _global_hooks_disabled = False
+
+    # TODO(y): make it work for multiple models and test. This needs check that hook list remains a singleton
+    assert 'handles' not in vars(settings), "Already called register in this thread"
+    settings.handles = []
+    settings.model = model
+    settings.forward_hooks = []
+    settings.backward_hooks = []
+
+    layer: nn.Module
+    for layer in model.modules():
+        if _layer_type(layer) in _supported_layers:
+            settings.handles.append(layer.register_forward_hook(_forward_hook))
+            layer.register_backward_hook(_backward_hook)   # don't save handle, https://github.com/pytorch/pytorch/issues/25723
+
+
+from contextlib import contextmanager
+
+
+@contextmanager
+def save_activations(storage: ModuleDict):
+    """Saves activations to given dict.
+    """
+
+    assert settings.model, "autograd_lib not initialized, call register(model)"
+
+    def hook(layer: nn.Module, input: List[torch.Tensor], output: torch.Tensor):
+        if layer in storage:
+            print("warning, overwriting existing activation for layer ", layer)
+        storage[layer] = input[0].detach()
+
+    settings.forward_hooks.append(hook)
+    yield
+    settings.forward_hooks.pop()
+
+
+@contextmanager
+def save_backprops(storage: ModuleDict):
+    """Saves backprops list to given dict.
+    """
+
+    assert settings.model, "autograd_lib not initialized, call register(model)"
+
+    def hook(layer: nn.Module, _input, output):
+        storage.setdefault(layer, []).append(output[0].detach())
+
+    settings.backward_hooks.append(hook)
+    yield
+    settings.backward_hooks.pop()
+
+
+def backward_kron(target, tensor, A, A_cov, gradient):
+    """Calls backward, and aggrates covariance of backward values. If activations are provided, also updates cross covariance"""
+
+    def hook(module: nn.Module, _input, output):
+        """Appends all backprops (Jacobian Lops from upstream) to layer.backprops_list.
+        Using list in order to capture multiple backprop values for a single batch. Use util.clear_backprops(model)
+        to clear all saved values.
+        """
+        backprops = output[0].detach()
+        buffer[module].cov = KronFactoredCov
+        if activations:
+            activations = activations[module]
+
+        # compute covariance matrix
+
+
+    with backward_hook(hook):
+        tensor.backwards(gradient)
+
+

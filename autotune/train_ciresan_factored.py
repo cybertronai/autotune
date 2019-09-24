@@ -92,6 +92,7 @@ def main():
 
     gl.args = parser.parse_args()
     args = gl.args
+    gl.hacks_disable_hess = args.disable_hess
     u.seed_random(1)
 
     gl.project_name = 'train_ciresan'

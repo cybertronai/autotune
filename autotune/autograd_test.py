@@ -26,6 +26,7 @@ fold = torch.nn.functional.fold
 def test_autoencoder_minimize():
     """Minimize autoencoder for a few steps."""
     u.seed_random(1)
+    torch.set_default_dtype(torch.float32)
     data_width = 4
     targets_width = 2
 
@@ -670,6 +671,7 @@ def test_end2end_grad1():
 
 
 def test_end2end_hess():
+    u.setup_logdir('test')
     subtest_hess_type('CrossEntropy')
     subtest_hess_type('LeastSquares')
 
