@@ -916,6 +916,10 @@ class Settings(object):
     backward_hooks: List[Callable]
     model: Optional[nn.Module]
 
+    def __init__(self):
+        self.model = None
+        self.forward_hooks = None
+        self.backward_hooks = None
 
 class ModuleDict(dict):
     pass
@@ -956,6 +960,12 @@ def register(model: nn.Module):
             layer.register_backward_hook(_backward_hook)   # don't save handle, https://github.com/pytorch/pytorch/issues/25723
 
 
+# TODO(y): make this actually remove handles
+def unregister():
+    del settings.handles
+
+
+
 from contextlib import contextmanager
 
 
@@ -989,6 +999,24 @@ def save_backprops(storage: ModuleDict):
     settings.backward_hooks.append(hook)
     yield
     settings.backward_hooks.pop()
+
+
+def backward(output, kind: str, retain_graph=False):
+    """Custom backprop.
+    """
+
+    assert u.is_matrix(output), "Only support rank-2 outputs."""
+    n, o = output.shape
+
+    hess = []
+    if kind == 'identity':
+        batch_size, output_size = output.shape
+        id_mat = u.eye(output_size)
+        for out_idx in range(output_size):
+            hess.append(torch.stack([id_mat[out_idx]] * batch_size))
+
+    for idx in range(o):
+        output.backward(hess[idx], retain_graph=(retain_graph or idx < o-1))
 
 
 def backward_kron(target, tensor, A, A_cov, gradient):

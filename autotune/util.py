@@ -121,6 +121,10 @@ def kron(a: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]], b: Optional[
     if isinstance(a, Tuple):
         assert b is None
         a, b = a
+
+    if is_vector(a) and is_vector(b):
+        return torch.einsum('i,j->ij', a, b).flatten()
+
     # print('inside a', a)
     # print('inside b', b)
     result = torch.einsum("ab,cd->acbd", a, b)
@@ -867,8 +871,10 @@ def truncated_lyapunov_rho(A, C):
     return rho, erank, spectrum
 
 
-def outer(x, y):
-    """Outer product of xy', treating x,y as column vectors."""
+def outer(x, y=None):
+    """Outer product of xy', treating x,y as column vectors. If y is not specified, compute xx'"""
+    if y is None:
+        y = x
     return x.unsqueeze(1) @ y.unsqueeze(0)
 
 
@@ -943,9 +949,13 @@ def to_pytorch(x) -> torch.Tensor:
         return from_numpy(to_numpy(x))
 
 
+def to_pytorches(*xs) -> Tuple[torch.Tensor, ...]:
+    return (to_pytorch(x) for x in xs)
+
+
 def to_numpy(x, dtype: np.dtype = None) -> np.ndarray:
     """
-    Convert numeric object to floating point numpy array. If dtype is not specified, use pytorch default dtype.
+    Convert numeric object to floating point numpy array. If dtype is not specified, use PyTorch default dtype.
 
     Args:
         x: numeric object
@@ -967,6 +977,10 @@ def to_numpy(x, dtype: np.dtype = None) -> np.ndarray:
     if type(x) == torch.Tensor:
         dtype = pytorch_dtype_to_floating_numpy_dtype(x.dtype)
         return x.detach().cpu().numpy().astype(dtype)
+
+    # list or tuple, iterate inside to convert PyTorch arrrays
+    if type(x) in [list, tuple]:
+        x = [to_numpy(r) for r in x]
 
     # Some Python type, use numpy conversion
     result = np.array(x, dtype=dtype)
@@ -1204,6 +1218,12 @@ def check_equal(observed, truth, rtol=1e-9, atol=1e-12, label: str= '') -> None:
     Assert fail any entries in two arrays are not close to each to desired tolerance. See np.allclose for meaning of rtol, atol
 
     """
+
+    # special handling for lists, which could contain
+    #if type(observed) == List and type(truth) == List:
+    #    for a, b in zip(observed, truth):
+    #        check_equal(a, b)
+
     truth = to_numpy(truth)
     observed = to_numpy(observed)
 
@@ -2459,9 +2479,18 @@ def is_square_matrix(dd):
     return len(dd.shape) == 2 and dd.shape[0] == dd.shape[1] and dd.shape[0] >= 1
 
 
+def is_vector(dd) -> bool:
+    shape = dd.shape
+    return len(shape) == 1 and shape[0] >= 1
+
+
 def is_matrix(dd) -> bool:
     shape = dd.shape
     return len(shape) == 2 and shape[0] >= 1 and shape[1] >= 1
+
+
+def eye(d: int) -> torch.Tensor:
+    return torch.eye(d).to(gl.device)
 
 
 def eye_like(X: torch.Tensor) -> torch.Tensor:

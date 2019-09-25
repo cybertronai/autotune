@@ -120,8 +120,7 @@ def test_explicit_hessian():
     model: u.SimpleFullyConnected2 = u.SimpleFullyConnected2([2, 2, 2], bias=False)
     model.layers[0].weight.data.copy_(X)
 
-    # Linear layers are equivalent to multiplying on the right, treating data matrices as rows of datapoints
-    # Transpose to match previous results
+    # Transpose to match previous results, layers treat dim0 as batch dimension
     u.check_equal(model.layers[0](A.t()).t(), [[5, -20], [-16, -8]])  # XA = (A'X0)'
 
     model.layers[1].weight.data.copy_(B.t())
