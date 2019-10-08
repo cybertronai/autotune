@@ -37,7 +37,7 @@ S, sigma -- noise
 L, lyap -- lyapunov matrix
 
 """
-
+import math
 from typing import List, Optional, Callable, Tuple
 
 import torch
@@ -1359,20 +1359,13 @@ def backward_hessian(output, loss='CrossEntropy', strategy='exact', retain_graph
     assert strategy in ('exact', 'sampled')
     assert u.is_matrix(output)
 
+    # use Cholesky-like decomposition from https://www.wolframcloud.com/obj/yaroslavvb/newton/square-root-formulas.nb
     n, o = output.shape
-    batch = F.softmax(output, dim=1)
+    p = F.softmax(output, dim=1)
 
-    # form a batch of per-example Hessians
     mask = torch.eye(o).expand(n, o, o)
-    diag_part = batch.unsqueeze(2).expand(n, o, o) * mask
-    outer_prod_part = torch.einsum('ij,ik->ijk', batch, batch)
-    hess = diag_part - outer_prod_part
-    assert hess.shape == (n, o, o)
-
-    for i in range(n):
-        hess[i, :, :] = u.symsqrt(hess[i, :, :])
+    diag_part = p.sqrt().unsqueeze(2).expand(n, o, o) * mask
+    hess_sqrt = diag_part - torch.einsum('ij,ik->ijk', p.sqrt(), p)   # n, o, o
 
     for out_idx in range(o):
-        sample = hess[:, out_idx, :]
-        assert sample.shape == (n, o)
-        output.backward(sample, retain_graph=(retain_graph or out_idx < o - 1))
+        output.backward(hess_sqrt[:, out_idx, :], retain_graph=(retain_graph or out_idx < o - 1))
