@@ -245,41 +245,38 @@ def test_gradient_norms():
 def test_full_hessian():
     u.seed_random(1)
     A, model = create_toy_model()
-
+    data = A.t()
+    #    data = data.repeat(3, 1)
     activations = {}
 
+    hess = defaultdict(float)
     def save_activations(layer, a, _):
-        if layer != model.layers[0]:
-            return
         activations[layer] = a
 
     with autograd_lib.module_hook(save_activations):
         Y = model(A.t())
         loss = torch.sum(Y * Y) / 2
 
-    hess = [0]
-
     def compute_hess(layer, _, B):
-        if layer != model.layers[0]:
-            return
         A = activations[layer]
         n = A.shape[0]
 
         di = A.shape[1]
         do = B.shape[1]
 
-        Jo = torch.einsum("ni,nj->nij", B, A).reshape(n, -1)
-        hess[0] += torch.einsum('ni,nj->ij', Jo, Jo)
+        BA = torch.einsum("nl,ni->nli", B, A)
+        hess[layer] += torch.einsum('nli,nkj->likj', BA, BA)
 
     with autograd_lib.module_hook(compute_hess):
         autograd_lib.backprop_identity(Y, retain_graph=True)
 
     # check against autograd
-    hess0 = u.hessian(loss, model.layers[0].weight).reshape([4, 4])
-    u.check_equal(hess[0], hess0)
+    hess_autograd = u.hessian(loss, model.layers[0].weight)
+    hess0 = hess[model.layers[0]]
+    u.check_equal(hess_autograd, hess0)
 
     # check against manual solution
-    u.check_equal(hess[0], [[425, -75, 170, -30], [-75, 225, -30, 90], [170, -30, 680, -120], [-30, 90, -120, 360]])
+    u.check_equal(hess0.reshape(4, 4), [[425, -75, 170, -30], [-75, 225, -30, 90], [170, -30, 680, -120], [-30, 90, -120, 360]])
 
 
 def test_full_fisher():
@@ -370,6 +367,7 @@ def test_full_fisher_multibatch():
 def test_kfac_hessian():
     A, model = create_toy_model()
     data = A.t()
+    data = data.repeat(7, 1)
     n = float(len(data))
 
     activations = {}
@@ -384,17 +382,49 @@ def test_kfac_hessian():
     for x in data:
         with autograd_lib.module_hook(save_activations):
             y = model(x)
+            o = y.shape[1]
             loss = torch.sum(y * y) / 2
 
         with autograd_lib.module_hook(compute_hessian):
             autograd_lib.backprop_identity(y)
 
     hess0 = hess[model.layers[0]]
-    result = u.kron(hess0.BB / n, hess0.AA / n)
+    result = u.kron(hess0.BB / n, hess0.AA / o)
 
     # check result against autograd
     loss = u.least_squares(model(data), aggregation='sum')
     hess0 = u.hessian(loss, model.layers[0].weight).reshape(4, 4)
+    u.check_equal(hess0, result)
+
+
+def test_full_hessian_multibatch():
+    A, model = create_toy_model()
+    data = A.t()
+    data = data.repeat(3, 1)
+    n = float(len(data))
+
+    activations = {}
+    hess = defaultdict(float)
+    def save_activations(layer, a, _):
+        activations[layer] = a
+    def compute_hessian(layer, _, B):
+        A = activations[layer]
+        BA = torch.einsum("nl,ni->nli", B, A)
+        hess[layer] += torch.einsum('nli,nkj->likj', BA, BA)
+
+    for x in data:
+        with autograd_lib.module_hook(save_activations):
+            y = model(x)
+            loss = torch.sum(y * y) / 2
+
+        with autograd_lib.module_hook(compute_hessian):
+            autograd_lib.backprop_identity(y)
+
+    result = hess[model.layers[0]]
+
+    # check result against autograd
+    loss = u.least_squares(model(data), aggregation='sum')
+    hess0 = u.hessian(loss, model.layers[0].weight)
     u.check_equal(hess0, result)
 
 
@@ -441,11 +471,12 @@ def test_diagonal_fisher():
 
 
 if __name__ == '__main__':
-    test_gradient_norms()
+    # test_gradient_norms()
     test_full_hessian()
-    test_diagonal_hessian()
-    test_full_fisher()
-    test_full_fisher_multibatch()
+    # test_diagonal_hessian()
+    # test_full_fisher()
+    # test_full_fisher_multibatch()
+    test_full_hessian_multibatch()
     test_kfac_hessian()
     # test_hooks()
     # test_activations_contextmanager()

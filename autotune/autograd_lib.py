@@ -1323,7 +1323,7 @@ def backward_identity(tensor):
     return hess
 
 
-# TODO(y): rename to backward
+# TODO(y): rename to backward or backward_jacobian
 def backprop_identity(tensor,  retain_graph=False) -> None:
     """
     Helper to find Jacobian with respect to given tensor. Backpropagates a row of identity matrix
