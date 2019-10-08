@@ -42,11 +42,20 @@ def test_hooks():
 
     B1 = {}
     B2 = {}
-    with autograd_lib.save_backprops(B1):
+    with autograd_lib.extend_backprops(B1):
         y.backward(x, retain_graph=True)
 
-    with autograd_lib.save_backprops(B2):
+    model[2].weight.requires_grad=False
+    for layer in model:
+        del layer.weight.grad
+
+    # model.clear_grads()
+    with autograd_lib.extend_backprops(B2):
         y.backward(2*x)
+
+    print(B2.values())
+    for layer in model:
+        print(layer.weight.grad)
 
     for layer in model:
         assert A1[layer] == 2*x
@@ -58,7 +67,24 @@ def test_hooks():
     autograd_lib.unregister()
 
 
-def test_backprop():
+def _test_activations_contextmanager():
+    d = 5
+    model = simple_model(d, num_layers=2)
+    autograd_lib.register(model)
+
+    A1, A2, A3 = {}, {}, {}
+    x = torch.ones(1, d)
+
+    with autograd_lib.save_activations(A1):
+        y = model(x)
+        with autograd_lib.save_activations(A2):
+            z = model[1](x)
+
+    context_ids = autograd_lib.global_settings.last_captured_activations_contextid
+    assert context_ids[model[1]] == context_ids[model[0]]+1
+
+
+def _test_backprop():
     d = 1
     model = simple_model(d, num_layers=5)
     autograd_lib.register(model)
@@ -164,8 +190,142 @@ def test_jacobian():
     u.check_equal(hess1, hess.reshape(hess1.shape))
 
 
+def test_diagonal_hessian():
+    pass
+
+
+def test_diagonal_fisher():
+    pass
+
+
+def create_toy_model():
+    """
+    Create model from https://www.wolframcloud.com/obj/yaroslavvb/newton/linear-jacobians-and-hessians.nb
+    PyTorch works on transposed representation, hence to obtain Y from notebook, do model(A.T).T
+    """
+
+    model: u.SimpleFullyConnected2 = u.SimpleFullyConnected2([2, 2, 2], bias=False)
+    autograd_lib.register(model)
+
+    A = torch.tensor([[-1., 4], [3, 0]])
+    B = torch.tensor([[-4., 3], [2, 6]])
+    X = torch.tensor([[-5., 0], [-2, -6]], requires_grad=True)
+
+    model.layers[0].weight.data.copy_(X)
+    model.layers[1].weight.data.copy_(B.t())
+    return A, model
+
+
+def test_gradient_norms():
+    """Per-example gradient norms."""
+    u.seed_random(1)
+    A, model = create_toy_model()
+
+    activations = {}
+    def save_activations(layer, a, _):
+        if layer != model.layers[0]:
+            return
+        activations[layer] = a
+
+    with autograd_lib.module_hook(save_activations):
+        Y = model(A.t())
+        loss = torch.sum(Y * Y) / 2
+
+    norms = {}
+    def compute_norms(layer, _, b):
+        if layer != model.layers[0]:
+            return
+        a = activations[layer]
+        del activations[layer]     # release memory kept by activations
+        norms[layer] = (a*a).sum(dim=1)*(b*b).sum(dim=1)
+
+    with autograd_lib.module_hook(compute_norms):
+        loss.backward()
+
+    for layer in norms:
+        print(layer, norms[layer])
+
+    u.check_equal(norms[model.layers[0]], [3493250, 9708800])
+
+
+def test_full_hessian():
+    u.seed_random(1)
+    A, model = create_toy_model()
+
+    A = torch.tensor([[-1., 4], [3, 0]])
+    B = torch.tensor([[-4., 3], [2, 6]])
+    X = torch.tensor([[-5., 0], [-2, -6]], requires_grad=True)
+
+    Y = B.t() @ X @ A
+    u.check_equal(Y, [[-52, 64], [-81, -108]])
+    loss = torch.sum(Y * Y) / 2
+    hess0 = u.hessian(loss, X).reshape([4, 4])
+    hess1 = u.Kron(A @ A.t(), B @ B.t())
+
+    u.check_equal(loss, 12512.5)
+    u.check_equal(hess1.commute(), hess0)
+
+    activations = {}
+    def save_activations(layer, a, _):
+        if layer != model.layers[0]:
+            return
+        print("saving activations for ", layer)
+        activations[layer] = a
+
+    with autograd_lib.module_hook(save_activations):
+        Y = model(A.t())
+        loss = torch.sum(Y * Y) / 2
+
+    norms = {}
+    hess = [0]
+    def compute_hess(layer, _, B):
+        if layer != model.layers[0]:
+            return
+        A = activations[layer]
+        n = A.shape[0]
+
+        di = A.shape[1]
+        do = B.shape[1]
+
+        Jo = torch.einsum("ni,nj->nij", B, A).reshape(n, -1)
+        hess[0] += torch.einsum('ni,nj->ij', Jo, Jo)
+
+    with autograd_lib.module_hook(compute_hess):
+        autograd_lib.backprop_identity(Y, retain_graph=True)
+
+    # check against autograd
+    hess0 = u.hessian(loss, model.layers[0].weight).reshape([4, 4])
+    u.check_equal(hess[0], hess0)
+
+    # check against manual solution
+    u.check_equal(hess[0], [[425, -75, 170, -30], [-75, 225, -30, 90], [170, -30, 680, -120], [-30, 90, -120, 360]])
+
+
+def test_full_fisher():
+    pass
+
+
+def test_kfac_hessian():
+    pass
+
+
+def test_kfac_fisher():
+    pass
+
+
+def test_diagonal_hessian():
+    pass
+
+
+def test_diagonal_fisher():
+    pass
+
+
 if __name__ == '__main__':
+    # test_gradient_norms()
+    test_full_hessian()
     # test_hooks()
-    test_jacobian()
+    # test_activations_contextmanager()
+    # test_jacobian()
     # test_backprop()
     # u.run_all_tests(sys.modules[__name__])

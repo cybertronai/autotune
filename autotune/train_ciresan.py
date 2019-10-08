@@ -67,7 +67,7 @@ def main():
     parser.add_argument('--skip_stats', type=int, default=1, help='skip all stats collection')
 
     parser.add_argument('--dataset_size', type=int, default=60000)
-    parser.add_argument('--train_steps', type=int, default=1000, help="this many train steps between stat collection")
+    parser.add_argument('--train_steps', type=int, default=5, help="this many train steps between stat collection")
     parser.add_argument('--stats_steps', type=int, default=1000000, help="total number of curvature stats collections")
 
     parser.add_argument('--full_batch', type=int, default=0, help='do stats on the whole dataset')
@@ -80,6 +80,7 @@ def main():
     parser.add_argument('--swa', type=int, default=1)
     parser.add_argument('--lmb', type=float, default=1e-3)
     parser.add_argument('--uniform', type=int, default=0, help="all layers same size")
+    parser.add_argument('--redundancy', type=int, default=0, help="duplicate all layers this many times")
     args = parser.parse_args()
 
     attemp_count = 0
@@ -99,7 +100,10 @@ def main():
         d = [784, 2500, 2000, 1500, 1000, 500, 10]
     o = 10
     n = args.stats_batch_size
-    model = u.SimpleFullyConnected(d, nonlin=args.nonlin, bias=args.bias, dropout=args.dropout)
+    if args.redundancy:
+        model = u.RedundantFullyConnected2(d, nonlin=args.nonlin, bias=args.bias, dropout=args.dropout, redundancy=args.redundancy)
+    else:
+        model = u.SimpleFullyConnected2(d, nonlin=args.nonlin, bias=args.bias, dropout=args.dropout)
     model = model.to(gl.device)
 
     try:
@@ -109,6 +113,7 @@ def main():
             wandb.tensorboard.patch(tensorboardX=False)
             wandb.config['train_batch'] = args.train_batch_size
             wandb.config['stats_batch'] = args.stats_batch_size
+            wandb.config['redundancy'] = args.redundancy
     except Exception as e:
         print(f"wandb crash with {e}")
 

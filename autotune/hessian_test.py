@@ -349,7 +349,7 @@ def test_hessian_multibatch():
     hess1 = layer.weight.hess
     u.check_close(hess0.reshape(hess1.shape), hess1, atol=1e-8, rtol=1e-6)
 
-    # compute Hessian using factored method. Because Hessian depends on examples, factoring is not exact, raise tolerance
+    # compute Hessian using factored method. Because Hessian depends on examples for cross entropy, factoring is not exact, raise tolerance
     autograd_lib.compute_hess(model, method='kron', attr_name='hess2', vecr_order=True)
     hess2 = layer.weight.hess2
     u.check_close(hess1, hess2, atol=1e-3, rtol=1e-1)
@@ -400,25 +400,32 @@ def _test_refactored_stats():
     stats_data, stats_targets = next(stats_iter)
     data, targets = stats_data, stats_targets
 
-    covG = {layer: u.KronFactoredCov for layer in model.layers}
-    covH = {layer: u.KronFactoredCov for layer in model.layers}
-    covJ = {layer: u.KronFactoredCov for layer in model.layers}
+    covG = autograd_lib.layer_cov_dict()
+    covH = autograd_lib.layer_cov_dict()
+    covJ = autograd_lib.layer_cov_dict()
 
     autograd_lib.register(model)
 
     A = {}
-    with autograd_lib.forward_save_activations(A):
+    with autograd_lib.save_activations(A):
         output = model(data)
         loss = loss_fn(output, targets)
 
-    # saves backprop covariances
-    autograd_lib.backward_cov(covG, loss, A)
-    autograd_lib.backward_cov(covH, output, A, xent_square_root)
-    autograd_lib.backward_cov(covJ, output, A, identity)
+    Acov = autograd_lib.ModuleDict(autograd_lib.SecondOrder)
+    for layer, activations in A.items():
+        Acov[layer].accumulate(activations)
 
-    grad_cov = KronFactored(covA, covG.cov, covG.cross)
-    hess = KronFactored(covA, covH.cov, covH.cross)
-    grad_cov = KronFactored(covA, covJ.cov, covJ.cross)
+    autograd_lib.set_default_activations(A)   # set activations to use by default when constructing cov matrices
+    autograd_lib.set_default_Acov(Acov)
+
+    # saves backprop covariances
+    autograd_lib.backward_accum(loss, 1, covG)
+    autograd_lib.backward_accum(output, autograd_lib.xent_bwd, covH)
+    autograd_lib.backward_accum(output, autograd_lib.identity_bwd, covJ)
+
+    #grad_cov = KronFactored(covA, covG.cov, covG.cross)
+    #hess = KronFactored(covA, covH.cov, covH.cross)
+    #grad_cov = KronFactored(covA, covJ.cov, covJ.cross)
 
 
 def test_hessian_conv():
@@ -500,12 +507,158 @@ def test_hessian_conv():
         u.check_equal(grads_bias[i], layer.bias.grad)
 
 
+def _test_explicit_hessian_refactored():
+
+    """Check computation of hessian of loss(B'WA) from https://github.com/yaroslavvb/kfac_pytorch/blob/master/derivation.pdf
+
+
+    """
+
+    torch.set_default_dtype(torch.float64)
+    A = torch.tensor([[-1., 4], [3, 0]])
+    B = torch.tensor([[-4., 3], [2, 6]])
+    X = torch.tensor([[-5., 0], [-2, -6]], requires_grad=True)
+
+    Y = B.t() @ X @ A
+    u.check_equal(Y, [[-52, 64], [-81, -108]])
+    loss = torch.sum(Y * Y) / 2
+    hess0 = u.hessian(loss, X).reshape([4, 4])
+    hess1 = u.Kron(A @ A.t(), B @ B.t())
+
+    u.check_equal(loss, 12512.5)
+
+    # Do a test using Linear layers instead of matrix multiplies
+    model: u.SimpleFullyConnected2 = u.SimpleFullyConnected2([2, 2, 2], bias=False)
+    model.layers[0].weight.data.copy_(X)
+
+    # Transpose to match previous results, layers treat dim0 as batch dimension
+    u.check_equal(model.layers[0](A.t()).t(), [[5, -20], [-16, -8]])  # XA = (A'X0)'
+
+    model.layers[1].weight.data.copy_(B.t())
+    u.check_equal(model(A.t()).t(), Y)
+
+    Y = model(A.t()).t()    # transpose to data-dimension=columns
+    loss = torch.sum(Y * Y) / 2
+    loss.backward()
+
+    u.check_equal(model.layers[0].weight.grad, [[-2285, -105], [-1490, -1770]])
+    G = B @ Y @ A.t()
+    u.check_equal(model.layers[0].weight.grad, G)
+
+    autograd_lib.register(model)
+    activations_dict = autograd_lib.ModuleDict()  # todo(y): make save_activations ctx manager automatically create A
+    with autograd_lib.save_activations(activations_dict):
+        Y = model(A.t())
+
+    Acov = autograd_lib.ModuleDict(autograd_lib.SecondOrderCov)
+    for layer, activations in activations_dict.items():
+        print(layer, activations)
+        Acov[layer].accumulate(activations, activations)
+    autograd_lib.set_default_activations(activations_dict)
+    autograd_lib.set_default_Acov(Acov)
+
+    B = autograd_lib.ModuleDict(autograd_lib.SymmetricFourthOrderCov)
+    autograd_lib.backward_accum(Y, "identity", B, retain_graph=False)
+
+    print(B[model.layers[0]])
+
+    autograd_lib.backprop_hess(Y, hess_type='LeastSquares')
+    autograd_lib.compute_hess(model, method='kron', attr_name='hess_kron', vecr_order=False, loss_aggregation='sum')
+    param = model.layers[0].weight
+
+    hess2 = param.hess_kron
+    print(hess2)
+
+    u.check_equal(hess2, [[425, 170, -75, -30], [170, 680, -30, -120], [-75, -30, 225, 90], [-30, -120, 90, 360]])
+
+    # Gradient test
+    model.zero_grad()
+    loss.backward()
+    u.check_close(u.vec(G).flatten(), u.Vec(param.grad))
+
+    # Newton step test
+    # Method 0: PyTorch native autograd
+    newton_step0 = param.grad.flatten() @ torch.pinverse(hess0)
+    newton_step0 = newton_step0.reshape(param.shape)
+    u.check_equal(newton_step0, [[-5, 0], [-2, -6]])
+
+    # Method 1: colummn major order
+    ihess2 = hess2.pinv()
+    u.check_equal(ihess2.LL, [[1/16, 1/48], [1/48, 17/144]])
+    u.check_equal(ihess2.RR, [[2/45, -(1/90)], [-(1/90), 1/36]])
+    u.check_equal(torch.flatten(hess2.pinv() @ u.vec(G)), [-5, -2, 0, -6])
+    newton_step1 = (ihess2 @ u.Vec(param.grad)).matrix_form()
+
+    # Method2: row major order
+    ihess2_rowmajor = ihess2.commute()
+    newton_step2 = ihess2_rowmajor @ u.Vecr(param.grad)
+    newton_step2 = newton_step2.matrix_form()
+
+    u.check_equal(newton_step0, newton_step1)
+    u.check_equal(newton_step0, newton_step2)
+
+
+def _test_new_setup():
+    torch.set_default_dtype(torch.float64)
+    X = torch.tensor([[-5., 0], [-2, -6]], requires_grad=True)
+
+    model: u.SimpleFullyConnected2 = u.SimpleFullyConnected2([2, 2, 2], bias=False)
+    model.layers[0].weight.data.copy_(X)
+
+    A = torch.tensor([[-1., 4], [3, 0]])
+    B = torch.tensor([[-4., 3], [2, 6]])
+    X = torch.tensor([[-5., 0], [-2, -6]], requires_grad=True)
+
+    #########
+    # computing per-example gradients
+    #########
+    activations = {}
+    def save_activations(layer, a, _): activations[layer] = a
+    with autograd_lib.module_hooks(save_activations):
+        Y = model(A.t())
+        loss = torch.sum(Y * Y) / 2
+
+    norms = {}
+    def compute_norms(layer, _, b):
+        a = activations[layer]
+        del activations[layer]
+        norms[layer] = a*a.sum(dim=0)*(b*b).sum(dim=0)
+
+    with autograd_lib.module_hooks(compute_norms):
+        loss.backward()
+
+    #########
+    # Computing higher rank Hessian approximation
+    #########
+    activations = {}
+    with autograd_lib.module_hooks(save_activations):
+        Y = model(A.t())
+        loss = torch.sum(Y * Y) / 2
+
+    # kfac moments: 'ij', 'kl'
+    # isserlis moments: 'ij', 'kl', 'il', 'ik'
+    # first moments: 'i', 'j', 'k', 'l'
+    # third moments: ...
+    # forth moments: ...
+    # moment_dict = {'Ai': Buffer, 'Bk': Buffer, 'AiAj': Buffer, 'BkBl': Buffer, 'AiBk': Buffer}
+    # moments_dict = MomentsDict('A', 'AA', 'B', 'BB', 'AB', 'diag')
+    # moments_dict = MomentsDict('i', 'ij', 'k', 'kl', 'jk', 'iikk')
+    moment_dict = MomentsDict(['Ai', 'Bk', 'AiAj', 'BkBl', 'AiBk', 'AiAiBkBk', 'AiAjBkBl'])
+    def accumulate_moments(layer, _, b):
+        a = activations[layer]
+        util.accumulate_moments(moment_dict, a, b)
+
+    with autograd_lib.module_hooks(accumulate_moments):
+        pass
+
+
 
 
 if __name__ == '__main__':
     #  _test_factored_hessian()
     # test_hessian_multibatch()
-    test_hessian_conv()
+    # test_hessian_conv()
+    test_explicit_hessian_refactored()
     #    u.run_all_tests(sys.modules[__name__])
 
     # u.run_all_tests(sys.modules[__name__])

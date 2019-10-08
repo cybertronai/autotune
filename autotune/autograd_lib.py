@@ -38,7 +38,7 @@ L, lyap -- lyapunov matrix
 
 """
 
-from typing import List, Optional, Callable
+from typing import List, Optional, Callable, Tuple
 
 import torch
 import torch.nn as nn
@@ -116,6 +116,7 @@ def add_hooks(model: nn.Module) -> None:
     Call "clear_backprops" to clear backprops_list values for all parameters in the model
     Call "remove_hooks(model)" to undo this operation.
 
+
     Args:
         model:
     """
@@ -135,16 +136,19 @@ def add_hooks(model: nn.Module) -> None:
 
 def remove_hooks(model: nn.Module) -> None:
     """
-    Remove hooks added by add_hooks. Provides
+    Remove hooks added by add_hooks. Provides Providesa hook for removing hooks.
     """
 
     assert model == 0, "not working, remove this after fix to https://github.com/pytorch/pytorch/issues/25723"
+
+
+
 
     if not hasattr(model, 'autograd_hacks_hooks'):
         print("Warning, asked to remove hooks, but no hooks found")
     else:
         for handle in model.autograd_hacks_hooks:
-            handle.remove()
+            handle
         del model.autograd_hacks_hooks
 
 
@@ -908,62 +912,224 @@ def compute_stats_factored(model, attr_name='stats', sigma_centering=True):
             setattr(param, attr_name, s)
 
 
-### Refactoring
+##########################################################################################
+### post-refactoring
+##########################################################################################
+
+import torch.utils
+
+
+# second order covariance for two variables X,Y
+class SecondOrderCov:
+
+    # todo: add "symmetric" flag
+    def __init__(self):
+        self.mean_x = None
+        self.mean_y = None
+        self.cov_xy = None
+        self.d_x = -1
+        self.d_y = -1
+        self.initialized = False
+        self.n = 0
+
+    def accumulate(self, data_x, data_y):
+        assert u.is_matrix(data_x)
+        assert u.is_matrix(data_y)
+        if not self.initialized:
+            self.d_x = data_x.shape[1]
+            self.d_y = data_y.shape[1]
+            self.cov_xy = torch.zeros(self.d_x, self.d_y).type(data_x.dtype).to(data_x.device)
+            self.mean_x = torch.zeros(self.d_x).type(data_x.dtype).to(data_x.device)
+            self.mean_y = torch.zeros(self.d_y).type(data_y.dtype).to(data_y.device)
+            self.initialized = True
+        n = data_x.shape[0]
+        assert n == data_y.shape[0]
+        self.cov_xy += torch.einsum("ni,nj->ij", data_x, data_y)
+        self.mean_x += torch.einsum("ni->i", data_x)
+        self.mean_y += torch.einsum("ni->i", data_y)
+        self.n += n
+
+    def zero_(self):
+        self.n = 0
+        self.cov_xy.zero_()
+        self.mean_x.zero_()
+        self.mean_y.zero_()
+
+
+class SymmetricFourthOrderCov:
+    """Fourth order generalized covariance.
+    rank=4 gives exact stats
+    rank=3 uses Isserlis Theorem to for compact storage
+    rank=2 is equivalent to Kronecker factoring
+    rank=1 (not implemented) analogous to batch normalization
+    """
+    xx: SecondOrderCov
+    yy: SecondOrderCov
+    xy: SecondOrderCov
+    xxyy: SecondOrderCov
+
+    def __init__(self, rank=3):
+        self.xx = SecondOrderCov()    # rank2
+        self.yy = SecondOrderCov()    # rank2
+        self.xy = SecondOrderCov()    # rank3
+        self.xxyy = SecondOrderCov()  # rank4
+        self.rank = rank
+
+    def accumulate(self, data_x: torch.Tensor, data_y: torch.Tensor, cached_xx=None):
+        assert u.is_matrix(data_x)
+        assert u.is_matrix(data_y[0])
+        n = data_x.shape[0]
+        assert data_y.shape[0] == n
+
+        if self.rank == 4:
+            Jo = torch.einsum("oni,onj->onij", data_y, data_x).reshape(n, -1)
+            self.xxyy.accumulate(Jo, Jo)
+
+            # Alternative way
+            # Jo = torch.einsum("oni,onj->onij", B, A)
+            # H = torch.einsum('onij,onkl->ijkl', Jo, Jo) / n
+            # H = H.reshape(do*di, do*di)
+
+        else:
+            if cached_xx is not None:
+                self.xx.accumulate(data_x, data_x)
+            self.yy.accumulate(data_y, data_y)
+
+            if self.rank == 3:
+                self.xy.accumulate(data_x, data_y)
+
+    def zero_(self):
+        self.xx.zero_()
+        self.yy.zero_()
+        self.xy.zero_()
+
+
+class ModuleDict(dict):
+
+    def __init__(self, defaultcreator=None, defaultvalue=None):
+        assert (defaultcreator is None) or (defaultvalue is None), "only one of defaultcreator/defaultvalue must be set"
+        self.defaultvalue = None
+        self.defaultcreator = None
+        if defaultcreator is not None:
+            self.defaultcreator = defaultcreator
+        elif defaultvalue is not None:
+            self.defaultvalue = defaultvalue
+
+    def __getitem__(self, item):
+        if item not in self:
+            if self.defaultcreator:
+                self[item] = self.defaultcreator()
+            elif self.defaultvalue:
+                self[item] = self.defaultvalue
+            else:
+                assert False, f"Requested value {item} which doesn't exist in ModuleDict and defaultcreator nor default value is set"
+        return self[item]
+
+
+# Namespace of global settings used by the library internally
+# Using module-level variable for settings means this library is not thread-safe.
+
+global_settings_initialized = False
 
 
 class Settings(object):
-    forward_hooks: List[Callable]
-    backward_hooks: List[Callable]
+    forward_hooks: List[Callable]   # forward subhooks called by the global hook
+    backward_hooks: List[Callable]  # backward subhooks
     model: Optional[nn.Module]
+    hook_handles: List[torch.utils.hooks.RemovableHandle]    # removal handles of global hooks registered with PyTorch
+    default_activations: Optional[ModuleDict]
+
 
     def __init__(self):
+        assert global_settings_initialized is False, "Reinitializing Settings seems like a bug."
         self.model = None
-        self.forward_hooks = None
-        self.backward_hooks = None
+        self.hook_handles = []
+        self.forward_hooks = []
+        self.backward_hooks = []
+        self.default_activations = None
+        self.default_Acov = None
 
-class ModuleDict(dict):
-    pass
+        # temporary settings to aggregate gradient norm squared globally
+        self._hack_gradient_norm_sum = ModuleDict(defaultvalue=torch.zeros(()))
+        self._hack_gradient_norm_count = ModuleDict(defaultvalue=torch.zeros(()))
+        self._hack_activations_squared = None   # initialized in set_default_activations
+
+        # TODO(y): maybe remove all of this
+        # store last activations captured for each layer. While this breaks encapsulation, this considerably simplifies the common use
+        # case where the same set of activations is needed for several backward aggregation calls
+        self.last_captured_activations = ModuleDict()
+
+        # To prevent a mix of saved activations from different forward calls, keep counter which indicates in which
+        # context each activation value was saved. This can be used to enforce that all activations were captured in the same context
+        self.last_captured_activations_contextid = ModuleDict()
+        self.activations_contextid = 0   # this gets incremented for each save_activations context
 
 
-settings = Settings()
+
+
+
+global_settings = Settings()
+
+
+def layer_cov_dict(model):
+    """Returns a dictionary of layer->KronFactoredCov for all supported layers in model."""
+    return {layer: u.KronFactoredCov() for layer in model.layers() if is_supported(layer)}
 
 
 def _forward_hook(layer: nn.Module, input: List[torch.Tensor], output: torch.Tensor):
-    for hook in settings.forward_hooks:
+    for hook in global_settings.forward_hooks:
         hook(layer, input, output)
 
 
-def _backward_hook(layer: nn.Module, _input, output):
-    for hook in settings.backward_hooks:
+# TODO(y): fix signature
+def _backward_hook(layer: nn.Module, _input: torch.Tensor, output: torch.Tensor):
+    for hook in global_settings.backward_hooks:
         hook(layer, _input, output)
 
 
 def register(model: nn.Module):
     """
-    Registers given model with autograd_lib. This allows user to use decorators like
-    with forward_save_activations(A)
+    Registers given model with autograd_lib. This allows user to use decorators like save_activations(A) and module_hook
     """
-    global settings
+    global global_settings
     _global_hooks_disabled = False
 
     # TODO(y): make it work for multiple models and test. This needs check that hook list remains a singleton
-    assert 'handles' not in vars(settings), "Already called register in this thread"
-    settings.handles = []
-    settings.model = model
-    settings.forward_hooks = []
-    settings.backward_hooks = []
+    assert 'handles' not in vars(global_settings), "Already called register in this thread"
+
+    global_settings.model = model
 
     layer: nn.Module
     for layer in model.modules():
         if _layer_type(layer) in _supported_layers:
-            settings.handles.append(layer.register_forward_hook(_forward_hook))
+            global_settings.hook_handles.append(layer.register_forward_hook(_forward_hook))
             layer.register_backward_hook(_backward_hook)   # don't save handle, https://github.com/pytorch/pytorch/issues/25723
 
 
-# TODO(y): make this actually remove handles
-def unregister():
-    del settings.handles
+def _hack_zero_gradient_norms_squared():
+    for layer in global_settings._hack_gradient_norm_count:
+        global_settings._hack_gradient_norm_count[layer] = 0
+        global_settings._hack_gradient_norm_sum[layer] = 0
+        global_settings._hack_activations_squared[layer] = None
 
+
+def _hack_update_gradient_norms_squared(layer: nn.Module, backprops: torch.Tensor):
+    """Trick from Ian Goodfellow https://arxiv.org/abs/1510.01799
+
+    Add up gradient norm squared of gradients
+    """
+    n = backprops.shape[0]
+    A2 = global_settings._hack_activations_squared[layer]   # initialized in "set_default_activations"
+    assert n == A2.shape[0]
+    sq_components = A2 * backprops * backprops
+    global_settings._hack_gradient_norm_sum[layer] += torch.sum(sq_components)
+    global_settings._hack_gradient_norm_count[layer] += n
+
+
+def unregister():
+    # TODO(y): switch to tensor backward hooks
+    for handle in global_settings.hook_handles:
+        handle.remove()
 
 
 from contextlib import contextmanager
@@ -971,71 +1137,200 @@ from contextlib import contextmanager
 
 @contextmanager
 def save_activations(storage: ModuleDict):
-    """Saves activations to given dict.
+    """Save activations to layer storage: storage[layer] = activations
     """
 
-    assert settings.model, "autograd_lib not initialized, call register(model)"
+    assert global_settings.hook_handles, "No hooks have been registered."
+    hook_called = [False]
 
-    def hook(layer: nn.Module, input: List[torch.Tensor], output: torch.Tensor):
+    global_settings.activations_contextid += 1
+
+    def hook(layer: nn.Module, input: List[torch.Tensor], _output: torch.Tensor):
         if layer in storage:
             print("warning, overwriting existing activation for layer ", layer)
-        storage[layer] = input[0].detach()
+        hook_called[0] = True
+        activations = input[0].detach()
+        storage[layer] = activations
+        global_settings.last_captured_activations[layer] = activations
+        global_settings.last_captured_activations_contextid[layer] = global_settings.activations_contextid
+        assert len(global_settings.last_captured_activations) < 200, "warning, possibly leaking activations, got more than 200"
 
-    settings.forward_hooks.append(hook)
+    global_settings.forward_hooks.append(hook)
     yield
-    settings.forward_hooks.pop()
+    assert hook_called[0], "Forward hook was never called."
+    global_settings.forward_hooks.pop()
 
 
 @contextmanager
-def save_backprops(storage: ModuleDict):
-    """Saves backprops list to given dict.
+def extend_backprops(storage: ModuleDict):
+    """Extends list of backprops in storage with current backprops. storage[layer].extend([backprops])
     """
 
-    assert settings.model, "autograd_lib not initialized, call register(model)"
+    assert global_settings.hook_handles, "No hooks have been registered."
+    hook_called = [False]
 
     def hook(layer: nn.Module, _input, output):
-        storage.setdefault(layer, []).append(output[0].detach())
+        storage.setdefault(layer, []).extend([output[0].detach()])
+        hook_called[0] = True
 
-    settings.backward_hooks.append(hook)
+    global_settings.backward_hooks.append(hook)
     yield
-    settings.backward_hooks.pop()
+    assert hook_called[0], "Backward hook was never called."
+    global_settings.backward_hooks.pop()
 
 
-def backward(output, kind: str, retain_graph=False):
+@contextmanager
+def module_hook(hook: Callable):
+    """Context manager for running given hook on forward or backward."""
+
+    # TODO(y): maybe add checking for arg types on hook to catch forward/backward hook mismatches
+    assert global_settings.hook_handles, "Global hooks have not been registered. Make sure to call .register(model) on your model"
+    forward_hook_called = [False]
+    backward_hook_called = [False]
+
+    def forward_hook(layer: nn.Module, input: Tuple[torch.Tensor], output: torch.Tensor):
+        assert len(input) == 1, "Only support single input modules on forward."
+        assert type(output) == torch.Tensor, "Only support single output modules on forward."
+        activations = input[0].detach()
+        hook(layer, activations, output)
+        forward_hook_called[0] = True
+
+    def backward_hook(layer: nn.Module, input: Tuple[torch.Tensor], output: Tuple[torch.Tensor]):
+        assert len(output) == 1, "Only support single output modules on backward."
+        backprops = output[0].detach()
+        hook(layer, input, backprops)
+        backward_hook_called[0] = True
+
+    global_settings.forward_hooks.append(forward_hook)
+    global_settings.backward_hooks.append(backward_hook)
+    yield
+    assert forward_hook_called[0] or backward_hook_called[0], "Hook was called neither on forward nor backward pass."
+    assert not (forward_hook_called[0] and backward_hook_called[0]), "Hook was called both on forward and backward pass."
+    global_settings.forward_hooks.pop()
+    global_settings.backward_hooks.pop()
+
+
+""""
+Concept: backprop_func
+
+Given output tensor, create a batch of matrices used for backprop.
+
+Can be used to compute per-example Hessians if this function returns X where XiXi'=Hi
+Examples: identity -- torch.eye for each example
+Examples: cross_entropy_hessian -- Hessian of cross-entropy function
+Examples: cross_entropy_rank1 -- Hessian of cross-entropy function, rank-1 approximation per example
+Examples: cross_entropy_average -- average Hessian, low rank approximation
+"""
+
+
+def backward(tensor, backward_func, retain_graph=False):
     """Custom backprop.
     """
 
-    assert u.is_matrix(output), "Only support rank-2 outputs."""
-    n, o = output.shape
+    vals = backward_func(tensor)
+    o = len(vals)
+    for idx, hess in enumerate(vals):
+        tensor.backward(hess, retain_graph=(retain_graph or idx < o - 1))
+
+
+def backward_accum(tensor, backward_func, storage: ModuleDict, retain_graph=False, update_gradient_norm=False):
+    """
+    Backpropagates from given tensor and updates FourthOrderCov for each layer in storage.
+
+
+    Args:
+        tensor:
+        backward_func: function used to generate backward values. See "backward functions" below. Special value of 1 indicates 1 backpropagation
+        storage: layer->FourthOrderCov ModuleDict storage
+        retain_graph: whether to release activations at the end of forward prop
+        update_gradient_norm: whether to update gradient norm squared estimates
+
+    """
+
+    if backward_func == 1:
+        backward_func = backward_ones
+
+    elif backward_func == 'identity':
+        backward_func = backward_identity
+    elif backward_func == 'xent':
+        backward_func = backward_xent
+
+    assert global_settings.hook_handles, "No hooks have been registered."
+    hook_called = [False]
+
+    def hook(layer: nn.Module, _input, output):
+        backprops = output[0].detach()
+        A = global_settings.default_activations
+        Acov = global_settings.default_Acov
+        if update_gradient_norm:
+            _hack_update_gradient_norms_squared(layer, backprops)
+        storage[layer].accumulate(data_x=A[layer], data_y=backprops, cached_xx=Acov)
+        hook_called[0] = True
+
+    global_settings.backward_hooks.append(hook)
+    backward(tensor, backward_func, retain_graph)
+    assert hook_called[0], "Backward hook was never called."
+    global_settings.backward_hooks.pop()
+
+
+# def backward_kron(target, tensor, A, A_cov, gradient):
+#     """Calls backward, and aggrates covariance of backward values. If activations are provided, also updates cross covariance"""
+#
+#     def hook(module: nn.Module, _input, output):
+#         """Appends all backprops (Jacobian Lops from upstream) to layer.backprops_list.
+#         Using list in order to capture multiple backprop values for a single batch. Use util.clear_backprops(model)
+#         to clear all saved values.
+#         """
+#         backprops = output[0].detach()
+#         buffer[module].cov = KronFactoredCov
+#         if activations:
+#             activations = activations[module]
+#
+#         # compute covariance matrix
+#
+#     with backward_hook(hook):
+#         tensor.backwards(gradient)
+
+
+def set_default_activations(A):
+    global_settings.default_activations = A
+
+    global_settings._hack_activations_squared = ModuleDict()
+    for layer in A:
+        global_settings._hack_activations_squared[layer] = A[layer] * A[layer]
+
+
+def set_default_Acov(Acov):
+    global_settings.default_Acov = Acov
+
+
+# Backward functions.
+# These accept output tensor and produce a list of matrices [...,mi,...] suitable for output.backward(mi)
+def backward_xent(output):
+    pass
+
+
+def backward_identity(tensor):
+    assert u.is_matrix(tensor), "Only support rank-2 outputs."""
+    n, o = tensor.shape
 
     hess = []
-    if kind == 'identity':
-        batch_size, output_size = output.shape
-        id_mat = u.eye(output_size)
-        for out_idx in range(output_size):
-            hess.append(torch.stack([id_mat[out_idx]] * batch_size))
+    batch_size, output_size = tensor.shape
+    id_mat = u.eye(output_size)
+    for out_idx in range(output_size):
+        hess.append(torch.stack([id_mat[out_idx]] * batch_size))
 
+    return hess
+
+
+def backprop_identity(tensor,  retain_graph=False):
+    assert u.is_matrix(tensor), "Only support rank-2 outputs."""
+
+    n, o = tensor.shape
+    id_mat = u.eye(o)
     for idx in range(o):
-        output.backward(hess[idx], retain_graph=(retain_graph or idx < o-1))
+        tensor.backward(torch.stack([id_mat[idx]] * n), retain_graph=(retain_graph or idx < o - 1))
 
 
-def backward_kron(target, tensor, A, A_cov, gradient):
-    """Calls backward, and aggrates covariance of backward values. If activations are provided, also updates cross covariance"""
-
-    def hook(module: nn.Module, _input, output):
-        """Appends all backprops (Jacobian Lops from upstream) to layer.backprops_list.
-        Using list in order to capture multiple backprop values for a single batch. Use util.clear_backprops(model)
-        to clear all saved values.
-        """
-        backprops = output[0].detach()
-        buffer[module].cov = KronFactoredCov
-        if activations:
-            activations = activations[module]
-
-        # compute covariance matrix
-
-
-    with backward_hook(hook):
-        tensor.backwards(gradient)
-
-
+def backward_ones(output):
+    return [torch.ones_like(output)]

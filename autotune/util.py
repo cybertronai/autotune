@@ -292,6 +292,10 @@ class Cov(SpecialForm):
     pass
 
 
+class FactoredCov(SpecialForm):
+    pass
+
+
 class KronFactoredCov(SpecialForm):
     """Kronecker factored covariance matrix. Covariance matrix of random variable ba' constructed from paired
     samples of a and b. Each sample of a can correspond to multiple samples of b, reprented by an extra batch dimension in b sample matrix."""
@@ -409,7 +413,11 @@ def square(a: torch.Tensor):
 
 # TODO(y): rename into sym-kron
 class Kron(SpecialForm):
-    """Represents kronecker product of two symmetric matrices"""
+    """Represents kronecker product of two symmetric matrices.
+
+
+
+    """
     LL: torch.Tensor  # left factor
     RR: torch.Tensor  # right factor
 
@@ -1313,7 +1321,8 @@ def nest_stats(tag: str, stats) -> Dict:
     return result
 
 
-def seed_random(seed):
+def seed_random(seed: int) -> None:
+    """Manually set seed to seed for configurable random number generators in current process."""
     torch.manual_seed(seed)
     random.seed(seed)
     np.random.seed(seed)
@@ -1640,6 +1649,60 @@ class SimpleFullyConnected2(SimpleModel2):
         return self.predict(x)
 
 
+
+class RedundantFullyConnected2(SimpleModel2):
+    """Simple feedforward network that works on images."""
+
+    def __init__(self, d: List[int], nonlin=False, bias=False, last_layer_linear=False, dropout=False, redundancy=1):
+        """
+        Feedfoward network of linear layers with optional ReLU nonlinearity. Stores layers in "layers" attr, ie
+        model.layers[0] refers to first linear layer.
+
+        Args:
+            d: list of layer dimensions, ie [768, 20, 10] for MNIST 10-output with hidden layer of 20
+            nonlin: whether to include ReLU nonlinearity
+            last_layer_linear: don't apply nonlinearity to loast layer
+        """
+        super().__init__()
+        self.layers: List[nn.Module] = []
+        self.all_layers: List[nn.Module] = []
+        self.d: List[int] = d
+        self.linear_groups = []
+        self.dropout = dropout
+        for i in range(len(d) - 1):
+            group = []
+            for l in range(redundancy):
+                layer = nn.Linear(d[i], d[i + 1], bias=bias)
+                group.append(layer)
+                layer.weight.data.copy_(layer.weight.data/redundancy)
+                if hasattr(layer, 'bias'):
+                    layer.bias.data.copy_(layer.bias.data/redundancy)
+                layer_name = f'layer%02d' % (i*redundancy+l,)
+                setattr(self, layer_name, group[-1])  # needed to make params discoverable by optimizers
+                #                print("adding layer ", layer_name, getattr(self, layer_name))
+            self.linear_groups.append(group)
+            if nonlin:
+                if not last_layer_linear or i < len(d) - 2:
+                    self.all_layers.append(nn.ReLU())
+            if i <= len(d) - 3 and dropout:
+                self.all_layers.append(nn.Dropout(p=0.5))
+        super()._finalize()
+
+    def forward(self, x: torch.Tensor):
+        x = x.reshape((-1, self.d[0]))
+        for layer_group in self.linear_groups:
+            y = 0.
+            for layer in layer_group:
+                y0 = layer(x)
+                if self.dropout:
+                    y0 = F.dropout(y0, 0.01)
+                y += y0
+
+            y = F.relu(y)
+            x = y
+        return x
+
+
 class SimpleConvolutional(SimpleModel):
     """Simple conv network."""
 
@@ -1688,6 +1751,7 @@ class SimpleConvolutional2(SimpleModel2):
         for i in range(len(d) - 1):
             conv = nn.Conv2d(d[i], d[i + 1], kernel_size, bias=bias)
             setattr(conv, 'name', f'{i:02d}-conv')
+
             self.layers.append(conv)
             self.all_layers.append(conv)
             if nonlin:
