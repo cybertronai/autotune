@@ -605,7 +605,64 @@ def test_full_hessian_xent_kfac():
 
     # expand
     hess_factored = hess[model.layers[0]]
-    hess0 = torch.einsum('kl,ij->klij', hess_factored.BB / n, hess_factored.AA / o)  # hess for sum loss
+    hess0 = torch.einsum('kl,ij->kilj', hess_factored.BB / n, hess_factored.AA / o)  # hess for sum loss
+    hess0 /= n  # hess for mean loss
+
+    # check against autograd
+    # 0.1459
+    Y = model(data)
+    loss = loss_fn(Y, targets)
+    hess_autograd = u.hessian(loss, model.layers[0].weight)
+    u.check_equal(hess_autograd, hess0)
+
+
+def test_full_hessian_xent_kfac2():
+    """Test with uneven layers."""
+    u.seed_random(1)
+    torch.set_default_dtype(torch.float64)
+
+    batch_size = 1
+    d = [3, 2]
+    o = d[-1]
+    n = batch_size
+    train_steps = 1
+
+    model: u.SimpleModel = u.SimpleFullyConnected2(d, nonlin=True, bias=False)
+    autograd_lib.register(model)
+    loss_fn = torch.nn.CrossEntropyLoss()
+
+    data = u.to_logits(torch.tensor([[0.7, 0.2, 0.1]]))
+    targets = torch.tensor([0])
+
+    data = data.repeat([3, 1])
+    targets = targets.repeat([3])
+    n = len(data)
+
+    activations = {}
+    hess = defaultdict(lambda: AttrDefault(float))
+
+    for i in range(n):
+        def save_activations(layer, a, _):
+            activations[layer] = a
+
+        with autograd_lib.module_hook(save_activations):
+            data_batch = data[i: i+1]
+            targets_batch = targets[i: i+1]
+            Y = model(data_batch)
+            o = Y.shape[1]
+            loss = loss_fn(Y, targets_batch)
+
+        def compute_hess(layer, _, B):
+            A = activations[layer]
+            hess[layer].AA += torch.einsum("ni,nj->ij", A, A)
+            hess[layer].BB += torch.einsum("ni,nj->ij", B, B)
+
+        with autograd_lib.module_hook(compute_hess):
+            autograd_lib.backward_hessian(Y, loss='CrossEntropy')
+
+    # expand
+    hess_factored = hess[model.layers[0]]
+    hess0 = torch.einsum('kl,ij->kilj', hess_factored.BB / n, hess_factored.AA / o)  # hess for sum loss
     hess0 /= n  # hess for mean loss
 
     # check against autograd
@@ -659,6 +716,101 @@ def test_full_hessian_xent_mnist():
         u.check_close(hess[model.layers[0]] / n, H_autograd)
 
 
+def test_full_hessian_xent_mnist_multilayer():
+    u.seed_random(1)
+
+    data_width = 3
+    batch_size = 2
+    d = [data_width**2, 6, 10]
+    o = d[-1]
+    n = batch_size
+    train_steps = 1
+
+    model: u.SimpleModel = u.SimpleFullyConnected2(d, nonlin=False, bias=True)
+    autograd_lib.register(model)
+    dataset = u.TinyMNIST(dataset_size=batch_size, data_width=data_width, original_targets=True)
+    trainloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
+    train_iter = iter(trainloader)
+
+    loss_fn = torch.nn.CrossEntropyLoss()
+
+    hess = defaultdict(float)
+    for train_step in range(train_steps):
+        data, targets = next(train_iter)
+
+        activations = {}
+        def save_activations(layer, a, _):
+            activations[layer] = a
+
+        with autograd_lib.module_hook(save_activations):
+            output = model(data)
+            loss = loss_fn(output, targets)
+
+        def compute_hess(layer, _, B):
+            A = activations[layer]
+            BA = torch.einsum("nl,ni->nli", B, A)
+            hess[layer] += torch.einsum('nli,nkj->likj', BA, BA)
+
+        with autograd_lib.module_hook(compute_hess):
+            autograd_lib.backward_hessian(output, loss='CrossEntropy', retain_graph=True)
+
+        # compute Hessian through autograd
+        H_autograd = u.hessian(loss, model.layers[0].weight)
+        u.check_close(hess[model.layers[0]] / batch_size, H_autograd)
+
+        H_autograd = u.hessian(loss, model.layers[1].weight)
+        u.check_close(hess[model.layers[1]] / batch_size, H_autograd)
+
+
+def test_kfac_hessian_xent_mnist():
+    u.seed_random(1)
+
+    data_width = 3
+    batch_size = 2
+    d = [data_width**2, 10]
+    o = d[-1]
+    n = batch_size
+    train_steps = 1
+
+    model: u.SimpleModel = u.SimpleFullyConnected2(d, nonlin=False, bias=True)
+    autograd_lib.register(model)
+    dataset = u.TinyMNIST(dataset_size=batch_size, data_width=data_width, original_targets=True)
+    trainloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
+    train_iter = iter(trainloader)
+
+    loss_fn = torch.nn.CrossEntropyLoss()
+
+    activations = {}
+    hess = defaultdict(lambda: AttrDefault(float))
+    for train_step in range(train_steps):
+        data, targets = next(train_iter)
+
+        activations = {}
+        def save_activations(layer, a, _):
+            activations[layer] = a
+
+        with autograd_lib.module_hook(save_activations):
+            output = model(data)
+            loss = loss_fn(output, targets)
+
+        def compute_hess(layer, _, B):
+            A = activations[layer]
+            hess[layer].AA += torch.einsum("ni,nj->ij", A, A)
+            hess[layer].BB += torch.einsum("ni,nj->ij", B, B)
+
+        with autograd_lib.module_hook(compute_hess):
+            autograd_lib.backward_hessian(output, loss='CrossEntropy', retain_graph=True)
+
+        hess_factored = hess[model.layers[0]]
+        hess0 = torch.einsum('kl,ij->kilj', hess_factored.BB / n, hess_factored.AA / o)  # hess for sum loss
+        hess0 /= n  # hess for mean loss
+
+        # compute Hessian through autograd
+        H_autograd = u.hessian(loss, model.layers[0].weight)
+        rel_error = torch.norm((hess0-H_autograd).flatten())/torch.norm(H_autograd.flatten())
+        assert rel_error < 0.01   # 0.0057
+
+
 if __name__ == '__main__':
     # test_gradient_norms()
     # test_full_hessian()
@@ -669,8 +821,11 @@ if __name__ == '__main__':
     #  test_kfac_hessian()
     # test_full_hessian_xent()
     #    test_full_hessian_xent_multibatch()
-    #    test_full_hessian_xent_kfac()
-    test_full_hessian_xent_mnist()
+    test_full_hessian_xent_kfac()
+    test_full_hessian_xent_kfac2()
+    # test_full_hessian_xent_mnist()
+    test_full_hessian_xent_mnist_multilayer()
+    test_kfac_hessian_xent_mnist()
     # test_hooks()
     # test_activations_contextmanager()
     # test_jacobian()
