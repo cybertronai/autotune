@@ -428,10 +428,6 @@ def test_full_hessian_multibatch():
     u.check_equal(hess0, result)
 
 
-def test_kfac_fisher():
-    pass
-
-
 def test_diagonal_hessian():
     u.seed_random(1)
     A, model = create_toy_model()
@@ -466,8 +462,50 @@ def test_diagonal_hessian():
     u.check_equal(hess[0], [425., 225., 680., 360.])
 
 
-def test_diagonal_fisher():
-    pass
+def test_full_hessian_xent():
+    u.seed_random(1)
+    torch.set_default_dtype(torch.float64)
+
+    batch_size = 1
+    d = [2, 2]
+    o = d[-1]
+    n = batch_size
+    train_steps = 1
+
+    model: u.SimpleModel = u.SimpleFullyConnected(d, nonlin=True, bias=True)
+    model.layers[0].weight.data.copy_(torch.eye(2))
+    autograd_lib.register(model)
+    loss_fn = torch.nn.CrossEntropyLoss()
+
+    data = u.to_logits(torch.tensor([[0.7, 0.3]]))
+    targets = torch.tensor([0])
+
+    activations = {}
+    hess = defaultdict(float)
+    def save_activations(layer, a, _):
+        activations[layer] = a
+
+    with autograd_lib.module_hook(save_activations):
+        Y = model(data)
+        loss = loss_fn(Y, targets)
+
+    def compute_hess(layer, _, B):
+        A = activations[layer]
+        n = A.shape[0]
+
+        di = A.shape[1]
+        do = B.shape[1]
+
+        BA = torch.einsum("nl,ni->nli", B, A)
+        hess[layer] += torch.einsum('nli,nkj->likj', BA, BA)
+
+    with autograd_lib.module_hook(compute_hess):
+        autograd_lib.backward_hessian(Y, loss='CrossEntropy', retain_graph=True)
+
+    # check against autograd
+    hess_autograd = u.hessian(loss, model.layers[0].weight)
+    hess0 = hess[model.layers[0]]
+    u.check_equal(hess_autograd, hess0)
 
 
 if __name__ == '__main__':
@@ -476,8 +514,9 @@ if __name__ == '__main__':
     # test_diagonal_hessian()
     # test_full_fisher()
     # test_full_fisher_multibatch()
-    test_full_hessian_multibatch()
-    test_kfac_hessian()
+    #  test_full_hessian_multibatch()
+    #  test_kfac_hessian()
+    test_full_hessian_xent()
     # test_hooks()
     # test_activations_contextmanager()
     # test_jacobian()

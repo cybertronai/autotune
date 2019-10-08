@@ -1184,6 +1184,7 @@ def module_hook(hook: Callable):
     """Context manager for running given hook on forward or backward."""
 
     # TODO(y): maybe add checking for arg types on hook to catch forward/backward hook mismatches
+    # TODO(y): use weak ref for the hook handles so they are removed when model goes out of scope
     assert global_settings.hook_handles, "Global hooks have not been registered. Make sure to call .register(model) on your model"
     forward_hook_called = [False]
     backward_hook_called = [False]
@@ -1204,8 +1205,8 @@ def module_hook(hook: Callable):
     global_settings.forward_hooks.append(forward_hook)
     global_settings.backward_hooks.append(backward_hook)
     yield
-    assert forward_hook_called[0] or backward_hook_called[0], "Hook was called neither on forward nor backward pass."
-    assert not (forward_hook_called[0] and backward_hook_called[0]), "Hook was called both on forward and backward pass."
+    assert forward_hook_called[0] or backward_hook_called[0], "Hook was called neither on forward nor backward pass, did you register your model?"
+    assert not (forward_hook_called[0] and backward_hook_called[0]), "Hook was called both on forward and backward pass, did you register your model?"
     global_settings.forward_hooks.pop()
     global_settings.backward_hooks.pop()
 
@@ -1324,23 +1325,54 @@ def backward_identity(tensor):
 
 
 # TODO(y): rename to backward or backward_jacobian
-def backprop_identity(tensor,  retain_graph=False) -> None:
+
+
+def backward_ones(output):
+    return [torch.ones_like(output)]
+
+# backward_jacobian(strategy='exact')
+# backward_jacobian(strategy='sampled')
+# backward_hessian(loss='cross_entropy', strategy='exact')
+# backward_hessian(loss='cross_entropy', strategy='sampled')
+
+
+def backprop_identity(output, retain_graph=False) -> None:
     """
     Helper to find Jacobian with respect to given tensor. Backpropagates a row of identity matrix
     for each output of tensor. Rows are replicated across batch dimension.
 
     Args:
-        tensor: target of backward
+        output: target of backward
         retain_graph: same meaning as PyTorch retain_graph
     """
 
-    assert u.is_matrix(tensor), "Only support rank-2 outputs."""
+    assert u.is_matrix(output), "Only support rank-2 outputs."""
 
-    n, o = tensor.shape
+    n, o = output.shape
     id_mat = u.eye(o)
     for idx in range(o):
-        tensor.backward(torch.stack([id_mat[idx]] * n), retain_graph=(retain_graph or idx < o - 1))
+        output.backward(torch.stack([id_mat[idx]] * n), retain_graph=(retain_graph or idx < o - 1))
 
 
-def backward_ones(output):
-    return [torch.ones_like(output)]
+def backward_hessian(output, loss='CrossEntropy', strategy='exact', retain_graph=False) -> None:
+    assert loss in ('CrossEntropy',), f"Only CrossEntropy loss is supported, got {loss}"
+    assert strategy in ('exact', 'sampled')
+    assert u.is_matrix(output)
+
+    n, o = output.shape
+    batch = F.softmax(output, dim=1)
+
+    # form a batch of per-example Hessians
+    mask = torch.eye(o).expand(n, o, o)
+    diag_part = batch.unsqueeze(2).expand(n, o, o) * mask
+    outer_prod_part = torch.einsum('ij,ik->ijk', batch, batch)
+    hess = diag_part - outer_prod_part
+    assert hess.shape == (n, o, o)
+
+    for i in range(n):
+        hess[i, :, :] = u.symsqrt(hess[i, :, :])
+
+    for out_idx in range(o):
+        sample = hess[:, out_idx, :]
+        assert sample.shape == (n, o)
+        output.backward(sample, retain_graph=(retain_graph or out_idx < o - 1))
