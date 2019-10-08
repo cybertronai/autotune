@@ -1448,13 +1448,15 @@ class SimpleModel(nn.Module):
 
 
 # TODO(y): rename to LeastSquaresLoss
-def least_squares(data, targets=None):
+def least_squares(data, targets=None, aggregation='mean'):
     """Least squares loss (like MSELoss, but an extra 1/2 factor."""
     assert is_matrix(data), f"Expected matrix, got {data.shape}"
+    assert aggregation in ('mean', 'sum')
     if targets is None:
         targets = torch.zeros_like(data)
     err = data - targets.view(-1, data.shape[1])
-    return torch.sum(err * err) / 2 / len(data)
+    normalizer = len(data) if aggregation == 'mean' else 1
+    return torch.sum(err * err) / 2 / normalizer
 
 
 def debug_least_squares(data, targets=None):

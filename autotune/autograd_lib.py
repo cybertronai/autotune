@@ -1323,7 +1323,17 @@ def backward_identity(tensor):
     return hess
 
 
-def backprop_identity(tensor,  retain_graph=False):
+# TODO(y): rename to backward
+def backprop_identity(tensor,  retain_graph=False) -> None:
+    """
+    Helper to find Jacobian with respect to given tensor. Backpropagates a row of identity matrix
+    for each output of tensor. Rows are replicated across batch dimension.
+
+    Args:
+        tensor: target of backward
+        retain_graph: same meaning as PyTorch retain_graph
+    """
+
     assert u.is_matrix(tensor), "Only support rank-2 outputs."""
 
     n, o = tensor.shape
