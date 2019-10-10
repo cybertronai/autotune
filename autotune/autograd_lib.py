@@ -1354,7 +1354,7 @@ def backward_ones(output):
 # backward_hessian(loss='cross_entropy', strategy='sampled')
 
 
-def backprop_jacobian(output, retain_graph=False) -> None:
+def backward_jacobian(output, sampled=False, retain_graph=False) -> None:
     """
     Helper to find Jacobian with respect to given tensor. Backpropagates a row of identity matrix
     for each output of tensor. Rows are replicated across batch dimension.
@@ -1362,19 +1362,27 @@ def backprop_jacobian(output, retain_graph=False) -> None:
     Args:
         output: target of backward
         retain_graph: same meaning as PyTorch retain_graph
+        sampled:
     """
 
     assert u.is_matrix(output), "Only support rank-2 outputs."""
+    # assert strategy in ('exact', 'sampled')
 
     n, o = output.shape
-    id_mat = u.eye(o)
-    for idx in range(o):
-        output.backward(torch.stack([id_mat[idx]] * n), retain_graph=(retain_graph or idx < o - 1))
+    if not sampled:
+        id_mat = torch.eye(o).to(gl.device)
+        for idx in range(o):
+            output.backward(torch.stack([id_mat[idx]] * n), retain_graph=(retain_graph or idx < o - 1))
+    else:
+        vals = torch.LongTensor(n, o).to(gl.device).random_(0, 2) * 2 - 1
+        vals = vals.type(torch.get_default_dtype())
+        vals /= o  # factor to preserve magnitudes from exact case.
+        # switching to subsampling, kfac_fro became 1000x smaller, diversity became 300x larger, kfac_l2 unaffected
+        output.backward(vals, retain_graph=retain_graph)
 
 
-def backward_hessian(output, loss='CrossEntropy', strategy='exact', retain_graph=False) -> None:
+def backward_hessian(output, loss='CrossEntropy', sampled=False, retain_graph=False) -> None:
     assert loss in ('CrossEntropy',), f"Only CrossEntropy loss is supported, got {loss}"
-    assert strategy in ('exact', 'sampled')
     assert u.is_matrix(output)
 
     # use Cholesky-like decomposition from https://www.wolframcloud.com/obj/yaroslavvb/newton/square-root-formulas.nb
@@ -1385,5 +1393,11 @@ def backward_hessian(output, loss='CrossEntropy', strategy='exact', retain_graph
     diag_part = p.sqrt().unsqueeze(2).expand(n, o, o) * mask
     hess_sqrt = diag_part - torch.einsum('ij,ik->ijk', p.sqrt(), p)   # n, o, o
 
-    for out_idx in range(o):
-        output.backward(hess_sqrt[:, out_idx, :], retain_graph=(retain_graph or out_idx < o - 1))
+    if not sampled:
+        for out_idx in range(o):
+            output.backward(hess_sqrt[:, out_idx, :], retain_graph=(retain_graph or out_idx < o - 1))
+    else:
+        vals = torch.LongTensor(n, o).to(gl.device).random_(0, 2) * 2 - 1
+        vals = vals.type(torch.get_default_dtype())/o
+        mixed_vector = torch.einsum('nop,no->np', hess_sqrt, vals)
+        output.backward(mixed_vector, retain_graph=retain_graph)

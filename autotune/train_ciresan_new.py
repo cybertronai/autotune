@@ -92,6 +92,7 @@ def main():
     parser.add_argument('--run_name', type=str, default='noname')
     parser.add_argument('--disable_hess', type=int, default=1, help='disable hessian because of sysmqrt slowness')
     parser.add_argument('--launch_blocking', type=int, default=0)
+    parser.add_argument('--sampled', type=int, default=0)
 
     u.seed_random(1)
     gl.args = parser.parse_args()
@@ -108,7 +109,12 @@ def main():
         d = [784, 784, 784, 784, 784, 784, 10]
     else:
         d = [784, 2500, 2000, 1500, 1000, 500, 10]
-    o = 10
+
+    # o represents number of output samples
+    if not args.sampled:
+        o = 10
+    else:
+        o = 1
 
     model = u.SimpleFullyConnected2(d, nonlin=args.nonlin, bias=args.bias, dropout=args.dropout)
     model = model.to(gl.device)
@@ -161,6 +167,10 @@ def main():
                    'momentum': optimizer.param_groups[0].get('momentum', 0)}
         u.log_scalars(metrics)
 
+        def mom_update(buffer, val):
+            buffer *= 0.9
+            buffer += val*0.1
+
         if not args.skip_stats:
             n = args.stats_batch_size * args.stats_num_batches
             for i in range(args.stats_num_batches):
@@ -205,9 +215,9 @@ def main():
                 with u.timeit("backprop_H"):
                     with autograd_lib.module_hook(compute_stats):
                         current_stats = hessian
-                        autograd_lib.backward_hessian(output, loss='CrossEntropy', retain_graph=True)    # 600 ms
+                        autograd_lib.backward_hessian(output, loss='CrossEntropy', sampled=args.sampled, retain_graph=True)    # 600 ms
                         current_stats = jacobian
-                        autograd_lib.backward_jacobian(output, retain_graph=True)   # 600 ms
+                        autograd_lib.backward_jacobian(output, sampled=args.sampled, retain_graph=True)   # 600 ms
                         current_stats = fisher
                         model.zero_grad()
                         loss.backward()  # 60 ms
