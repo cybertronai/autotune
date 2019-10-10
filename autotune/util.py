@@ -2583,6 +2583,11 @@ def rmatmul(a: torch.Tensor, b):
     return b.__rmatmul__(a)
 
 
+# helper util for norm squared, usual norm is slow https://discuss.pytorch.org/t/torch-norm-3-6x-slower-than-manually-calculating-sum-of-squares/14684
+def norm_squared(param):
+    return (param*param).sum()
+
+
 if __name__ == '__main__':
     run_all_tests(sys.modules[__name__])
 
@@ -2601,3 +2606,4 @@ if __name__ == '__main__':
 #     plt.setp(baseline, color='r', linewidth=2)
 #
 #     plt.show()
+

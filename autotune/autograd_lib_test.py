@@ -608,12 +608,19 @@ def test_full_hessian_xent_kfac():
     hess0 = torch.einsum('kl,ij->kilj', hess_factored.BB / n, hess_factored.AA / o)  # hess for sum loss
     hess0 /= n  # hess for mean loss
 
+
     # check against autograd
     # 0.1459
     Y = model(data)
     loss = loss_fn(Y, targets)
     hess_autograd = u.hessian(loss, model.layers[0].weight)
     u.check_equal(hess_autograd, hess0)
+
+    # check diagonal hessian
+    diag_autograd = torch.einsum('lili->li', hess_autograd)
+    diag_kfac = torch.einsum('ll,ii->li', hess_factored.BB / n, hess_factored.AA / o / n)
+    u.check_close(diag_autograd,  diag_kfac)
+
 
 
 def test_full_hessian_xent_kfac2():
@@ -717,6 +724,7 @@ def test_full_hessian_xent_mnist():
 
 
 def test_full_hessian_xent_mnist_multilayer():
+    """Test regular and diagonal hessian computation."""
     u.seed_random(1)
 
     data_width = 3
@@ -735,6 +743,7 @@ def test_full_hessian_xent_mnist_multilayer():
     loss_fn = torch.nn.CrossEntropyLoss()
 
     hess = defaultdict(float)
+    hess_diag = defaultdict(float)
     for train_step in range(train_steps):
         data, targets = next(train_iter)
 
@@ -750,6 +759,7 @@ def test_full_hessian_xent_mnist_multilayer():
             A = activations[layer]
             BA = torch.einsum("nl,ni->nli", B, A)
             hess[layer] += torch.einsum('nli,nkj->likj', BA, BA)
+            hess_diag[layer] += torch.einsum("ni,nj->ij", B * B, A * A)
 
         with autograd_lib.module_hook(compute_hess):
             autograd_lib.backward_hessian(output, loss='CrossEntropy', retain_graph=True)
@@ -757,9 +767,13 @@ def test_full_hessian_xent_mnist_multilayer():
         # compute Hessian through autograd
         H_autograd = u.hessian(loss, model.layers[0].weight)
         u.check_close(hess[model.layers[0]] / batch_size, H_autograd)
+        diag_autograd = torch.einsum('lili->li', H_autograd)
+        u.check_close(diag_autograd, hess_diag[model.layers[0]]/batch_size)
 
         H_autograd = u.hessian(loss, model.layers[1].weight)
         u.check_close(hess[model.layers[1]] / batch_size, H_autograd)
+        diag_autograd = torch.einsum('lili->li', H_autograd)
+        u.check_close(diag_autograd, hess_diag[model.layers[1]]/batch_size)
 
 
 def test_kfac_hessian_xent_mnist():

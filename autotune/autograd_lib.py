@@ -1324,6 +1324,24 @@ def backward_identity(tensor):
     return hess
 
 
+def backprop_identity(output, retain_graph=False) -> None:
+    """
+    Helper to find Jacobian with respect to given tensor. Backpropagates a row of identity matrix
+    for each output of tensor. Rows are replicated across batch dimension.
+
+    Args:
+        output: target of backward
+        retain_graph: same meaning as PyTorch retain_graph
+    """
+
+    assert u.is_matrix(output), "Only support rank-2 outputs."""
+
+    n, o = output.shape
+    id_mat = u.eye(o)
+    for idx in range(o):
+        output.backward(torch.stack([id_mat[idx]] * n), retain_graph=(retain_graph or idx < o - 1))
+
+
 # TODO(y): rename to backward or backward_jacobian
 
 
@@ -1336,7 +1354,7 @@ def backward_ones(output):
 # backward_hessian(loss='cross_entropy', strategy='sampled')
 
 
-def backprop_identity(output, retain_graph=False) -> None:
+def backprop_jacobian(output, retain_graph=False) -> None:
     """
     Helper to find Jacobian with respect to given tensor. Backpropagates a row of identity matrix
     for each output of tensor. Rows are replicated across batch dimension.
@@ -1363,7 +1381,7 @@ def backward_hessian(output, loss='CrossEntropy', strategy='exact', retain_graph
     n, o = output.shape
     p = F.softmax(output, dim=1)
 
-    mask = torch.eye(o).expand(n, o, o)
+    mask = torch.eye(o).to(gl.device).expand(n, o, o)
     diag_part = p.sqrt().unsqueeze(2).expand(n, o, o) * mask
     hess_sqrt = diag_part - torch.einsum('ij,ik->ijk', p.sqrt(), p)   # n, o, o
 
