@@ -1415,35 +1415,48 @@ def backward_hessian(output, loss='CrossEntropy', sampled=False, retain_graph=Fa
         output.backward(mixed_vector, retain_graph=retain_graph)
 
 
-# gradient statistics
-# Return set of gradient norms squared, according to given metric
-def grad_norms(A, B, metric=None, n=1, kind='natural'):
-    if kind is 'natural':
-        return (A * A).sum(dim=1) * (B * B).sum(dim=1)
+def grad_norms(A, B, m=None, approx='zero_order'):
+    """
+    Compute gradient norms squared with respect to given metric.
 
-    if kind == 'kfac':
-        AA = metric.AA / n
-        BB = metric.BB / n
-        Am, Bm = A @ AA, B @ BB
+    "zero_order" approximation uses Euclidian metric computation (standard gradient norms), otherwise try to recover
+    metric tensor from one or more of the moments defined as follows on the population activation/backprop values A, B
+        m.a = einsum('ni->i', A)
+        m.b = einsum('nk->k', B)
+        m.AA = einsum('nij->ij', A, A)
+        m.BB = einsum('nkl->kl', B, B)
+        m.BA = einsum('nik->ik', B, A)
+        m.BABA = einsum('nkilj->kilj', B, A, B, A)
+
+    Args:
+        A: n, d1 tensor of activationsn
+        B: n, d2 tensor of backprops
+        m: expected moments of covariance/curvature tensor
+        approx: which approximation to use to reconstruct metric tensor out of moments.
+            "zero_order":  ignore moments and use Euclidian metric
+            "kfac": use m.AA, m.BB as Mijkl=Mij*Mkl
+            "isserlis: use m.AA, m.BB, m.BA, m.a, m.b as Mijkl=Mij*Mkl+Mik*Mjl+Mil*Mjk-2Mi*Mj*Mk*Ml
+            "full": full 4th order moment, use m.BABA
+
+    Returns:
+        (n,) tensor of per-example gradient norms squared
+    """
+    if approx == 'zero_order':
+        norms = (A * A).sum(dim=1) * (B * B).sum(dim=1)
+    elif approx == 'kfac':
+        Am, Bm = A @ m.AA, B @ m.BB
         norms = (Am * A).sum(dim=1) * (Bm * B).sum(dim=1)
+        # equivalent to torch.einsum('nk,ni,lk,ij,nl,nj->n', B, A, BB, AA, B, A)
 
-        # equivalent method through einsum
-        # norms = torch.einsum('nk,ni,lk,ij,nl,nj->n', B, A, BB, AA, B, A)
-
-    elif kind == 'isserlis':
-        AA = metric.AA / n
-        BB = metric.BB / n
-        BA = metric.BA / n
-        a = metric.a / n
-        b = metric.b / n
-        kfac = torch.einsum('nk,ni,lk,ij,nl,nj->n', B, A, BB, AA, B, A)
-        cross1 = torch.einsum('nk,ni,ki,lj,nl,nj->n', B, A, BA, BA, B, A)
-        cross2 = torch.einsum('nk,ni,li,kj,nl,nj->n', B, A, BA, BA, B, A)
-        first_order = torch.einsum('nk,ni,i,j,k,l,nl,nj->n', B, A, a, a, b, b, B, A)
+    elif approx == 'isserlis':
+        kfac = torch.einsum('nk,ni,lk,ij,nl,nj->n', B, A, m.BB, m.AA, B, A)
+        cross1 = torch.einsum('nk,ni,ki,lj,nl,nj->n', B, A, m.BA, m.BA, B, A)
+        cross2 = torch.einsum('nk,ni,li,kj,nl,nj->n', B, A, m.BA, m.BA, B, A)
+        first_order = torch.einsum('nk,ni,i,j,k,l,nl,nj->n', B, A, m.a, m.a, m.b, m.b, B, A)
         norms = kfac + cross1 + cross2 - 2*first_order
     else:
-        assert kind == 'full'
-        norms = torch.einsum('ni,nk,nj,nl,likj->n', A, B, A, B, metric.BABA / n)
+        assert approx == 'full'
+        norms = torch.einsum('ni,nk,nj,nl,likj->n', A, B, A, B, m.BABA)
     return norms
 
 

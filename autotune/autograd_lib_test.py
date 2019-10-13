@@ -14,7 +14,7 @@ from typing import Callable
 import torch
 import torch.nn as nn
 
-from attrdict import AttrDefault
+from attrdict import AttrDefault, AttrDict
 
 
 def simple_model(d, num_layers):
@@ -1015,24 +1015,32 @@ def test_grad_norms():
     with autograd_lib.save_activations2() as activations:
         loss = loss_fn(model(data), targets)
 
+    def normalize_moments(d, n):
+        result = AttrDict()
+        for val in d:
+            if type(d[val]) == torch.Tensor:
+                result[val] = d[val] / n
+        return result
+
     def compute_norms(layer, _, B):
         A = activations[layer]
-        for kind in ('natural', 'kfac', 'isserlis', 'full'):
+        for kind in ('zero_order', 'kfac', 'isserlis', 'full'):
+            normalized_moments = normalize_moments(moments[layer], num_samples)
             norms_list = getattr(norms[layer], kind)
-            norms_list.extend(autograd_lib.grad_norms(A, B, moments[layer], num_samples, kind=kind))
+            norms_list.extend(autograd_lib.grad_norms(A, B, normalized_moments, approx=kind))
 
     with autograd_lib.module_hook(compute_norms):
         model.zero_grad()
         (len(data) * loss).backward(retain_graph=True)
 
-        print(norms[model.layers[0]].natural.value())
+        print(norms[model.layers[0]].zero_order.value())
 
     for layer in model.layers:
         output = model(data)
         losses = torch.stack([loss_fn(output[i:i + 1], targets[i:i + 1]) for i in range(len(data))])
         grads = u.jacobian(losses, layer.weight)
         grad_norms = torch.einsum('nij,nij->n', grads, grads)
-        u.check_close(grad_norms, norms[layer].natural)
+        u.check_close(grad_norms, norms[layer].zero_order)
 
         # test gradient norms with custom metric
         kfac_norms, isserlis_norms, full_norms = [u.to_pytorch(getattr(norms[layer], k)) for k in ('kfac', 'isserlis', 'full')]
