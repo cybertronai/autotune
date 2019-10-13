@@ -288,6 +288,7 @@ class Vecr(SpecialForm):
     def __str__(self):
         return str(to_numpy(self.normal_form()))
 
+
 class Cov(SpecialForm):
     pass
 
@@ -300,14 +301,14 @@ class KronFactoredCov(SpecialForm):
     """Kronecker factored covariance matrix. Covariance matrix of random variable ba' constructed from paired
     samples of a and b. Each sample of a can correspond to multiple samples of b, reprented by an extra batch dimension in b sample matrix."""
 
-    a_num: int            # number of a samples
-    b_num: int            # number of b samples
-    ab_num: int           # number of samples used for AB cross-covariance estimate
-    a_dim: int            # dimension of a samples
-    b_dim: int            # dimension of b samples
-    AA: torch.Tensor      # sum of a covariances
-    BB: torch.Tensor      # sum of b covariances
-    AB: torch.Tensor      # sum of a,b cross covariances
+    a_num: int  # number of a samples
+    b_num: int  # number of b samples
+    ab_num: int  # number of samples used for AB cross-covariance estimate
+    a_dim: int  # dimension of a samples
+    b_dim: int  # dimension of b samples
+    AA: torch.Tensor  # sum of a covariances
+    BB: torch.Tensor  # sum of b covariances
+    AB: torch.Tensor  # sum of a,b cross covariances
 
     def __init__(self, a_dim, b_dim):
         self.a_dim = a_dim
@@ -367,7 +368,7 @@ class KronFactoredCov(SpecialForm):
 
     def cross(self) -> torch.Tensor:
         """Return cross covariance matrix AB'"""
-        return self.AB/self.ab_num
+        return self.AB / self.ab_num
 
     def wilks(self) -> torch.Tensor:
         """Returns Wilk's statistic for the test of independence of two terms"""
@@ -381,14 +382,13 @@ class KronFactoredCov(SpecialForm):
             vals = 1. - square(torch.diag(S))
             return torch.prod(vals)
 
-
     def bartlett(self):
         """Returns Bartlett statistic for the test of independence."""
         q = self.a_dim
         p = self.b_dim
         n = self.ab_num
-        val = -(n - (p+q+3.)/2.) * torch.log(self.wilks())
-        print('bartlett, ', val, 'mean', q*p)
+        val = -(n - (p + q + 3.) / 2.) * torch.log(self.wilks())
+        print('bartlett, ', val, 'mean', q * p)
         return val
 
     def prob_dep(self):
@@ -408,7 +408,7 @@ class KronFactoredCov(SpecialForm):
 
 
 def square(a: torch.Tensor):
-    return a*a
+    return a * a
 
 
 # TODO(y): rename into sym-kron
@@ -431,8 +431,8 @@ class Kron(SpecialForm):
         self.RR = RR
 
         # todo(y): remove this check onces it's split into KronFactored and SymmetricKronFactored
-        assert LL.shape[0] == LL.shape[1],  f"shape check fail with {LL.shape}"
-        assert RR.shape[0] == RR.shape[1],  f"shape check fail with {RR.shape}"
+        assert LL.shape[0] == LL.shape[1], f"shape check fail with {LL.shape}"
+        assert RR.shape[0] == RR.shape[1], f"shape check fail with {RR.shape}"
 
         self.lsize = LL.shape[0]
         self.rsize = RR.shape[0]
@@ -504,7 +504,7 @@ class Kron(SpecialForm):
 
     def __radd__(self, other):
         other = to_python_scalar(other)
-        return Kron(self.LL+other, self.RR)
+        return Kron(self.LL + other, self.RR)
 
     def __mul__(self, other):
         other = to_python_scalar(other)
@@ -512,7 +512,7 @@ class Kron(SpecialForm):
 
     def __rmul__(self, other):
         other = to_python_scalar(other)
-        return Kron(self.LL*other, self.RR)
+        return Kron(self.LL * other, self.RR)
 
     # remove, scalar addition doesn't make sense because it breaks factoring
     # def __add__(self, other):
@@ -903,7 +903,6 @@ def is_scalar(x):
     return True
 
 
-
 def from_numpy(x) -> torch.Tensor:
     if isinstance(x, torch.Tensor):
         return x
@@ -1126,7 +1125,7 @@ def symsqrt(mat, cond=None, return_rank=False, inverse=False):
 
     sigma_diag = torch.sqrt(s[above_cutoff])
     if inverse:
-        sigma_diag = 1/sigma_diag
+        sigma_diag = 1 / sigma_diag
     u = u[:, above_cutoff]
 
     B = u @ torch.diag(sigma_diag) @ u.t()
@@ -1166,7 +1165,7 @@ def robust_svd(mat: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Ten
             s = torch.symeig(mat).eigenvalues
             eps = get_condition(mat.dtype) * torch.max(abs(s))
         else:
-            eps = get_condition(mat.dtype) * u.frobenius_norm(mat)/mat.shape[0]
+            eps = get_condition(mat.dtype) * u.frobenius_norm(mat) / mat.shape[0]
         print(f"Warning, SVD diverged with {e}, regularizing with {eps}")
         mat = regularize_mat2(mat, eps * 2)
         U, S, V = torch.svd(mat)
@@ -1189,8 +1188,8 @@ def regularize_mat2(mat, eps):
         mat = mat.T
     else:
         transpose = False
-    reg = torch.cat([torch.eye(mat.shape[0]), torch.zeros(mat.shape[0], mat.shape[1]-mat.shape[0])], dim=1)
-    mat = mat + reg.to(gl.device)*eps
+    reg = torch.cat([torch.eye(mat.shape[0]), torch.zeros(mat.shape[0], mat.shape[1] - mat.shape[0])], dim=1)
+    mat = mat + reg.to(gl.device) * eps
     if transpose:
         return mat.T
     else:
@@ -1215,25 +1214,31 @@ def check_symmetric(mat):
         print(f"warning, matrix not symmetric: {discrepancy}")
 
 
-def check_close(a0, b0, rtol=1e-5, atol=1e-8, label: str= '') -> None:
+def check_close(a0, b0, rtol=1e-5, atol=1e-8, label: str = '') -> None:
     """Convenience method for check_equal with tolerances defaulting to typical errors observed in neural network
     ops in float32 precision."""
     return check_equal(a0, b0, rtol=rtol, atol=atol, label=label)
 
 
-def check_equal(observed, truth, rtol=1e-9, atol=1e-12, label: str= '') -> None:
+def check_equal(observed, truth, rtol=1e-9, atol=1e-12, label: str = '') -> None:
     """
     Assert fail any entries in two arrays are not close to each to desired tolerance. See np.allclose for meaning of rtol, atol
 
     """
 
     # special handling for lists, which could contain
-    #if type(observed) == List and type(truth) == List:
+    # if type(observed) == List and type(truth) == List:
     #    for a, b in zip(observed, truth):
     #        check_equal(a, b)
 
     truth = to_numpy(truth)
     observed = to_numpy(observed)
+
+    # broadcast to match shapes if necessary
+    if observed.shape != truth.shape:
+        #        common_shape = (np.zeros_like(observed) + np.zeros_like(truth)).shape
+        truth = truth + np.zeros_like(observed)
+        observed = observed + np.zeros_like(truth)
 
     assert truth.shape == observed.shape, f"Observed shape {observed.shape}, expected shape {truth.shape}"
     # run np.testing.assert_allclose for extra info on discrepancies
@@ -1651,6 +1656,38 @@ class SimpleFullyConnected2(SimpleModel2):
         return self.predict(x)
 
 
+class SimpleMLP(nn.Module):
+    """Simple feedforward network that works on images."""
+
+    layers: List[nn.Module]
+    all_layers: List[nn.Module]
+
+    def __init__(self, d: List[int], nonlin=False, bias=False):
+        """
+        Feedfoward network of linear layers with optional ReLU nonlinearity. Stores layers in "layers" attr, ie
+        model.layers[0] refers to first linear layer.
+
+        Args:
+            d: list of layer dimensions, ie [768, 20, 10] for MNIST 10-output with hidden layer of 20
+            nonlin: whether to include ReLU nonlinearity
+        """
+        super().__init__()
+        self.layers: List[nn.Module] = []
+        self.all_layers: List[nn.Module] = []
+        self.d: List[int] = d
+        for i in range(len(d) - 1):
+            linear = nn.Linear(d[i], d[i + 1], bias=bias)
+            setattr(linear, 'name', f'{i:02d}-linear')
+            self.layers.append(linear)
+            self.all_layers.append(linear)
+            if nonlin:
+                self.all_layers.append(nn.ReLU())
+        self.predict = torch.nn.Sequential(*self.all_layers)
+
+    def forward(self, x: torch.Tensor):
+        x = x.reshape((-1, self.d[0]))
+        return self.predict(x)
+
 
 class RedundantFullyConnected2(SimpleModel2):
     """Simple feedforward network that works on images."""
@@ -1676,10 +1713,10 @@ class RedundantFullyConnected2(SimpleModel2):
             for l in range(redundancy):
                 layer = nn.Linear(d[i], d[i + 1], bias=bias)
                 group.append(layer)
-                layer.weight.data.copy_(layer.weight.data/redundancy)
+                layer.weight.data.copy_(layer.weight.data / redundancy)
                 if hasattr(layer, 'bias'):
-                    layer.bias.data.copy_(layer.bias.data/redundancy)
-                layer_name = f'layer%02d' % (i*redundancy+l,)
+                    layer.bias.data.copy_(layer.bias.data / redundancy)
+                layer_name = f'layer%02d' % (i * redundancy + l,)
                 setattr(self, layer_name, group[-1])  # needed to make params discoverable by optimizers
                 #                print("adding layer ", layer_name, getattr(self, layer_name))
             self.linear_groups.append(group)
@@ -2129,7 +2166,6 @@ class CrossEntropySoft(nn.Module):
         return loss
 
 
-
 def get_unique_logdir(root_logdir: str) -> str:
     """Increments suffix at the end of root_logdir until getting directory that doesn't exist locally, return that."""
     count = 0
@@ -2353,7 +2389,6 @@ def kron_trace(H: Tuple[torch.Tensor, torch.Tensor]):
     return torch.trace(A) * torch.trace(B)
 
 
-
 def kron_trace_matmul(H, sigma):
     """
     tr(H@sigma)
@@ -2422,7 +2457,7 @@ def create_local_logdir(logdir) -> str:
 class NoOp:
     """Dummy callable that accepts every signature"""
 
-    def __getattr__(self, *_args):
+    def __getattr__(self, *_args, **_kwargs):
         def no_op(*_args, **_kwargs): pass
 
         return no_op
@@ -2564,6 +2599,7 @@ def eye_like(X: torch.Tensor) -> torch.Tensor:
     # TODO(y): dedup with regularize to support rectangular matrices
     assert is_square_matrix(X)
     d = X.shape[0]
+
     return torch.eye(d).type(X.dtype).to(X.device)
 
 
@@ -2585,11 +2621,16 @@ def rmatmul(a: torch.Tensor, b):
 
 # helper util for norm squared, usual norm is slow https://discuss.pytorch.org/t/torch-norm-3-6x-slower-than-manually-calculating-sum-of-squares/14684
 def norm_squared(param):
-    return (param*param).sum()
+    return (param * param).sum()
+
+
+def trsum(A, B):
+    return (A * B).sum()  # computes tr(AB')
 
 
 if __name__ == '__main__':
     run_all_tests(sys.modules[__name__])
+
 
 # import matplotlib.pyplot as plt
 #
@@ -2606,4 +2647,12 @@ if __name__ == '__main__':
 #     plt.setp(baseline, color='r', linewidth=2)
 #
 #     plt.show()
+
+
+def copy_stats(shared_stats, stats):
+    for key in shared_stats:
+        assert key not in stats, f"Trying to overwrite {key}"
+        stats[key] = shared_stats[key]
+    return None
+
 

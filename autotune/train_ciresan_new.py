@@ -1,4 +1,4 @@
-# Train Ciresan's 6-layer deep MNIST network
+# Train Ciresan's 6-layer deep MNIST network.
 # (from http://yann.lecun.com/exdb/mnist/)
 
 import argparse
@@ -88,16 +88,13 @@ def main():
     parser.add_argument('--train_batch_size', type=int, default=64)
     parser.add_argument('--stats_batch_size', type=int, default=10000)
     parser.add_argument('--stats_num_batches', type=int, default=1)
-    parser.add_argument('--uniform', type=int, default=0, help='use uniform architecture (all layers same size)')
     parser.add_argument('--run_name', type=str, default='noname')
-    parser.add_argument('--disable_hess', type=int, default=1, help='disable hessian because of sysmqrt slowness')
     parser.add_argument('--launch_blocking', type=int, default=0)
     parser.add_argument('--sampled', type=int, default=0)
 
     u.seed_random(1)
     gl.args = parser.parse_args()
     args = gl.args
-    gl.hacks_disable_hess = args.disable_hess
     u.seed_random(1)
 
     gl.project_name = 'train_ciresan'
@@ -105,17 +102,9 @@ def main():
     print(f"Logging to {gl.logdir}")
 
     d1 = 28*28
-    if args.uniform:
-        d = [784, 784, 784, 784, 784, 784, 10]
-    else:
-        d = [784, 2500, 2000, 1500, 1000, 500, 10]
+    d = [784, 2500, 2000, 1500, 1000, 500, 10]
 
-    # o represents number of output samples
-    if not args.sampled:
-        o = 10
-    else:
-        o = 1
-
+    # number of samples per datapoint. Used to normalize kfac
     model = u.SimpleFullyConnected2(d, nonlin=args.nonlin, bias=args.bias, dropout=args.dropout)
     model = model.to(gl.device)
     autograd_lib.register(model)
@@ -137,7 +126,6 @@ def main():
                                dataset_size=args.dataset_size)
     test_eval_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.stats_batch_size, shuffle=False, drop_last=False)
     train_eval_loader = torch.utils.data.DataLoader(dataset, batch_size=args.stats_batch_size, shuffle=False, drop_last=False)
-
 
     loss_fn = torch.nn.CrossEntropyLoss()
     autograd_lib.add_hooks(model)
@@ -172,35 +160,58 @@ def main():
             buffer += val*0.1
 
         if not args.skip_stats:
+            # number of samples passed through
             n = args.stats_batch_size * args.stats_num_batches
+
+            # quantities used across all statistics
+            shared_stats = defaultdict(lambda: AttrDefault(float))
+
+            # todo: move vocabs out of stats_num_batches loop
             for i in range(args.stats_num_batches):
                 activations = {}
-                def save_activations(layer, a, _):
-                    activations[layer] = a
+                def save_activations(layer, A, _):
+                    activations[layer] = A
+                    shared_stats[layer].AA += torch.einsum("ni,nj->ij", A, A)
 
                 print('forward')
                 with u.timeit("stats_forward"):
                     with autograd_lib.module_hook(save_activations):
                         data, targets = next(stats_iter)
                         output = model(data)
-                        loss = loss_fn(output, targets)
+                        loss = loss_fn(output, targets) * len(output)
 
-                hessian = defaultdict(lambda: AttrDefault(float))
-                fisher = defaultdict(lambda: AttrDefault(float))
-                jacobian = defaultdict(lambda: AttrDefault(float))
-                current_stats = None
+                hessians = defaultdict(lambda: AttrDefault(float))
+                fishers = defaultdict(lambda: AttrDefault(float))
+                jacobians = defaultdict(lambda: AttrDefault(float))
+                current = None
 
                 def compute_stats(layer, _, B):
                     A = activations[layer]
                     # about 27ms per layer
                     with u.timeit('compute_stats'):
-                        start = time.time()
-                        current_stats[layer].AA += torch.einsum("ni,nj->ij", A, A)
-                        current_stats[layer].BB += torch.einsum("ni,nj->ij", B, B)  # TODO(y): index consistency
-                        current_stats[layer].diag += torch.einsum("ni,nj->ij", B * B, A * A)
-                        current_stats[layer].BA += torch.einsum("ni,nj->ij", B, A)
-                        current_stats[layer].norm2 += ((A*A).sum(dim=1) * (B*B).sum(dim=1)).sum()
-                        current_stats[layer].n += len(A)
+                        current[layer].BB += torch.einsum("ni,nj->ij", B, B)  # TODO(y): index consistency
+                        current[layer].diag += torch.einsum("ni,nj->ij", B * B, A * A)
+                        current[layer].BA += torch.einsum("ni,nj->ij", B, A)
+                        current[layer].norm2 += ((A*A).sum(dim=1) * (B*B).sum(dim=1)).sum()
+
+                        # compute curvatures in direction of all gradiennts
+                        if current == fishers:
+                            assert args.stats_num_batches == 1, "not tested on more than one stats step"
+                            hess = hessians[layer]
+                            jac = jacobians[layer]
+                            Bh, Ah = B @ hess.BB/n, A @ shared_stats[layer].AA/n
+                            Bj, Aj = B @ jac.BB/n, A @ shared_stats[layer].AA/n
+                            norms = ((A * A).sum(dim=1) * (B * B).sum(dim=1))
+                            norms_hess = ((Ah * A).sum(dim=1) * (Bh * B).sum(dim=1))
+                            norms_jac = ((Aj * A).sum(dim=1) * (Bj * B).sum(dim=1))
+
+                            current[layer].norm += norms.sum()
+                            current[layer].curv_hess += (norms_hess/norms).sum()
+                            current[layer].curv_jac += (norms_jac/norms).sum()
+
+                            current[layer].norms_hess += norms_hess.sum()
+                            current[layer].norms_jac += norms_jac.sum()
+
 
                 # todo(y): add "compute_fisher" and "compute_jacobian"
                 # todo(y): add couple of statistics (effective rank, trace, gradient noise)
@@ -214,17 +225,17 @@ def main():
                 print('backward')
                 with u.timeit("backprop_H"):
                     with autograd_lib.module_hook(compute_stats):
-                        current_stats = hessian
+                        current = hessians
                         autograd_lib.backward_hessian(output, loss='CrossEntropy', sampled=args.sampled, retain_graph=True)    # 600 ms
-                        current_stats = jacobian
+                        current = jacobians
                         autograd_lib.backward_jacobian(output, sampled=args.sampled, retain_graph=True)   # 600 ms
-                        current_stats = fisher
+                        current = fishers
                         model.zero_grad()
                         loss.backward()  # 60 ms
 
             print('summarize')
             for (i, layer) in enumerate(model.layers):
-                stats_dict = {'hessian': hessian, 'jacobian': jacobian, 'fisher': fisher}
+                stats_dict = {'hessian': hessians, 'jacobian': jacobians, 'fisher': fishers}
 
                 # evaluate stats from
                 # https://app.wandb.ai/yaroslavvb/train_ciresan/runs/425pu650?workspace=user-yaroslavvb
@@ -232,28 +243,38 @@ def main():
                     s = AttrDict()
                     stats = stats_dict[stats_name][layer]
 
-                    diag: torch.Tensor = stats.diag / stats.n
-                    if stats_name != 'fisher':
-                        diag /= o   # extra factor to make diag_trace match kfac version
+                    for key in shared_stats[layer]:
+                        # print(f'copying {key} in {stats_name}, {layer}')
+                        assert stats[key] == float(), f"Trying to overwrite {key} in {stats_name}, {layer}"
+                        stats[key] = shared_stats[layer][key]
+
+                    diag: torch.Tensor = stats.diag / n
+
+                    # jacobian:
+                    # curv in direction of gradient goes down to roughly 0.3-1
+                    # maximum curvature goes up to 1000-2000
+                    #
+                    # Hessian:
+                    # max curv goes down to 1, in direction of gradient 0.0001
 
                     s.diag_l2 = torch.max(diag)     # 40 - 3000 smaller than kfac l2 for jac
                     s.diag_fro = torch.norm(diag)   # jacobian grows to 0.5-1.5, rest falls, layer-5 has phase transition, layer-4 also
                     s.diag_trace = diag.sum()      # jacobian grows 0-1000 (first), 0-150 (last). Almost same as kfac_trace (771 vs 810 kfac). Jacobian has up/down phase transition
+                    s.diag_average = diag.mean()
                     s.diag_erank = s.diag_trace/torch.max(diag)   # kind of useless, very large and noise, but layer2/jacobian has up/down phase transition
 
                     # normalize for mean loss
-                    BB = stats.BB / stats.n
-                    AA = stats.AA / stats.n
-                    if stats_name != 'fisher':
-                        AA /= o   # jacobian and hessian matrices need another factor of o normalization on a factor
-                        A_evals, _ = torch.symeig(AA)   # averaging 120ms per hit, 90 hits
+                    BB = stats.BB / n
+                    AA = stats.AA / n
+                    A_evals, _ = torch.symeig(AA)   # averaging 120ms per hit, 90 hits
                     B_evals, _ = torch.symeig(BB)
+
                     s.kfac_l2 = torch.max(A_evals) * torch.max(B_evals)    # 60x larger than diag_l2. layer0/hess has down/up phase transition. layer5/jacobian has up/down phase transition
                     s.kfac_trace = torch.sum(A_evals) * torch.sum(B_evals)  # 0/hess down/up tr, 5/jac sharp phase transition
                     s.kfac_fro = torch.norm(stats.AA) * torch.norm(stats.BB)  # 0/hess has down/up tr, 5/jac up/down transition
                     s.kfac_erank = s.kfac_trace / s.kfac_l2   # first layer has 25, rest 15, all layers go down except last, last noisy
 
-                    s.diversity = (stats.norm2 / n) / u.norm_squared(stats.BA / n)  # gradient diversity. Goes up 3x. Bottom layer has most diversity
+                    s.diversity = (stats.norm2 / n) / u.norm_squared(stats.BA / n)  # gradient diversity. Goes up 3x. Bottom layer has most diversity. Jacobian diversity much less noisy than everythingelse
 
                     # discrepancy of KFAC based on exact values of diagonal approximation
                     # average difference normalized by average diagonal magnitude
@@ -263,28 +284,50 @@ def main():
 
                 # openai batch size stat
                 s = AttrDict()
-                hess = hessian[layer]
-                jac = jacobian[layer]
-                fish = fisher[layer]
+                hess = hessians[layer]
+                jac = jacobians[layer]
+                fish = fishers[layer]
                 # the following check passes, but is expensive
                 # if args.stats_num_batches == 1:
                 #    u.check_close(fisher[layer].BA, layer.weight.grad)
 
                 def trsum(A, B): return (A*B).sum()  # computes tr(AB')
-                grad = fisher[layer].BA
+                grad = fishers[layer].BA / n
+                s.grad_fro = torch.norm(grad)
 
-                s.hess_curv = trsum(hess.BB/n @ grad, grad @ hess.AA / n / o)  #(hess.BB / n) @ grad @ (hess.AA / n / o)
-                s.jac_curv = trsum(jac.BB/n @ grad, grad @ jac.AA / n / o)   # jac.BB / n) @ grad @ (jac.AA / n / o)
+                s.hess_curv = trsum((hess.BB / n) @ grad @ (hess.AA / n), grad) / trsum(grad, grad)
+                s.jac_curv = trsum((jac.BB / n) @ grad @ (jac.AA / n), grad) / trsum(grad, grad)
 
                 # compute gradient noise statistics
                 # fish.BB has /n factor twice, hence don't need extra /n on fish.AA
-                s.hess_noise = (trsum(hess.AA / n / o, fish.AA) * trsum(hess.BB / n, fish.BB))
-                s.jac_noise = (trsum(jac.AA / n / o, fish.AA) * trsum(jac.BB / n, fish.BB))
-                s.hess_noise_normalized = s.hess_noise / (hess.diag.sum() / n)
-                s.jac_noise_normalized = s.jac_noise / (jac.diag.sum() / n)
+                # after sampling, hess_noise,jac_noise became 100x smaller, but normalized is unaffected
+                s.hess_noise = (trsum(hess.AA / n, fish.AA / n) * trsum(hess.BB / n, fish.BB / n))
+                s.jac_noise = (trsum(jac.AA / n, fish.AA / n) * trsum(jac.BB / n, fish.BB / n))
+                a = torch.mean(fish.AA, dim=0)
+                b = torch.mean(fish.BB, dim=0)
+                s.hess_noise_centered = s.hess_noise - trsum(hess.BB/n @ grad, grad @ hess.AA/n)
+                s.jac_noise_centered = s.jac_noise - trsum(jac.BB/n @ grad, grad @ jac.AA/n)
+
+                s.norms = fish.norm2 / n
+                s.norms_hess = fish.norms_hess / n
+                s.norms_jac = fish.norms_jac / n
+
+                s.hess_curv_grad = fish.curv_hess / n  # phase transition, hits minimum loss in layer 1, then starts going up. Other layers take longer to reach minimum. Decreases with depth.
+                s.jac_curv_grad = fish.curv_jac / n   # this one has much lower variance than jac_curv. Reaches peak at 10k steps, also kfac error reaches peak there. Decreases with depth except for last layer.
+
+                s.hess_noise_normalized = s.hess_noise_centered / (fish.norms_hess / n)
+                s.jac_noise_normalized = s.jac_noise / (fish.norms_jac / n)
                 u.log_scalars(u.nest_stats(f'layer-{i}', s))
+
                 # step size stat
                 # rho?
+
+                # todo(y): add weight magnitude
+                # todo(y): add curvatures in direction of mean gradient
+                # todo(y): add regret
+
+                # todo(y): log spectra
+                # todo(y): gradient norms histogram
 
                 # TODO(y): check mean error again, check hess_noise, jac_noise
 

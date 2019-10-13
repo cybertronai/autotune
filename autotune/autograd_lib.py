@@ -38,7 +38,7 @@ L, lyap -- lyapunov matrix
 
 """
 import math
-from typing import List, Optional, Callable, Tuple
+from typing import List, Optional, Callable, Tuple, Dict
 
 import torch
 import torch.nn as nn
@@ -1211,6 +1211,18 @@ def module_hook(hook: Callable):
     global_settings.backward_hooks.pop()
 
 
+@contextmanager
+def save_activations2():
+    """Save activations to layer storage: storage[layer] = activations
+    """
+
+    activations = {}
+    def saveit(layer, A, _):
+        activations[layer] = A
+    with module_hook(saveit):
+        yield activations
+
+
 """"
 Concept: backprop_func
 
@@ -1401,3 +1413,42 @@ def backward_hessian(output, loss='CrossEntropy', sampled=False, retain_graph=Fa
         vals = vals.type(torch.get_default_dtype())/o
         mixed_vector = torch.einsum('nop,no->np', hess_sqrt, vals)
         output.backward(mixed_vector, retain_graph=retain_graph)
+
+
+# gradient statistics
+# Return set of gradient norms squared, according to given metric
+def grad_norms(A, B, metric=None, n=1, kind='natural'):
+    if kind is 'natural':
+        return (A * A).sum(dim=1) * (B * B).sum(dim=1)
+
+    if kind == 'kfac':
+        AA = metric.AA / n
+        BB = metric.BB / n
+        Am, Bm = A @ AA, B @ BB
+        norms = (Am * A).sum(dim=1) * (Bm * B).sum(dim=1)
+
+        # equivalent method through einsum
+        # norms = torch.einsum('nk,ni,lk,ij,nl,nj->n', B, A, BB, AA, B, A)
+
+    elif kind == 'isserlis':
+        AA = metric.AA / n
+        BB = metric.BB / n
+        BA = metric.BA / n
+        a = metric.a / n
+        b = metric.b / n
+        kfac = torch.einsum('nk,ni,lk,ij,nl,nj->n', B, A, BB, AA, B, A)
+        cross1 = torch.einsum('nk,ni,ki,lj,nl,nj->n', B, A, BA, BA, B, A)
+        cross2 = torch.einsum('nk,ni,li,kj,nl,nj->n', B, A, BA, BA, B, A)
+        first_order = torch.einsum('nk,ni,i,j,k,l,nl,nj->n', B, A, a, a, b, b, B, A)
+        norms = kfac + cross1 + cross2 - 2*first_order
+    else:
+        assert kind == 'full'
+        norms = torch.einsum('ni,nk,nj,nl,likj->n', A, B, A, B, metric.BABA / n)
+    return norms
+
+
+def grad_curvs(A, B, metric):
+    Am, Bm = A @ metric.AA, B @ metric.BB
+    norms_before = (A * A).sum(dim=1) * (B * B).sum(dim=1)
+    norms_after = (Am * A).sum(dim=1) * (Bm * B).sum(dim=1)
+    return norms_after / norms_before
