@@ -46,7 +46,7 @@ import torch.nn.functional as F
 
 import util as u
 import globals as gl
-from attrdict import AttrDefault
+from attrdict import AttrDefault, AttrDict
 
 _supported_layers = ['Linear', 'Conv2d']  # Supported layer class types  TODO(y): make non-private
 _supported_methods = ['exact', 'kron', 'mean_kron', 'experimental_kfac']  # supported approximation methods
@@ -1460,8 +1460,45 @@ def grad_norms(A, B, m=None, approx='zero_order'):
     return norms
 
 
+def offset_losses(A, B, alpha, offset, m, approx='zero_order'):
+    """
+    Evaluates expected improvement in loss on example i after taking gradient step from loss on example i+offset
+
+    If alpha is None, uses optimal learning rate for minimizing i example loss by using direction of i+offset gradient
+
+    Returns:
+        (n,) tensor of improvements
+    """
+    if approx == 'zero_order':
+        norms = (A * A).sum(dim=1) * (B * B).sum(dim=1)
+    elif approx == 'kfac':
+        Am, Bm = A @ m.AA, B @ m.BB
+        norms = (Am * A).sum(dim=1) * (Bm * B).sum(dim=1)
+        # equivalent to torch.einsum('nk,ni,lk,ij,nl,nj->n', B, A, BB, AA, B, A)
+    elif approx == 'isserlis':  # TODO(y): currently this runs out of memory, optimize the einsums below 
+        kfac = torch.einsum('nk,ni,lk,ij,nl,nj->n', B, A, m.BB, m.AA, B, A)
+        cross1 = torch.einsum('nk,ni,ki,lj,nl,nj->n', B, A, m.BA, m.BA, B, A)
+        cross2 = torch.einsum('nk,ni,li,kj,nl,nj->n', B, A, m.BA, m.BA, B, A)
+        first_order = torch.einsum('nk,ni,i,j,k,l,nl,nj->n', B, A, m.a, m.a, m.b, m.b, B, A)
+        norms = kfac + cross1 + cross2 - 2*first_order
+    else:
+        assert approx == 'full'
+        norms = torch.einsum('ni,nk,nj,nl,likj->n', A, B, A, B, m.BABA)
+
+    Ad = torch.roll(A, offset, 0)
+    Bd = torch.roll(B, offset, 0)
+    dot_prods = (A * Ad).sum(dim=1) * (B * Bd).sum(dim=1)
+    if alpha is None:  # use optimal step for given direction
+        improvements = 1/2 * dot_prods*dot_prods / norms
+    else:
+        improvements = alpha*dot_prods - 1/2 * alpha**2 * norms
+
+    return improvements
+
+
 def grad_curvs(A, B, metric):
     Am, Bm = A @ metric.AA, B @ metric.BB
     norms_before = (A * A).sum(dim=1) * (B * B).sum(dim=1)
     norms_after = (Am * A).sum(dim=1) * (Bm * B).sum(dim=1)
     return norms_after / norms_before
+

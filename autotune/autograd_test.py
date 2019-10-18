@@ -671,7 +671,7 @@ def test_end2end_grad1():
 
 
 def test_end2end_hess():
-    u.setup_logdir('test')
+    u.setup_logdir_and_event_writer('test')
     subtest_hess_type('CrossEntropy')
     subtest_hess_type('LeastSquares')
 

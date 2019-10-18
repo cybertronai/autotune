@@ -1,6 +1,7 @@
 # Test exact Hessian computation
 
 # import torch
+import sys
 from typing import Callable
 
 import torch
@@ -301,7 +302,7 @@ def test_hessian_multibatch():
     gl.project_name = 'test'
     gl.logdir_base = '/tmp/runs'
     run_name = 'test_hessian_multibatch'
-    u.setup_logdir(run_name=run_name)
+    u.setup_logdir_and_event_writer(run_name=run_name)
 
     loss_type = 'CrossEntropy'
     data_width = 2
@@ -371,7 +372,7 @@ def _test_refactored_stats():
     gl.project_name = 'test'
     gl.logdir_base = '/tmp/runs'
     run_name = 'test_hessian_multibatch'
-    u.setup_logdir(run_name=run_name)
+    u.setup_logdir_and_event_writer(run_name=run_name)
 
     loss_type = 'CrossEntropy'
     data_width = 2
@@ -658,7 +659,7 @@ if __name__ == '__main__':
     #  _test_factored_hessian()
     # test_hessian_multibatch()
     # test_hessian_conv()
-    test_explicit_hessian_refactored()
+    # test_explicit_hessian_refactored()
     #    u.run_all_tests(sys.modules[__name__])
 
-    # u.run_all_tests(sys.modules[__name__])
+    u.run_all_tests(sys.modules[__name__])

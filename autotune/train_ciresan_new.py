@@ -2,9 +2,11 @@
 # (from http://yann.lecun.com/exdb/mnist/)
 
 import argparse
+import copy
 import os
 import sys
 import time
+import traceback
 from collections import defaultdict
 from typing import Callable, List
 
@@ -91,6 +93,7 @@ def main():
     parser.add_argument('--run_name', type=str, default='noname')
     parser.add_argument('--launch_blocking', type=int, default=0)
     parser.add_argument('--sampled', type=int, default=0)
+    parser.add_argument('--curv', type=str, default='kfac', help='decomposition to use for curvature estimates: zero_order, kfac, isserlis or full')
 
     u.seed_random(1)
     gl.args = parser.parse_args()
@@ -98,7 +101,7 @@ def main():
     u.seed_random(1)
 
     gl.project_name = 'train_ciresan'
-    u.setup_logdir(args.run_name)
+    u.setup_logdir_and_event_writer(args.run_name)
     print(f"Logging to {gl.logdir}")
 
     d1 = 28*28
@@ -117,7 +120,7 @@ def main():
 
     assert not args.full_batch, "fixme: validation still uses stats_iter"
     if not args.full_batch:
-        stats_loader = torch.utils.data.DataLoader(dataset, batch_size=args.stats_batch_size, shuffle=False, drop_last=True)
+        stats_loader = torch.utils.data.DataLoader(dataset, batch_size=args.stats_batch_size, shuffle=True, drop_last=True)
         stats_iter = u.infinite_iter(stats_loader)
     else:
         stats_iter = None
@@ -133,8 +136,6 @@ def main():
 
     gl.token_count = 0
     last_outer = 0
-
-    layer_map = {model.layers[i]: i for i in range(len(model.layers))}
 
     for step in range(args.stats_steps):
         epoch = gl.token_count // 60000
@@ -163,16 +164,26 @@ def main():
             # number of samples passed through
             n = args.stats_batch_size * args.stats_num_batches
 
-            # quantities used across all statistics
-            shared_stats = defaultdict(lambda: AttrDefault(float))
+            # quanti
+            forward_stats = defaultdict(lambda: AttrDefault(float))
 
-            # todo: move vocabs out of stats_num_batches loop
+            hessians = defaultdict(lambda: AttrDefault(float))
+            fishers = defaultdict(lambda: AttrDefault(float))
+            jacobians = defaultdict(lambda: AttrDefault(float))
+            train_regrets = defaultdict(list)
+            test_regrets1 = defaultdict(list)
+            test_regrets2 = defaultdict(list)
+            train_regrets_opt = defaultdict(list)
+            test_regrets_opt = defaultdict(list)
+
+            current = None
+
             for i in range(args.stats_num_batches):
                 activations = {}
+                backprops = {}
                 def save_activations(layer, A, _):
                     activations[layer] = A
-                    shared_stats[layer].AA += torch.einsum("ni,nj->ij", A, A)
-
+                    forward_stats[layer].AA += torch.einsum("ni,nj->ij", A, A)
                 print('forward')
                 with u.timeit("stats_forward"):
                     with autograd_lib.module_hook(save_activations):
@@ -180,27 +191,27 @@ def main():
                         output = model(data)
                         loss = loss_fn(output, targets) * len(output)
 
-                hessians = defaultdict(lambda: AttrDefault(float))
-                fishers = defaultdict(lambda: AttrDefault(float))
-                jacobians = defaultdict(lambda: AttrDefault(float))
-                current = None
-
                 def compute_stats(layer, _, B):
                     A = activations[layer]
+                    if current == fishers:
+                        backprops[layer] = B
+
                     # about 27ms per layer
                     with u.timeit('compute_stats'):
                         current[layer].BB += torch.einsum("ni,nj->ij", B, B)  # TODO(y): index consistency
                         current[layer].diag += torch.einsum("ni,nj->ij", B * B, A * A)
                         current[layer].BA += torch.einsum("ni,nj->ij", B, A)
+                        current[layer].a += torch.einsum("ni->i", A)
+                        current[layer].b += torch.einsum("nk->k", B)
                         current[layer].norm2 += ((A*A).sum(dim=1) * (B*B).sum(dim=1)).sum()
 
                         # compute curvatures in direction of all gradiennts
                         if current == fishers:
-                            assert args.stats_num_batches == 1, "not tested on more than one stats step"
+                            assert args.stats_num_batches == 1, "not tested on more than one stats step, currently reusing aggregated moments"
                             hess = hessians[layer]
                             jac = jacobians[layer]
-                            Bh, Ah = B @ hess.BB/n, A @ shared_stats[layer].AA/n
-                            Bj, Aj = B @ jac.BB/n, A @ shared_stats[layer].AA/n
+                            Bh, Ah = B @ hess.BB/n, A @ forward_stats[layer].AA/n
+                            Bj, Aj = B @ jac.BB/n, A @ forward_stats[layer].AA/n
                             norms = ((A * A).sum(dim=1) * (B * B).sum(dim=1))
                             norms_hess = ((Ah * A).sum(dim=1) * (Bh * B).sum(dim=1))
                             norms_jac = ((Aj * A).sum(dim=1) * (Bj * B).sum(dim=1))
@@ -212,6 +223,21 @@ def main():
                             current[layer].norms_hess += norms_hess.sum()
                             current[layer].norms_jac += norms_jac.sum()
 
+                            normalized_moments = copy.copy(hessians[layer])
+                            normalized_moments.AA = forward_stats[layer].AA
+                            normalized_moments = u.divide_attributes(normalized_moments, n)
+
+                            lr = optimizer.param_groups[0]['lr']
+                            train_regrets_ = autograd_lib.offset_losses(A, B, alpha=lr, offset=0, m=normalized_moments, approx=args.curv)
+                            test_regrets1_ = autograd_lib.offset_losses(A, B, alpha=lr, offset=1, m=normalized_moments, approx=args.curv)
+                            test_regrets2_ = autograd_lib.offset_losses(A, B, alpha=lr, offset=2, m=normalized_moments, approx=args.curv)
+                            test_regrets_opt_ = autograd_lib.offset_losses(A, B, alpha=None, offset=2, m=normalized_moments, approx=args.curv)
+                            train_regrets_opt_ = autograd_lib.offset_losses(A, B, alpha=None, offset=0, m=normalized_moments, approx=args.curv)
+                            train_regrets[layer].extend(train_regrets_)
+                            test_regrets1[layer].extend(test_regrets1_)
+                            test_regrets2[layer].extend(test_regrets2_)
+                            train_regrets_opt[layer].extend(train_regrets_opt_)
+                            test_regrets_opt[layer].extend(test_regrets_opt_)
 
                 # todo(y): add "compute_fisher" and "compute_jacobian"
                 # todo(y): add couple of statistics (effective rank, trace, gradient noise)
@@ -243,10 +269,13 @@ def main():
                     s = AttrDict()
                     stats = stats_dict[stats_name][layer]
 
-                    for key in shared_stats[layer]:
+                    for key in forward_stats[layer]:
                         # print(f'copying {key} in {stats_name}, {layer}')
-                        assert stats[key] == float(), f"Trying to overwrite {key} in {stats_name}, {layer}"
-                        stats[key] = shared_stats[layer][key]
+                        try:
+                            assert stats[key] == float()
+                        except:
+                            f"Trying to overwrite {key} in {stats_name}, {layer}"
+                        stats[key] = forward_stats[layer][key]
 
                     diag: torch.Tensor = stats.diag / n
 
@@ -266,13 +295,14 @@ def main():
                     # normalize for mean loss
                     BB = stats.BB / n
                     AA = stats.AA / n
-                    A_evals, _ = torch.symeig(AA)   # averaging 120ms per hit, 90 hits
-                    B_evals, _ = torch.symeig(BB)
+                    # A_evals, _ = torch.symeig(AA)   # averaging 120ms per hit, 90 hits
+                    # B_evals, _ = torch.symeig(BB)
 
-                    s.kfac_l2 = torch.max(A_evals) * torch.max(B_evals)    # 60x larger than diag_l2. layer0/hess has down/up phase transition. layer5/jacobian has up/down phase transition
-                    s.kfac_trace = torch.sum(A_evals) * torch.sum(B_evals)  # 0/hess down/up tr, 5/jac sharp phase transition
+                    # s.kfac_l2 = torch.max(A_evals) * torch.max(B_evals)    # 60x larger than diag_l2. layer0/hess has down/up phase transition. layer5/jacobian has up/down phase transition
+                    s.kfac_trace = torch.trace(AA) * torch.trace(BB)  # 0/hess down/up tr, 5/jac sharp phase transition
                     s.kfac_fro = torch.norm(stats.AA) * torch.norm(stats.BB)  # 0/hess has down/up tr, 5/jac up/down transition
-                    s.kfac_erank = s.kfac_trace / s.kfac_l2   # first layer has 25, rest 15, all layers go down except last, last noisy
+                    # s.kfac_erank = s.kfac_trace / s.kfac_l2   # first layer has 25, rest 15, all layers go down except last, last noisy
+                    s.kfac_erank_fro = s.kfac_trace / s.kfac_fro / max(stats.BA.shape)
 
                     s.diversity = (stats.norm2 / n) / u.norm_squared(stats.BA / n)  # gradient diversity. Goes up 3x. Bottom layer has most diversity. Jacobian diversity much less noisy than everythingelse
 
@@ -303,8 +333,6 @@ def main():
                 # after sampling, hess_noise,jac_noise became 100x smaller, but normalized is unaffected
                 s.hess_noise = (trsum(hess.AA / n, fish.AA / n) * trsum(hess.BB / n, fish.BB / n))
                 s.jac_noise = (trsum(jac.AA / n, fish.AA / n) * trsum(jac.BB / n, fish.BB / n))
-                a = torch.mean(fish.AA, dim=0)
-                b = torch.mean(fish.BB, dim=0)
                 s.hess_noise_centered = s.hess_noise - trsum(hess.BB/n @ grad, grad @ hess.AA/n)
                 s.jac_noise_centered = s.jac_noise - trsum(jac.BB/n @ grad, grad @ jac.AA/n)
 
@@ -317,44 +345,47 @@ def main():
 
                 s.hess_noise_normalized = s.hess_noise_centered / (fish.norms_hess / n)
                 s.jac_noise_normalized = s.jac_noise / (fish.norms_jac / n)
+
+                train_regrets_, test_regrets1_, test_regrets2_, train_regrets_opt_, test_regrets_opt_ = (torch.stack(r[layer]) for r in (train_regrets, test_regrets1, test_regrets2, train_regrets_opt, test_regrets_opt))
+                s.train_regret = train_regrets_.median()
+                s.test_regret1 = test_regrets1_.median()
+                s.test_regret2 = test_regrets2_.median()
+                s.test_regret_opt = test_regrets_opt_.median()
+                s.train_regret_opt = train_regrets_opt_.median()
+
+                s.regret_ratio = (train_regrets_opt_/test_regrets_opt_).median()  # ratio between train and test regret, large means overfitting
                 u.log_scalars(u.nest_stats(f'layer-{i}', s))
 
+                # 1. x norms histogram (jacobian norms)
+                # 2. gradient norms histogram
+                # 3.
                 # step size stat
                 # rho?
 
                 # todo(y): add weight magnitude
                 # todo(y): add curvatures in direction of mean gradient
                 # todo(y): add regret
-
                 # todo(y): log spectra
                 # todo(y): gradient norms histogram
-
                 # TODO(y): check mean error again, check hess_noise, jac_noise
 
-
-
-        print('train')
         model.train()
-        last_inner = 0
-        for i in range(args.train_steps):
-            if last_inner:
-                u.log_scalars({"time/inner": 1000*(time.perf_counter() - last_inner)})
-            last_inner = time.perf_counter()
+        with u.timeit('train'):
+            for i in range(args.train_steps):
+                optimizer.zero_grad()
+                data, targets = next(train_iter)
+                model.zero_grad()
+                output = model(data)
+                loss = loss_fn(output, targets)
+                loss.backward()
 
-            optimizer.zero_grad()
-            data, targets = next(train_iter)
-            model.zero_grad()
-            output = model(data)
-            loss = loss_fn(output, targets)
-            loss.backward()
+                optimizer.step()
+                if args.weight_decay:
+                    for group in optimizer.param_groups:
+                        for param in group['params']:
+                            param.data.mul_(1-args.weight_decay)
 
-            optimizer.step()
-            if args.weight_decay:
-                for group in optimizer.param_groups:
-                    for param in group['params']:
-                        param.data.mul_(1-args.weight_decay)
-
-            gl.token_count += data.shape[0]
+                gl.token_count += data.shape[0]
 
     gl.event_writer.close()
 

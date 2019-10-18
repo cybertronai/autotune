@@ -120,7 +120,7 @@ def test_factored_vs_regular():
 
     gl.project_name = 'test'
     gl.logdir_base = '/tmp/runs'
-    u.setup_logdir(run_name=sys._getframe().f_code.co_name)
+    u.setup_logdir_and_event_writer(run_name=sys._getframe().f_code.co_name)
 
     d = 3
     n = 3

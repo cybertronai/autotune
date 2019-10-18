@@ -93,7 +93,7 @@ def main():
     u.seed_random(1)
 
     gl.project_name = 'train_ciresan'
-    u.setup_logdir(args.run_name)
+    u.setup_logdir_and_event_writer(args.run_name)
     print(f"Logging to {gl.logdir}")
 
     d1 = 28*28

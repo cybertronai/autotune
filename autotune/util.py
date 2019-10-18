@@ -1,14 +1,19 @@
 # Take simple example, plot per-layer stats over time
+# This function allows you to visualize the statistics of a layer.
 import inspect
 import math
 import os
 import random
+import re
 import sys
 import time
 from typing import Any, Dict, Callable, Optional, Tuple, Union, Sequence, Iterable
 from typing import List
 
+import six
 import wandb
+from attrdict import AttrDict
+from torch.utils import tensorboard
 
 import globals as gl
 import numpy as np
@@ -714,7 +719,7 @@ def lyapunov_spectral(A, B, cond=None):
     cutoff = cond * max(s)
     s = torch.where(s > cutoff, s, torch.tensor(0.).to(s.device))
 
-    C = U.t() @ B @ U
+    C = U.t() @ B @ U    # TODO(y): throw away eigenvectors corresponding to discarded evals. U=U[:num_eigs]
     s = s.unsqueeze(1) + s.unsqueeze(0)
     si = torch.where(s > 0, 1 / s, s)
     Y = C * si
@@ -1941,6 +1946,9 @@ def log_scalars(metrics: Dict[str, Any]) -> None:
     assert gl.event_writer is not None, "initialize event_writer as gl.event_writer = SummaryWriter(logdir)"
     for tag in metrics:
         gl.event_writer.add_scalar(tag=tag, scalar_value=metrics[tag], global_step=gl.get_global_step())
+        # gl.event_writer.add_s
+    if 'epoch' in metrics:
+        print('logging at ', gl.get_global_step(), metrics.get('epoch', -1))
 
 
 def log_scalar(**metrics) -> None:
@@ -2178,7 +2186,7 @@ def get_unique_logdir(root_logdir: str) -> str:
 from torch.utils.tensorboard import SummaryWriter
 
 
-def setup_logdir(run_name: str, init_wandb=False):
+def setup_logdir_and_event_writer(run_name: str, init_wandb=False):
     """Creates unique logdir like project/runname02, sets up wandb if necessary"""
     assert gl.project_name is not None
 
@@ -2624,7 +2632,7 @@ def norm_squared(param):
     return (param * param).sum()
 
 
-def trsum(A, B):
+def dot_product(A, B):
     return (A * B).sum()  # computes tr(AB')
 
 
@@ -2656,3 +2664,27 @@ def copy_stats(shared_stats, stats):
     return None
 
 
+# list replacement. Workaround for AttrDict automatically converting list objects to Tuple
+class MyList:
+    def __init__(self, *args, **kwargs):
+        super(MyList, self).__init__(*args, **kwargs)
+        self.storage = list()
+
+    def __getattr__(self, *_args, **_kwargs):
+        return self.storage.__getattribute__(*_args, **_kwargs)
+
+    def normal_form(self):
+        return self.value()
+
+    def value(self):
+        return self.storage
+
+
+def divide_attributes(d, n):
+    """Helper util to divide all tensor attributes of d by n, return result as new AttrDict"""
+
+    result = AttrDict()
+    for val in d:
+        if type(d[val]) == torch.Tensor:
+            result[val] = d[val] / n
+    return result

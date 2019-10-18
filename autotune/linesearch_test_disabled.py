@@ -1,5 +1,6 @@
 # Take simple MNIST model, test that line-search in Newton direction finds optimum
-# Additionally test Hessian manual vs autograd computation
+# Additionally test Hessian manual vs autograd computation.
+# This functio
 
 import argparse
 import json
@@ -344,7 +345,6 @@ def test_lineasearch():
     stats_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=stats_batch_size, shuffle=False, num_workers=num_workers)
     stats_data, stats_targets = next(iter(stats_loader))
-
 
     model = Net([NUM_CHANNELS * IMAGE_SIZE ** 2, 8, 8, 1],  nonlin=False)
     setattr(model, 'num_classes', num_classes)
