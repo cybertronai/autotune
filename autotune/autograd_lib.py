@@ -1496,6 +1496,32 @@ def offset_losses(A, B, alpha, offset, m, approx='zero_order'):
     return improvements
 
 
+def offset_cosines(A, B, offset=1):
+    """
+    Evaluates cosines between gradients
+
+    If alpha is None, uses optimal learning rate for minimizing i example loss by using direction of i+offset gradient
+
+    Returns:
+        (n,) tensor of improvements
+    """
+    assert offset != 0
+
+    Ad = torch.roll(A, offset, 0)
+    Bd = torch.roll(B, offset, 0)
+    dot_products = (A * Ad).sum(dim=1) * (B * Bd).sum(dim=1)
+    norms1 = (A * A).sum(dim=1) * (B * B).sum(dim=1)
+    norms2 = (Ad * Ad).sum(dim=1) * (Bd * Bd).sum(dim=1)
+    cosines_squared = dot_products*dot_products/(norms1 * norms2)
+    cosines = torch.sqrt(cosines_squared)
+    # print('max cosine float32', max(abs(cosines)).item())
+    # dot_products = dot_products.type(torch.float64)  # division by small numbers unstable, use higher precision
+    # norms1 = norms1.type(torch.float64)  # division by small numbers unstable, use higher precision
+    # norms2 = norms2.type(torch.float64)  # division by small numbers unstable, use higher precision
+    # print('max cosine float64', max(abs(cosines)).item())
+    return cosines
+
+
 def grad_curvs(A, B, metric):
     Am, Bm = A @ metric.AA, B @ metric.BB
     norms_before = (A * A).sum(dim=1) * (B * B).sum(dim=1)

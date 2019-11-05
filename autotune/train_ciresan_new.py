@@ -1,3 +1,5 @@
+# TODO(y): FRI -- go over all formulas and results from ciresan run
+# TODO(y): add angle historgam
 # Train Ciresan's 6-layer deep MNIST network.
 # (from http://yann.lecun.com/exdb/mnist/)
 
@@ -81,7 +83,7 @@ def main():
 
     parser.add_argument('--full_batch', type=int, default=0, help='do stats on the whole dataset')
     parser.add_argument('--lr', type=float, default=1e-3)
-    parser.add_argument('--weight_decay', type=float, default=2e-5)
+    parser.add_argument('--weight_decay', type=float, default=0)
     parser.add_argument('--momentum', type=float, default=0.9)
     parser.add_argument('--dropout', type=int, default=0)
     parser.add_argument('--swa', type=int, default=0)
@@ -139,6 +141,7 @@ def main():
 
     for step in range(args.stats_steps):
         epoch = gl.token_count // 60000
+        lr = optimizer.param_groups[0]['lr']
         print('token_count', gl.token_count)
         if last_outer:
             u.log_scalars({"time/outer": 1000*(time.perf_counter() - last_outer)})
@@ -168,13 +171,15 @@ def main():
             forward_stats = defaultdict(lambda: AttrDefault(float))
 
             hessians = defaultdict(lambda: AttrDefault(float))
-            fishers = defaultdict(lambda: AttrDefault(float))
             jacobians = defaultdict(lambda: AttrDefault(float))
+            fishers = defaultdict(lambda: AttrDefault(float))  # empirical fisher/gradient
+            quad_fishers = defaultdict(lambda: AttrDefault(float))  # gradient statistics that depend on fisher (4th order moments)
             train_regrets = defaultdict(list)
             test_regrets1 = defaultdict(list)
             test_regrets2 = defaultdict(list)
             train_regrets_opt = defaultdict(list)
             test_regrets_opt = defaultdict(list)
+            cosines = defaultdict(list)
 
             current = None
 
@@ -227,17 +232,33 @@ def main():
                             normalized_moments.AA = forward_stats[layer].AA
                             normalized_moments = u.divide_attributes(normalized_moments, n)
 
-                            lr = optimizer.param_groups[0]['lr']
                             train_regrets_ = autograd_lib.offset_losses(A, B, alpha=lr, offset=0, m=normalized_moments, approx=args.curv)
                             test_regrets1_ = autograd_lib.offset_losses(A, B, alpha=lr, offset=1, m=normalized_moments, approx=args.curv)
                             test_regrets2_ = autograd_lib.offset_losses(A, B, alpha=lr, offset=2, m=normalized_moments, approx=args.curv)
                             test_regrets_opt_ = autograd_lib.offset_losses(A, B, alpha=None, offset=2, m=normalized_moments, approx=args.curv)
                             train_regrets_opt_ = autograd_lib.offset_losses(A, B, alpha=None, offset=0, m=normalized_moments, approx=args.curv)
+                            cosines_ = autograd_lib.offset_cosines(A, B)
                             train_regrets[layer].extend(train_regrets_)
                             test_regrets1[layer].extend(test_regrets1_)
                             test_regrets2[layer].extend(test_regrets2_)
                             train_regrets_opt[layer].extend(train_regrets_opt_)
                             test_regrets_opt[layer].extend(test_regrets_opt_)
+                            cosines[layer].extend(cosines_)
+
+                        # statistics of the form g.Sigma.g
+                        elif current == quad_fishers:
+                            hess = hessians[layer]
+                            sigma = fishers[layer]
+                            Bs, As = B @ sigma.BB/n, A @ forward_stats[layer].AA/n
+                            Bh, Ah = B @ hess.BB/n, A @ forward_stats[layer].AA/n
+                            norms = ((A * A).sum(dim=1) * (B * B).sum(dim=1))
+                            norms_hess = ((Ah * A).sum(dim=1) * (Bh * B).sum(dim=1))
+                            norms_sigma = ((As * A).sum(dim=1) * (Bs * B).sum(dim=1))
+
+                            current[layer].norm += norms.sum()
+                            current[layer].curv_sigma += (norms_sigma/norms).sum()
+                            current[layer].curv_hess += (norms_hess/norms).sum()
+                            current[layer].curv_ratio += (norms_sigma/norms_hess).sum()
 
                 # todo(y): add "compute_fisher" and "compute_jacobian"
                 # todo(y): add couple of statistics (effective rank, trace, gradient noise)
@@ -256,6 +277,9 @@ def main():
                         current = jacobians
                         autograd_lib.backward_jacobian(output, sampled=args.sampled, retain_graph=True)   # 600 ms
                         current = fishers
+                        model.zero_grad()
+                        loss.backward(retain_graph=True)  # 60 ms
+                        current = quad_fishers
                         model.zero_grad()
                         loss.backward()  # 60 ms
 
@@ -317,6 +341,7 @@ def main():
                 hess = hessians[layer]
                 jac = jacobians[layer]
                 fish = fishers[layer]
+                quad_fish = quad_fishers[layer]
                 # the following check passes, but is expensive
                 # if args.stats_num_batches == 1:
                 #    u.check_close(fisher[layer].BA, layer.weight.grad)
@@ -336,22 +361,35 @@ def main():
                 s.hess_noise_centered = s.hess_noise - trsum(hess.BB/n @ grad, grad @ hess.AA/n)
                 s.jac_noise_centered = s.jac_noise - trsum(jac.BB/n @ grad, grad @ jac.AA/n)
 
+                s.openai_gradient_noise = (fish.norms_hess / n) / trsum(hess.BB/n @ grad, grad @ hess.AA/n)
+
                 s.norms = fish.norm2 / n
+                s.norms_centered = fish.norm2 / n - u.norm_squared(grad)
                 s.norms_hess = fish.norms_hess / n
                 s.norms_jac = fish.norms_jac / n
 
                 s.hess_curv_grad = fish.curv_hess / n  # phase transition, hits minimum loss in layer 1, then starts going up. Other layers take longer to reach minimum. Decreases with depth.
+                s.sigma_curv_grad = quad_fish.curv_sigma / n
+                s.band_bottou = 0.5 * lr * s.sigma_curv_grad / s.hess_curv_grad
+                s.band_bottou_stoch = 0.5 * lr * quad_fish.curv_ratio / n
+                s.band_yaida = 0.25 * lr * s.norms
+                s.band_yaida_centered = 0.25 * lr * s.norms_centered
+
                 s.jac_curv_grad = fish.curv_jac / n   # this one has much lower variance than jac_curv. Reaches peak at 10k steps, also kfac error reaches peak there. Decreases with depth except for last layer.
 
+                # OpenAI gradient noise statistics
                 s.hess_noise_normalized = s.hess_noise_centered / (fish.norms_hess / n)
                 s.jac_noise_normalized = s.jac_noise / (fish.norms_jac / n)
 
-                train_regrets_, test_regrets1_, test_regrets2_, train_regrets_opt_, test_regrets_opt_ = (torch.stack(r[layer]) for r in (train_regrets, test_regrets1, test_regrets2, train_regrets_opt, test_regrets_opt))
-                s.train_regret = train_regrets_.median()
+                train_regrets_, test_regrets1_, test_regrets2_, train_regrets_opt_, test_regrets_opt_, cosines_ = (torch.stack(r[layer]) for r in (train_regrets, test_regrets1, test_regrets2, train_regrets_opt, test_regrets_opt, cosines))
+                s.train_regret = train_regrets_.median()   # use median because outliers make it hard to see the trend
                 s.test_regret1 = test_regrets1_.median()
                 s.test_regret2 = test_regrets2_.median()
                 s.test_regret_opt = test_regrets_opt_.median()
                 s.train_regret_opt = train_regrets_opt_.median()
+
+                s.median_cosine = cosines_.median()
+                s.mean_cosine = cosines_.mean()
 
                 s.regret_ratio = (train_regrets_opt_/test_regrets_opt_).median()  # ratio between train and test regret, large means overfitting
                 u.log_scalars(u.nest_stats(f'layer-{i}', s))
