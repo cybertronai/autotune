@@ -42,10 +42,11 @@ try:
 except NameError:
     profile = lambda x: x  # if it's not defined simply ignore the decorator.
 
+u.install_pdb_handler()
+
 
 @profile
 def main():
-
     parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
     parser.add_argument('--batch-size', type=int, default=64, metavar='N',
                         help='input batch size for training (default: 64)')
@@ -72,7 +73,8 @@ def main():
     parser.add_argument('--layer', type=int, default=-1, help="restrict updates to this layer")
     parser.add_argument('--data_width', type=int, default=28)
     parser.add_argument('--targets_width', type=int, default=28)
-    parser.add_argument('--hess_samples', type=int, default=1, help='number of samples when sub-sampling outputs, 0 for exact hessian')
+    parser.add_argument('--hess_samples', type=int, default=1,
+                        help='number of samples when sub-sampling outputs, 0 for exact hessian')
     parser.add_argument('--hess_kfac', type=int, default=0, help='whether to use KFAC approximation for hessian')
     parser.add_argument('--compute_rho', type=int, default=0, help='use expensive method to compute rho')
     parser.add_argument('--skip_stats', type=int, default=0, help='skip all stats collection')
@@ -95,7 +97,9 @@ def main():
     parser.add_argument('--run_name', type=str, default='noname')
     parser.add_argument('--launch_blocking', type=int, default=0)
     parser.add_argument('--sampled', type=int, default=0)
-    parser.add_argument('--curv', type=str, default='kfac', help='decomposition to use for curvature estimates: zero_order, kfac, isserlis or full')
+    parser.add_argument('--curv', type=str, default='kfac',
+                        help='decomposition to use for curvature estimates: zero_order, kfac, isserlis or full')
+    parser.add_argument('--log_spectra', type=int, default=0)
 
     u.seed_random(1)
     gl.args = parser.parse_args()
@@ -106,7 +110,7 @@ def main():
     u.setup_logdir_and_event_writer(args.run_name)
     print(f"Logging to {gl.logdir}")
 
-    d1 = 28*28
+    d1 = 28 * 28
     d = [784, 2500, 2000, 1500, 1000, 500, 10]
 
     # number of samples per datapoint. Used to normalize kfac
@@ -114,6 +118,7 @@ def main():
     model = model.to(gl.device)
     autograd_lib.register(model)
 
+    assert args.dataset_size > args.stats_batch_size
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
     dataset = u.TinyMNIST(data_width=args.data_width, targets_width=args.targets_width, original_targets=True,
                           dataset_size=args.dataset_size)
@@ -122,15 +127,19 @@ def main():
 
     assert not args.full_batch, "fixme: validation still uses stats_iter"
     if not args.full_batch:
-        stats_loader = torch.utils.data.DataLoader(dataset, batch_size=args.stats_batch_size, shuffle=True, drop_last=True)
+        stats_loader = torch.utils.data.DataLoader(dataset, batch_size=args.stats_batch_size, shuffle=True,
+                                                   drop_last=True)
         stats_iter = u.infinite_iter(stats_loader)
     else:
         stats_iter = None
 
-    test_dataset = u.TinyMNIST(data_width=args.data_width, targets_width=args.targets_width, train=False, original_targets=True,
+    test_dataset = u.TinyMNIST(data_width=args.data_width, targets_width=args.targets_width, train=False,
+                               original_targets=True,
                                dataset_size=args.dataset_size)
-    test_eval_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.stats_batch_size, shuffle=False, drop_last=False)
-    train_eval_loader = torch.utils.data.DataLoader(dataset, batch_size=args.stats_batch_size, shuffle=False, drop_last=False)
+    test_eval_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.stats_batch_size, shuffle=False,
+                                                   drop_last=False)
+    train_eval_loader = torch.utils.data.DataLoader(dataset, batch_size=args.stats_batch_size, shuffle=False,
+                                                    drop_last=False)
 
     loss_fn = torch.nn.CrossEntropyLoss()
     autograd_lib.add_hooks(model)
@@ -144,7 +153,7 @@ def main():
         lr = optimizer.param_groups[0]['lr']
         print('token_count', gl.token_count)
         if last_outer:
-            u.log_scalars({"time/outer": 1000*(time.perf_counter() - last_outer)})
+            u.log_scalars({"time/outer": 1000 * (time.perf_counter() - last_outer)})
             print(f'time: {time.perf_counter() - last_outer:.2f}')
         last_outer = time.perf_counter()
 
@@ -161,7 +170,7 @@ def main():
 
         def mom_update(buffer, val):
             buffer *= 0.9
-            buffer += val*0.1
+            buffer += val * 0.1
 
         if not args.skip_stats:
             # number of samples passed through
@@ -173,22 +182,26 @@ def main():
             hessians = defaultdict(lambda: AttrDefault(float))
             jacobians = defaultdict(lambda: AttrDefault(float))
             fishers = defaultdict(lambda: AttrDefault(float))  # empirical fisher/gradient
-            quad_fishers = defaultdict(lambda: AttrDefault(float))  # gradient statistics that depend on fisher (4th order moments)
+            quad_fishers = defaultdict(
+                lambda: AttrDefault(float))  # gradient statistics that depend on fisher (4th order moments)
             train_regrets = defaultdict(list)
             test_regrets1 = defaultdict(list)
             test_regrets2 = defaultdict(list)
             train_regrets_opt = defaultdict(list)
             test_regrets_opt = defaultdict(list)
             cosines = defaultdict(list)
+            dot_products = defaultdict(list)
 
             current = None
 
             for i in range(args.stats_num_batches):
                 activations = {}
                 backprops = {}
+
                 def save_activations(layer, A, _):
                     activations[layer] = A
                     forward_stats[layer].AA += torch.einsum("ni,nj->ij", A, A)
+
                 print('forward')
                 with u.timeit("stats_forward"):
                     with autograd_lib.module_hook(save_activations):
@@ -208,22 +221,26 @@ def main():
                         current[layer].BA += torch.einsum("ni,nj->ij", B, A)
                         current[layer].a += torch.einsum("ni->i", A)
                         current[layer].b += torch.einsum("nk->k", B)
-                        current[layer].norm2 += ((A*A).sum(dim=1) * (B*B).sum(dim=1)).sum()
+                        current[layer].norm2 += ((A * A).sum(dim=1) * (B * B).sum(dim=1)).sum()
 
                         # compute curvatures in direction of all gradiennts
-                        if current == fishers:
+                        if current is fishers:
                             assert args.stats_num_batches == 1, "not tested on more than one stats step, currently reusing aggregated moments"
                             hess = hessians[layer]
                             jac = jacobians[layer]
-                            Bh, Ah = B @ hess.BB/n, A @ forward_stats[layer].AA/n
-                            Bj, Aj = B @ jac.BB/n, A @ forward_stats[layer].AA/n
+                            Bh, Ah = B @ hess.BB / n, A @ forward_stats[layer].AA / n
+                            Bj, Aj = B @ jac.BB / n, A @ forward_stats[layer].AA / n
                             norms = ((A * A).sum(dim=1) * (B * B).sum(dim=1))
+
+                            current[layer].min_norm2 = min(norms)
+                            current[layer].median_norm2 = torch.median(norms)
+
                             norms_hess = ((Ah * A).sum(dim=1) * (Bh * B).sum(dim=1))
                             norms_jac = ((Aj * A).sum(dim=1) * (Bj * B).sum(dim=1))
 
                             current[layer].norm += norms.sum()
-                            current[layer].curv_hess += (norms_hess/norms).sum()
-                            current[layer].curv_jac += (norms_jac/norms).sum()
+                            current[layer].curv_hess += (norms_hess / norms).sum()
+                            current[layer].curv_jac += (norms_jac / norms).sum()
 
                             current[layer].norms_hess += norms_hess.sum()
                             current[layer].norms_jac += norms_jac.sum()
@@ -232,11 +249,16 @@ def main():
                             normalized_moments.AA = forward_stats[layer].AA
                             normalized_moments = u.divide_attributes(normalized_moments, n)
 
-                            train_regrets_ = autograd_lib.offset_losses(A, B, alpha=lr, offset=0, m=normalized_moments, approx=args.curv)
-                            test_regrets1_ = autograd_lib.offset_losses(A, B, alpha=lr, offset=1, m=normalized_moments, approx=args.curv)
-                            test_regrets2_ = autograd_lib.offset_losses(A, B, alpha=lr, offset=2, m=normalized_moments, approx=args.curv)
-                            test_regrets_opt_ = autograd_lib.offset_losses(A, B, alpha=None, offset=2, m=normalized_moments, approx=args.curv)
-                            train_regrets_opt_ = autograd_lib.offset_losses(A, B, alpha=None, offset=0, m=normalized_moments, approx=args.curv)
+                            train_regrets_ = autograd_lib.offset_losses(A, B, alpha=lr, offset=0, m=normalized_moments,
+                                                                        approx=args.curv)
+                            test_regrets1_ = autograd_lib.offset_losses(A, B, alpha=lr, offset=1, m=normalized_moments,
+                                                                        approx=args.curv)
+                            test_regrets2_ = autograd_lib.offset_losses(A, B, alpha=lr, offset=2, m=normalized_moments,
+                                                                        approx=args.curv)
+                            test_regrets_opt_ = autograd_lib.offset_losses(A, B, alpha=None, offset=2,
+                                                                           m=normalized_moments, approx=args.curv)
+                            train_regrets_opt_ = autograd_lib.offset_losses(A, B, alpha=None, offset=0,
+                                                                            m=normalized_moments, approx=args.curv)
                             cosines_ = autograd_lib.offset_cosines(A, B)
                             train_regrets[layer].extend(train_regrets_)
                             test_regrets1[layer].extend(test_regrets1_)
@@ -244,21 +266,22 @@ def main():
                             train_regrets_opt[layer].extend(train_regrets_opt_)
                             test_regrets_opt[layer].extend(test_regrets_opt_)
                             cosines[layer].extend(cosines_)
+                            dot_products[layer].extend(autograd_lib.offset_dotprod(A, B))
 
                         # statistics of the form g.Sigma.g
                         elif current == quad_fishers:
                             hess = hessians[layer]
                             sigma = fishers[layer]
-                            Bs, As = B @ sigma.BB/n, A @ forward_stats[layer].AA/n
-                            Bh, Ah = B @ hess.BB/n, A @ forward_stats[layer].AA/n
+                            Bs, As = B @ sigma.BB / n, A @ forward_stats[layer].AA / n
+                            Bh, Ah = B @ hess.BB / n, A @ forward_stats[layer].AA / n
                             norms = ((A * A).sum(dim=1) * (B * B).sum(dim=1))
                             norms_hess = ((Ah * A).sum(dim=1) * (Bh * B).sum(dim=1))
                             norms_sigma = ((As * A).sum(dim=1) * (Bs * B).sum(dim=1))
 
-                            current[layer].norm += norms.sum()
-                            current[layer].curv_sigma += (norms_sigma/norms).sum()
-                            current[layer].curv_hess += (norms_hess/norms).sum()
-                            current[layer].curv_ratio += (norms_sigma/norms_hess).sum()
+                            current[layer].norm += norms.sum()  # TODO(y) remove, redundant with norm2 above
+                            current[layer].curv_sigma += (norms_sigma / norms).sum()
+                            current[layer].curv_hess += (norms_hess / norms).sum()
+                            current[layer].curv_ratio += (norms_sigma / norms_hess).sum()
 
                 # todo(y): add "compute_fisher" and "compute_jacobian"
                 # todo(y): add couple of statistics (effective rank, trace, gradient noise)
@@ -273,9 +296,10 @@ def main():
                 with u.timeit("backprop_H"):
                     with autograd_lib.module_hook(compute_stats):
                         current = hessians
-                        autograd_lib.backward_hessian(output, loss='CrossEntropy', sampled=args.sampled, retain_graph=True)    # 600 ms
+                        autograd_lib.backward_hessian(output, loss='CrossEntropy', sampled=args.sampled,
+                                                      retain_graph=True)  # 600 ms
                         current = jacobians
-                        autograd_lib.backward_jacobian(output, sampled=args.sampled, retain_graph=True)   # 600 ms
+                        autograd_lib.backward_jacobian(output, sampled=args.sampled, retain_graph=True)  # 600 ms
                         current = fishers
                         model.zero_grad()
                         loss.backward(retain_graph=True)  # 60 ms
@@ -310,11 +334,13 @@ def main():
                     # Hessian:
                     # max curv goes down to 1, in direction of gradient 0.0001
 
-                    s.diag_l2 = torch.max(diag)     # 40 - 3000 smaller than kfac l2 for jac
-                    s.diag_fro = torch.norm(diag)   # jacobian grows to 0.5-1.5, rest falls, layer-5 has phase transition, layer-4 also
-                    s.diag_trace = diag.sum()      # jacobian grows 0-1000 (first), 0-150 (last). Almost same as kfac_trace (771 vs 810 kfac). Jacobian has up/down phase transition
+                    s.diag_l2 = torch.max(diag)  # 40 - 3000 smaller than kfac l2 for jac
+                    s.diag_fro = torch.norm(
+                        diag)  # jacobian grows to 0.5-1.5, rest falls, layer-5 has phase transition, layer-4 also
+                    s.diag_trace = diag.sum()  # jacobian grows 0-1000 (first), 0-150 (last). Almost same as kfac_trace (771 vs 810 kfac). Jacobian has up/down phase transition
                     s.diag_average = diag.mean()
-                    s.diag_erank = s.diag_trace/torch.max(diag)   # kind of useless, very large and noise, but layer2/jacobian has up/down phase transition
+                    # s.diag_erank = s.diag_trace / torch.max(
+                    #    diag)  # kind of useless, very large and noise, but layer2/jacobian has up/down phase transition
 
                     # normalize for mean loss
                     BB = stats.BB / n
@@ -324,16 +350,18 @@ def main():
 
                     # s.kfac_l2 = torch.max(A_evals) * torch.max(B_evals)    # 60x larger than diag_l2. layer0/hess has down/up phase transition. layer5/jacobian has up/down phase transition
                     s.kfac_trace = torch.trace(AA) * torch.trace(BB)  # 0/hess down/up tr, 5/jac sharp phase transition
-                    s.kfac_fro = torch.norm(stats.AA) * torch.norm(stats.BB)  # 0/hess has down/up tr, 5/jac up/down transition
+                    s.kfac_fro = torch.norm(stats.AA) * torch.norm(
+                        stats.BB)  # 0/hess has down/up tr, 5/jac up/down transition
                     # s.kfac_erank = s.kfac_trace / s.kfac_l2   # first layer has 25, rest 15, all layers go down except last, last noisy
-                    s.kfac_erank_fro = s.kfac_trace / s.kfac_fro / max(stats.BA.shape)
+                    # s.kfac_erank_fro = s.kfac_trace / s.kfac_fro / max(stats.BA.shape)
 
-                    s.diversity = (stats.norm2 / n) / u.norm_squared(stats.BA / n)  # gradient diversity. Goes up 3x. Bottom layer has most diversity. Jacobian diversity much less noisy than everythingelse
+                    s.diversity = (stats.norm2 / n) / u.norm_squared(
+                        stats.BA / n)  # gradient diversity. Goes up 3x. Bottom layer has most diversity. Jacobian diversity much less noisy than everythingelse
 
                     # discrepancy of KFAC based on exact values of diagonal approximation
                     # average difference normalized by average diagonal magnitude
                     diag_kfac = torch.einsum('ll,ii->li', BB, AA)
-                    s.kfac_error = (torch.abs(diag_kfac-diag)).mean()/torch.mean(diag.abs())
+                    s.kfac_error = (torch.abs(diag_kfac - diag)).mean() / torch.mean(diag.abs())
                     u.log_scalars(u.nest_stats(f'layer-{i}/{stats_name}', s))
 
                 # openai batch size stat
@@ -342,11 +370,14 @@ def main():
                 jac = jacobians[layer]
                 fish = fishers[layer]
                 quad_fish = quad_fishers[layer]
+
                 # the following check passes, but is expensive
                 # if args.stats_num_batches == 1:
                 #    u.check_close(fisher[layer].BA, layer.weight.grad)
 
-                def trsum(A, B): return (A*B).sum()  # computes tr(AB')
+                def trsum(A, B):
+                    return (A * B).sum()  # computes tr(AB')
+
                 grad = fishers[layer].BA / n
                 s.grad_fro = torch.norm(grad)
 
@@ -358,12 +389,16 @@ def main():
                 # after sampling, hess_noise,jac_noise became 100x smaller, but normalized is unaffected
                 s.hess_noise = (trsum(hess.AA / n, fish.AA / n) * trsum(hess.BB / n, fish.BB / n))
                 s.jac_noise = (trsum(jac.AA / n, fish.AA / n) * trsum(jac.BB / n, fish.BB / n))
-                s.hess_noise_centered = s.hess_noise - trsum(hess.BB/n @ grad, grad @ hess.AA/n)
-                s.jac_noise_centered = s.jac_noise - trsum(jac.BB/n @ grad, grad @ jac.AA/n)
+                s.hess_noise_centered = s.hess_noise - trsum(hess.BB / n @ grad, grad @ hess.AA / n)
+                s.jac_noise_centered = s.jac_noise - trsum(jac.BB / n @ grad, grad @ jac.AA / n)
 
-                s.openai_gradient_noise = (fish.norms_hess / n) / trsum(hess.BB/n @ grad, grad @ hess.AA/n)
+                s.openai_gradient_noise = (fish.norms_hess / n) / trsum(hess.BB / n @ grad, grad @ hess.AA / n)
 
-                s.norms = fish.norm2 / n
+                s.mean_norm2 = fish.norm2 / n
+                s.min_norm2 = fish.min_norm2
+                s.median_norm2 = fish.median_norm2
+                s.enorms = u.norm_squared(grad)
+
                 s.norms_centered = fish.norm2 / n - u.norm_squared(grad)
                 s.norms_hess = fish.norms_hess / n
                 s.norms_jac = fish.norms_jac / n
@@ -372,27 +407,75 @@ def main():
                 s.sigma_curv_grad = quad_fish.curv_sigma / n
                 s.band_bottou = 0.5 * lr * s.sigma_curv_grad / s.hess_curv_grad
                 s.band_bottou_stoch = 0.5 * lr * quad_fish.curv_ratio / n
-                s.band_yaida = 0.25 * lr * s.norms
+                s.band_yaida = 0.25 * lr * s.mean_norm2
                 s.band_yaida_centered = 0.25 * lr * s.norms_centered
 
-                s.jac_curv_grad = fish.curv_jac / n   # this one has much lower variance than jac_curv. Reaches peak at 10k steps, also kfac error reaches peak there. Decreases with depth except for last layer.
+                s.jac_curv_grad = fish.curv_jac / n  # this one has much lower variance than jac_curv. Reaches peak at 10k steps, also kfac error reaches peak there. Decreases with depth except for last layer.
 
                 # OpenAI gradient noise statistics
                 s.hess_noise_normalized = s.hess_noise_centered / (fish.norms_hess / n)
                 s.jac_noise_normalized = s.jac_noise / (fish.norms_jac / n)
 
-                train_regrets_, test_regrets1_, test_regrets2_, train_regrets_opt_, test_regrets_opt_, cosines_ = (torch.stack(r[layer]) for r in (train_regrets, test_regrets1, test_regrets2, train_regrets_opt, test_regrets_opt, cosines))
-                s.train_regret = train_regrets_.median()   # use median because outliers make it hard to see the trend
+                train_regrets_, test_regrets1_, test_regrets2_, train_regrets_opt_, test_regrets_opt_, cosines_, dot_products_ = (torch.stack(r[layer]) for r in (train_regrets, test_regrets1, test_regrets2, train_regrets_opt, test_regrets_opt, cosines, dot_products))
+                s.train_regret = train_regrets_.median()  # use median because outliers make it hard to see the trend
                 s.test_regret1 = test_regrets1_.median()
                 s.test_regret2 = test_regrets2_.median()
                 s.test_regret_opt = test_regrets_opt_.median()
                 s.train_regret_opt = train_regrets_opt_.median()
+                s.mean_dot_product = torch.mean(dot_products_)
+                s.median_dot_product = torch.median(dot_products_)
+                a = [1, 2, 3]
 
                 s.median_cosine = cosines_.median()
                 s.mean_cosine = cosines_.mean()
 
-                s.regret_ratio = (train_regrets_opt_/test_regrets_opt_).median()  # ratio between train and test regret, large means overfitting
+                # get learning rates
+                L1 = s.hess_curv_grad / n
+                L2 = s.jac_curv_grad / n
+                diversity = (fish.norm2 / n) / u.norm_squared(grad)
+                robust_diversity = (fish.norm2 / n) / fish.median_norm2
+                dotprod_diversity = fish.median_norm2 / s.median_dot_product
+                s.lr1 = 2 / (L1 * diversity)
+                s.lr2 = 2 / (L2 * diversity)
+                s.lr3 = 2 / (L2 * robust_diversity)
+
+                s.lr4 = 2 / (L2 * dotprod_diversity)
+
+                s.regret_ratio = (
+                            train_regrets_opt_ / test_regrets_opt_).median()  # ratio between train and test regret, large means overfitting
                 u.log_scalars(u.nest_stats(f'layer-{i}', s))
+
+                if i == 0 and args.log_spectra:
+                    with u.timeit('spectrum'):
+                        hess_A = u.symeig_pos_evals(hess.AA / n)
+                        u.log_spectrum(f'layer-{i}/hess_A', hess_A)
+                        hess_B = u.symeig_pos_evals(hess.BB / n)
+                        u.log_spectrum(f'layer-{i}/hess_B', hess_B)
+
+                        hess_evals = u.outer(hess_A, hess_B).flatten()
+                        def erank(vals): return vals.sum()/vals.max()
+                        def srank(vals): return (vals*vals).sum()/(vals.max()**2)
+
+                        u.log_scalars({f'layer-{i}/hess_erank': erank(hess_evals)})
+                        u.log_scalars({f'layer-{i}/hess_srank': srank(hess_evals)})
+
+                        hh = hess.BB / n
+                        ss = fish.BB / n
+
+                        L = u.lyapunov_spectral(hh, 2*ss, cond=1e-8)
+                        mismatch = torch.eig(ss @ u.pinv(hh, cond=1e-8))[0]
+                        mismatch_im = mismatch[:, 1]  # extract im part
+
+                        # print(torch.max(mismatch_im))
+                        mismatch = mismatch[:, 0]  # extract real part
+                        mismatch = mismatch.sort()[0]
+                        mismatch = torch.flip(mismatch, [0])
+
+                        u.log_scalars({f'layer-{i}/rho': erank(hh)/erank(mismatch)})
+                        u.log_scalars({f'layer-{i}/minimax': mismatch.sum()})
+                        u.log_spectrum(f'layer-{i}/SigmaH', mismatch, loglog=True)
+                        u.log_spectrum(f'layer-{i}/sigma', u.symeig_pos_evals(ss), loglog=True)
+                        u.log_spectrum(f'layer-{i}/lyapunov', u.symeig_pos_evals(L), loglog=True)
 
                 # 1. x norms histogram (jacobian norms)
                 # 2. gradient norms histogram
@@ -421,7 +504,7 @@ def main():
                 if args.weight_decay:
                     for group in optimizer.param_groups:
                         for param in group['params']:
-                            param.data.mul_(1-args.weight_decay)
+                            param.data.mul_(1 - args.weight_decay)
 
                 gl.token_count += data.shape[0]
 
@@ -435,7 +518,6 @@ def validate(model, val_loader, tag='validation'):
 
     with torch.no_grad():
         for data, target in val_loader:
-
             data, target = data.to(gl.device), target.to(gl.device)
 
             output = model(data)
@@ -447,7 +529,8 @@ def validate(model, val_loader, tag='validation'):
     val_accuracy = 100. * correct / len(val_loader.dataset)
 
     # TODO(y) log scalar here
-    print(f'Eval: Average {tag} loss: {val_loss:.4f}, Accuracy: {correct:.0f}/{len(val_loader.dataset)} ({val_accuracy:.2f}%)')
+    print(
+        f'Eval: Average {tag} loss: {val_loss:.4f}, Accuracy: {correct:.0f}/{len(val_loader.dataset)} ({val_accuracy:.2f}%)')
 
     return val_accuracy, val_loss
 

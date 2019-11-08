@@ -24,6 +24,8 @@ import torch.nn as nn
 import torchvision.datasets as datasets
 from PIL import Image
 
+import platform
+
 import torch.nn.functional as F
 
 # to enable referring to functions in its own module as u.func
@@ -1094,6 +1096,7 @@ def svd_pos_svals(mat):
 
 def filter_evals(vals, cond=None, remove_small=True, remove_negative=True):
     """Given list of eigenvalues or singular values, remove values indistinguishable from noise and/or small values."""
+    orig_vals = vals
     if cond is None:
         cond = get_condition(vals.dtype)
     above_cutoff = (abs(vals) > cond * torch.max(abs(vals)))
@@ -1101,6 +1104,9 @@ def filter_evals(vals, cond=None, remove_small=True, remove_negative=True):
         vals = vals[above_cutoff]
     if remove_negative:
         vals = vals[vals > 0]
+    #    if len(vals) == 0:
+    #        print("Warning, got empty eigenvalue list")
+    #        return orig_vals
     return vals
 
 
@@ -1965,8 +1971,12 @@ except NameError:
 
 
 @profile
-def log_spectrum(tag, vals: torch.Tensor, loglog=True, discard_tiny=True):
+def log_spectrum(tag, vals: torch.Tensor, loglog=True, discard_tiny=False):
     """Given eigenvalues or singular values in decreasing order, log this plg."""
+
+    if 'darwin' in platform.system().lower():
+        import matplotlib
+        matplotlib.use('PS')
 
     import matplotlib.pyplot as plt
 

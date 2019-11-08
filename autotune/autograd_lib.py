@@ -1522,6 +1522,23 @@ def offset_cosines(A, B, offset=1):
     return cosines
 
 
+def offset_dotprod(A, B, offset=1):
+    """
+    Evaluates cosines between gradients
+
+    If alpha is None, uses optimal learning rate for minimizing i example loss by using direction of i+offset gradient
+
+    Returns:
+        (n,) tensor of improvements
+    """
+    assert offset != 0
+
+    Ad = torch.roll(A, offset, 0)
+    Bd = torch.roll(B, offset, 0)
+    dot_products = (A * Ad).sum(dim=1) * (B * Bd).sum(dim=1)
+    return dot_products
+
+
 def grad_curvs(A, B, metric):
     Am, Bm = A @ metric.AA, B @ metric.BB
     norms_before = (A * A).sum(dim=1) * (B * B).sum(dim=1)
