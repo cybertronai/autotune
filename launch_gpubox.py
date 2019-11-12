@@ -9,7 +9,7 @@ import ncluster
 parser = argparse.ArgumentParser()
 parser.add_argument('--image_name', type=str, default='Deep Learning AMI (Ubuntu) Version 24.1') # pytorch-efa01')
 parser.add_argument('--instance_type', type=str, default="p3.2xlarge")
-parser.add_argument('--name', type=str, default='autotune-gpubox', help="job name")
+parser.add_argument('--name', type=str, default='ciresan-gpubox', help="job name")
 
 parser.add_argument('--password', default='curv', help='password to use for jupyter notebook')
 

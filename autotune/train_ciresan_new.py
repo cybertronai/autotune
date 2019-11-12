@@ -118,7 +118,7 @@ def main():
     model = model.to(gl.device)
     autograd_lib.register(model)
 
-    assert args.dataset_size > args.stats_batch_size
+    assert args.dataset_size >= args.stats_batch_size
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
     dataset = u.TinyMNIST(data_width=args.data_width, targets_width=args.targets_width, original_targets=True,
                           dataset_size=args.dataset_size)
@@ -272,16 +272,23 @@ def main():
                         elif current == quad_fishers:
                             hess = hessians[layer]
                             sigma = fishers[layer]
+                            jac = jacobians[layer]
                             Bs, As = B @ sigma.BB / n, A @ forward_stats[layer].AA / n
                             Bh, Ah = B @ hess.BB / n, A @ forward_stats[layer].AA / n
+                            Bj, Aj = B @ jac.BB / n, A @ forward_stats[layer].AA / n
+
                             norms = ((A * A).sum(dim=1) * (B * B).sum(dim=1))
                             norms_hess = ((Ah * A).sum(dim=1) * (Bh * B).sum(dim=1))
+                            norms_jac = ((Aj * A).sum(dim=1) * (Bj * B).sum(dim=1))
                             norms_sigma = ((As * A).sum(dim=1) * (Bs * B).sum(dim=1))
 
                             current[layer].norm += norms.sum()  # TODO(y) remove, redundant with norm2 above
                             current[layer].curv_sigma += (norms_sigma / norms).sum()
                             current[layer].curv_hess += (norms_hess / norms).sum()
-                            current[layer].curv_ratio += (norms_sigma / norms_hess).sum()
+                            current[layer].lyap_hess_sum += (norms_sigma / norms_hess).sum()
+                            current[layer].lyap_hess_max = max(norms_sigma/norms_hess)
+                            current[layer].lyap_jac_sum += (norms_sigma / norms_jac).sum()
+                            current[layer].lyap_jac_max = max(norms_sigma/norms_jac)
 
                 # todo(y): add "compute_fisher" and "compute_jacobian"
                 # todo(y): add couple of statistics (effective rank, trace, gradient noise)
@@ -381,6 +388,38 @@ def main():
                 grad = fishers[layer].BA / n
                 s.grad_fro = torch.norm(grad)
 
+                # get norms
+                hess_A = u.symeig_pos_evals(hess.AA / n)
+                hess_B = u.symeig_pos_evals(hess.BB / n)
+
+                jac_A = u.symeig_pos_evals(hess.AA / n)
+                jac_B = u.symeig_pos_evals(hess.BB / n)
+
+                s.hess_l2 = max(hess_A) * max(hess_B)
+                s.jac_l2 = max(jac_A) * max(jac_B)
+                # hess.diag_trace, jac.diag_trace
+
+                s.lyap_hess_max = quad_fish.lyap_hess_max
+                s.lyap_hess_ave = quad_fish.lyap_hess_sum / n
+                s.lyap_jac_max = quad_fish.lyap_jac_max
+                s.lyap_jac_ave = quad_fish.lyap_jac_sum / n
+                s.hess_trace = hess.diag.sum() / n
+                s.jac_trace = jac.diag.sum() / n
+
+                # Version 1 of Jain stochastic rates, use Hessian for curvature
+                b = args.train_batch_size
+                s.jain1_sto = s.lyap_hess_max * s.hess_trace / s.lyap_hess_ave
+                s.jain1_det = s.hess_l2
+
+                s.jain1_lr = (1/b) * s.jain1_sto + (b-1) / b * s.jain1_det
+                s.jain1_lr = 1 / s.jain1_lr
+
+                # Version 2 of Jain stochastic rates, use Jacobian squared for curvature
+                s.jain2_sto = s.lyap_jac_max * s.jac_trace / s.lyap_jac_ave
+                s.jain2_det = s.jac_l2
+                s.jain2_lr = (1/b) * s.jain2_sto + (b-1) / b * s.jain2_det
+                s.jain2_lr = 1 / s.jain2_lr
+
                 s.hess_curv = trsum((hess.BB / n) @ grad @ (hess.AA / n), grad) / trsum(grad, grad)
                 s.jac_curv = trsum((jac.BB / n) @ grad @ (jac.AA / n), grad) / trsum(grad, grad)
 
@@ -445,6 +484,29 @@ def main():
                             train_regrets_opt_ / test_regrets_opt_).median()  # ratio between train and test regret, large means overfitting
                 u.log_scalars(u.nest_stats(f'layer-{i}', s))
 
+
+                def erank(vals): return vals.sum() / vals.max()
+                def srank(vals): return (vals * vals).sum() / (vals.max() ** 2)
+
+
+                # compute stats that would let you bound rho
+                if i == 0:
+                    hhh = hessians[model.layers[-1]].BB
+                    fff = fishers[model.layers[-1]].BB
+                    d = fff.shape[0]
+                    L = u.lyapunov_spectral(hhh, 2 * fff, cond=1e-5)
+                    mismatch = torch.eig(fff @ u.pinv(hhh, cond=1e-5))[0]
+                    mismatch = mismatch[:, 0]  # extract real part
+                    mismatch = mismatch.sort()[0]
+                    mismatch = torch.flip(mismatch, [0])
+
+                    u.log_scalars({f'layer-{i}/rho': d/erank(u.symeig_pos_evals(L))})
+                    u.log_scalars({f'layer-{i}/rho_cheap': d/erank(mismatch)})
+                    u.log_spectrum(f'layer-{i}/sigma', u.symeig_pos_evals(fff), loglog=False)
+                    u.log_spectrum(f'layer-{i}/hess', u.symeig_pos_evals(hhh), loglog=False)
+                    u.log_spectrum(f'layer-{i}/lyapunov', u.symeig_pos_evals(L), loglog=False)
+                    u.log_spectrum(f'layer-{i}/lyapunov_cheap', mismatch, loglog=False)
+
                 if i == 0 and args.log_spectra:
                     with u.timeit('spectrum'):
                         hess_A = u.symeig_pos_evals(hess.AA / n)
@@ -453,8 +515,6 @@ def main():
                         u.log_spectrum(f'layer-{i}/hess_B', hess_B)
 
                         hess_evals = u.outer(hess_A, hess_B).flatten()
-                        def erank(vals): return vals.sum()/vals.max()
-                        def srank(vals): return (vals*vals).sum()/(vals.max()**2)
 
                         u.log_scalars({f'layer-{i}/hess_erank': erank(hess_evals)})
                         u.log_scalars({f'layer-{i}/hess_srank': srank(hess_evals)})
@@ -471,7 +531,7 @@ def main():
                         mismatch = mismatch.sort()[0]
                         mismatch = torch.flip(mismatch, [0])
 
-                        u.log_scalars({f'layer-{i}/rho': erank(hh)/erank(mismatch)})
+                        u.log_scalars({f'layer-{i}/rho_diff': erank(hh)/erank(mismatch)})
                         u.log_scalars({f'layer-{i}/minimax': mismatch.sum()})
                         u.log_spectrum(f'layer-{i}/SigmaH', mismatch, loglog=True)
                         u.log_spectrum(f'layer-{i}/sigma', u.symeig_pos_evals(ss), loglog=True)
