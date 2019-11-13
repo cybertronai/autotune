@@ -392,8 +392,8 @@ def main():
                 hess_A = u.symeig_pos_evals(hess.AA / n)
                 hess_B = u.symeig_pos_evals(hess.BB / n)
 
-                jac_A = u.symeig_pos_evals(hess.AA / n)
-                jac_B = u.symeig_pos_evals(hess.BB / n)
+                jac_A = u.symeig_pos_evals(jac.AA / n)
+                jac_B = u.symeig_pos_evals(jac.BB / n)
 
                 s.hess_l2 = max(hess_A) * max(hess_B)
                 s.jac_l2 = max(jac_A) * max(jac_B)
@@ -484,58 +484,72 @@ def main():
                             train_regrets_opt_ / test_regrets_opt_).median()  # ratio between train and test regret, large means overfitting
                 u.log_scalars(u.nest_stats(f'layer-{i}', s))
 
-
                 def erank(vals): return vals.sum() / vals.max()
                 def srank(vals): return (vals * vals).sum() / (vals.max() ** 2)
 
-
                 # compute stats that would let you bound rho
-                if i == 0:
-                    hhh = hessians[model.layers[-1]].BB
-                    fff = fishers[model.layers[-1]].BB
-                    d = fff.shape[0]
-                    L = u.lyapunov_spectral(hhh, 2 * fff, cond=1e-5)
-                    mismatch = torch.eig(fff @ u.pinv(hhh, cond=1e-5))[0]
-                    mismatch = mismatch[:, 0]  # extract real part
-                    mismatch = mismatch.sort()[0]
-                    mismatch = torch.flip(mismatch, [0])
+                # if i == 0:
+                #     hhh = hessians[model.layers[-1]].BB
+                #     fff = fishers[model.layers[-1]].BB
+                #     d = fff.shape[0]
+                #     L = u.lyapunov_spectral(hhh, 2 * fff, cond=1e-5)
+                #     mismatch = torch.eig(fff @ u.pinv(hhh, cond=1e-5))[0]
+                #     mismatch = mismatch[:, 0]  # extract real part
+                #     mismatch = mismatch.sort()[0]
+                #     mismatch = torch.flip(mismatch, [0])
+                #
+                #     u.log_scalars({f'layer-{i}/rho': d/erank(u.symeig_pos_evals(L))})
+                #     u.log_scalars({f'layer-{i}/rho_cheap': d/erank(mismatch)})
+                #     u.log_spectrum(f'layer-{i}/sigma', u.symeig_pos_evals(fff), loglog=False)
+                #     u.log_spectrum(f'layer-{i}/hess', u.symeig_pos_evals(hhh), loglog=False)
+                #     u.log_spectrum(f'layer-{i}/lyapunov', u.symeig_pos_evals(L), loglog=False)
+                #     u.log_spectrum(f'layer-{i}/lyapunov_cheap', mismatch, loglog=False)
 
-                    u.log_scalars({f'layer-{i}/rho': d/erank(u.symeig_pos_evals(L))})
-                    u.log_scalars({f'layer-{i}/rho_cheap': d/erank(mismatch)})
-                    u.log_spectrum(f'layer-{i}/sigma', u.symeig_pos_evals(fff), loglog=False)
-                    u.log_spectrum(f'layer-{i}/hess', u.symeig_pos_evals(hhh), loglog=False)
-                    u.log_spectrum(f'layer-{i}/lyapunov', u.symeig_pos_evals(L), loglog=False)
-                    u.log_spectrum(f'layer-{i}/lyapunov_cheap', mismatch, loglog=False)
-
-                if i == 0 and args.log_spectra:
+                if args.log_spectra:
                     with u.timeit('spectrum'):
-                        hess_A = u.symeig_pos_evals(hess.AA / n)
+                        #hess_A = u.symeig_pos_evals(hess.AA / n)
                         u.log_spectrum(f'layer-{i}/hess_A', hess_A)
-                        hess_B = u.symeig_pos_evals(hess.BB / n)
+                        #hess_B = u.symeig_pos_evals(hess.BB / n)
                         u.log_spectrum(f'layer-{i}/hess_B', hess_B)
 
-                        hess_evals = u.outer(hess_A, hess_B).flatten()
+                        u.log_spectrum(f'layer-{i}/jac_A', jac_A)
+                        u.log_spectrum(f'layer-{i}/jac_B', jac_B)
 
-                        u.log_scalars({f'layer-{i}/hess_erank': erank(hess_evals)})
-                        u.log_scalars({f'layer-{i}/hess_srank': srank(hess_evals)})
+                        fish_A = u.symeig_pos_evals(fish.AA / n)
+                        u.log_spectrum(f'layer-{i}/fish_A', fish_A)
+                        fish_B = u.symeig_pos_evals(fish.BB / n)
+                        u.log_spectrum(f'layer-{i}/fish_B', fish_B)
 
-                        hh = hess.BB / n
-                        ss = fish.BB / n
+                        u.log_scalars({f'layer-{i}/trace_ratio': fish_B.sum()/hess_B.sum()})
 
-                        L = u.lyapunov_spectral(hh, 2*ss, cond=1e-8)
-                        mismatch = torch.eig(ss @ u.pinv(hh, cond=1e-8))[0]
-                        mismatch_im = mismatch[:, 1]  # extract im part
+                        # hess_evals = u.outer(hess_A, hess_B).flatten()
 
-                        # print(torch.max(mismatch_im))
-                        mismatch = mismatch[:, 0]  # extract real part
-                        mismatch = mismatch.sort()[0]
-                        mismatch = torch.flip(mismatch, [0])
+                        u.log_scalars({f'layer-{i}/hessA_erank': erank(hess_A)})
+                        u.log_scalars({f'layer-{i}/hessB_erank': erank(hess_B)})
+                        u.log_scalars({f'layer-{i}/fishA_erank': erank(fish_A)})
+                        u.log_scalars({f'layer-{i}/fishB_erank': erank(fish_B)})
 
-                        u.log_scalars({f'layer-{i}/rho_diff': erank(hh)/erank(mismatch)})
-                        u.log_scalars({f'layer-{i}/minimax': mismatch.sum()})
-                        u.log_spectrum(f'layer-{i}/SigmaH', mismatch, loglog=True)
-                        u.log_spectrum(f'layer-{i}/sigma', u.symeig_pos_evals(ss), loglog=True)
-                        u.log_spectrum(f'layer-{i}/lyapunov', u.symeig_pos_evals(L), loglog=True)
+                        L = torch.eig(u.lyapunov_spectral(hess.BB, 2*fish.BB, cond=1e-8))[0]
+                        L = L[:, 0]  # extract real part
+                        L = L.sort()[0]
+                        L = torch.flip(L, [0])
+
+                        L_cheap = torch.eig(fish.BB @ u.pinv(hess.BB, cond=1e-8))[0]
+                        L_cheap = L_cheap[:, 0]  # extract real part
+                        L_cheap = L_cheap.sort()[0]
+                        L_cheap = torch.flip(L_cheap, [0])
+
+                        d = len(hess_B)
+
+                        u.log_spectrum(f'layer-{i}/Lyap', L)
+                        u.log_spectrum(f'layer-{i}/Lyap_cheap', L_cheap)
+
+                        u.log_scalars({f'layer-{i}/dims': d})
+                        u.log_scalars({f'layer-{i}/L_erank': erank(L)})
+                        u.log_scalars({f'layer-{i}/L_cheap_erank': erank(L_cheap)})
+
+                        u.log_scalars({f'layer-{i}/rho': d/erank(L)})
+                        u.log_scalars({f'layer-{i}/rho_cheap': d/erank(L_cheap)})
 
                 # 1. x norms histogram (jacobian norms)
                 # 2. gradient norms histogram
