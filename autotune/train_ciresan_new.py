@@ -234,13 +234,26 @@ def main():
 
                             current[layer].min_norm2 = min(norms)
                             current[layer].median_norm2 = torch.median(norms)
+                            current[layer].max_norm2 = max(norms)
 
                             norms_hess = ((Ah * A).sum(dim=1) * (Bh * B).sum(dim=1))
                             norms_jac = ((Aj * A).sum(dim=1) * (Bj * B).sum(dim=1))
 
                             current[layer].norm += norms.sum()
                             current[layer].curv_hess += (norms_hess / norms).sum()
+                            current[layer].curv_hess_max += (norms_hess / norms).max()
+                            current[layer].curv_hess_median += (norms_hess / norms).median()
+
                             current[layer].curv_jac += (norms_jac / norms).sum()
+                            current[layer].curv_jac_max += (norms_jac / norms).max()
+                            current[layer].curv_jac_median += (norms_jac / norms).median()
+
+                            current[layer].a_sparsity += torch.sum(A <= 0).float() / A.numel()
+                            current[layer].b_sparsity += torch.sum(B <= 0).float() / A.numel()
+                            current[layer].mean_activation += torch.mean(A)
+                            current[layer].mean_activation2 += torch.mean(A*A)
+                            current[layer].mean_backprop = torch.mean(B)
+                            current[layer].mean_backprop2 = torch.mean(B*B)
 
                             current[layer].norms_hess += norms_hess.sum()
                             current[layer].norms_jac += norms_jac.sum()
@@ -284,7 +297,10 @@ def main():
 
                             current[layer].norm += norms.sum()  # TODO(y) remove, redundant with norm2 above
                             current[layer].curv_sigma += (norms_sigma / norms).sum()
+                            current[layer].curv_sigma_max = (norms_sigma / norms).max()
+                            current[layer].curv_sigma_median = (norms_sigma / norms).median()
                             current[layer].curv_hess += (norms_hess / norms).sum()
+                            current[layer].curv_hess_max += (norms_hess / norms).max()
                             current[layer].lyap_hess_sum += (norms_sigma / norms_hess).sum()
                             current[layer].lyap_hess_max = max(norms_sigma/norms_hess)
                             current[layer].lyap_jac_sum += (norms_sigma / norms_jac).sum()
@@ -389,16 +405,6 @@ def main():
                 s.grad_fro = torch.norm(grad)
 
                 # get norms
-                hess_A = u.symeig_pos_evals(hess.AA / n)
-                hess_B = u.symeig_pos_evals(hess.BB / n)
-
-                jac_A = u.symeig_pos_evals(jac.AA / n)
-                jac_B = u.symeig_pos_evals(jac.BB / n)
-
-                s.hess_l2 = max(hess_A) * max(hess_B)
-                s.jac_l2 = max(jac_A) * max(jac_B)
-                # hess.diag_trace, jac.diag_trace
-
                 s.lyap_hess_max = quad_fish.lyap_hess_max
                 s.lyap_hess_ave = quad_fish.lyap_hess_sum / n
                 s.lyap_jac_max = quad_fish.lyap_jac_max
@@ -408,17 +414,6 @@ def main():
 
                 # Version 1 of Jain stochastic rates, use Hessian for curvature
                 b = args.train_batch_size
-                s.jain1_sto = s.lyap_hess_max * s.hess_trace / s.lyap_hess_ave
-                s.jain1_det = s.hess_l2
-
-                s.jain1_lr = (1/b) * s.jain1_sto + (b-1) / b * s.jain1_det
-                s.jain1_lr = 1 / s.jain1_lr
-
-                # Version 2 of Jain stochastic rates, use Jacobian squared for curvature
-                s.jain2_sto = s.lyap_jac_max * s.jac_trace / s.lyap_jac_ave
-                s.jain2_det = s.jac_l2
-                s.jain2_lr = (1/b) * s.jain2_sto + (b-1) / b * s.jain2_det
-                s.jain2_lr = 1 / s.jain2_lr
 
                 s.hess_curv = trsum((hess.BB / n) @ grad @ (hess.AA / n), grad) / trsum(grad, grad)
                 s.jac_curv = trsum((jac.BB / n) @ grad @ (jac.AA / n), grad) / trsum(grad, grad)
@@ -436,20 +431,33 @@ def main():
                 s.mean_norm2 = fish.norm2 / n
                 s.min_norm2 = fish.min_norm2
                 s.median_norm2 = fish.median_norm2
+                s.max_norm2 = fish.max_norm2
                 s.enorms = u.norm_squared(grad)
+                s.a_sparsity = fish.a_sparsity
+                s.b_sparsity = fish.b_sparsity
+                s.mean_activation = fish.mean_activation
+                s.mean_activation2 = fish.mean_activation2
+                s.mean_backprop = fish.mean_backprop
+                s.mean_backprop2 = fish.mean_backprop2
 
                 s.norms_centered = fish.norm2 / n - u.norm_squared(grad)
                 s.norms_hess = fish.norms_hess / n
                 s.norms_jac = fish.norms_jac / n
 
                 s.hess_curv_grad = fish.curv_hess / n  # phase transition, hits minimum loss in layer 1, then starts going up. Other layers take longer to reach minimum. Decreases with depth.
+                s.hess_curv_grad_max = fish.curv_hess_max   # phase transition, hits minimum loss in layer 1, then starts going up. Other layers take longer to reach minimum. Decreases with depth.
+                s.hess_curv_grad_median = fish.curv_hess_median   # phase transition, hits minimum loss in layer 1, then starts going up. Other layers take longer to reach minimum. Decreases with depth.
                 s.sigma_curv_grad = quad_fish.curv_sigma / n
+                s.sigma_curv_grad_max = quad_fish.curv_sigma_max
+                s.sigma_curv_grad_median = quad_fish.curv_sigma_median
                 s.band_bottou = 0.5 * lr * s.sigma_curv_grad / s.hess_curv_grad
                 s.band_bottou_stoch = 0.5 * lr * quad_fish.curv_ratio / n
                 s.band_yaida = 0.25 * lr * s.mean_norm2
                 s.band_yaida_centered = 0.25 * lr * s.norms_centered
 
                 s.jac_curv_grad = fish.curv_jac / n  # this one has much lower variance than jac_curv. Reaches peak at 10k steps, also kfac error reaches peak there. Decreases with depth except for last layer.
+                s.jac_curv_grad_max = fish.curv_jac_max  # this one has much lower variance than jac_curv. Reaches peak at 10k steps, also kfac error reaches peak there. Decreases with depth except for last layer.
+                s.jac_curv_grad_median = fish.curv_jac_median  # this one has much lower variance than jac_curv. Reaches peak at 10k steps, also kfac error reaches peak there. Decreases with depth except for last layer.
 
                 # OpenAI gradient noise statistics
                 s.hess_noise_normalized = s.hess_noise_centered / (fish.norms_hess / n)
@@ -507,6 +515,29 @@ def main():
 
                 if args.log_spectra:
                     with u.timeit('spectrum'):
+                        hess_A = u.symeig_pos_evals(hess.AA / n)
+                        hess_B = u.symeig_pos_evals(hess.BB / n)
+
+                        jac_A = u.symeig_pos_evals(jac.AA / n)
+                        jac_B = u.symeig_pos_evals(jac.BB / n)
+
+                        s.hess_l2 = max(hess_A) * max(hess_B)
+                        s.jac_l2 = max(jac_A) * max(jac_B)
+                        # hess.diag_trace, jac.diag_trace
+
+                        s.jain1_sto = s.lyap_hess_max * s.hess_trace / s.lyap_hess_ave
+
+                        s.jain1_det = s.hess_l2
+
+                        s.jain1_lr = (1 / b) * s.jain1_sto + (b - 1) / b * s.jain1_det
+                        s.jain1_lr = 1 / s.jain1_lr
+
+                        # Version 2 of Jain stochastic rates, use Jacobian squared for curvature
+                        s.jain2_sto = s.lyap_jac_max * s.jac_trace / s.lyap_jac_ave
+                        s.jain2_det = s.jac_l2
+                        s.jain2_lr = (1 / b) * s.jain2_sto + (b - 1) / b * s.jain2_det
+                        s.jain2_lr = 1 / s.jain2_lr
+
                         #hess_A = u.symeig_pos_evals(hess.AA / n)
                         u.log_spectrum(f'layer-{i}/hess_A', hess_A)
                         #hess_B = u.symeig_pos_evals(hess.BB / n)
