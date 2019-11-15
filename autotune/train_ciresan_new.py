@@ -49,6 +49,11 @@ u.install_pdb_handler()
 def skip_nans(t): return t[torch.isfinite(t)]
 
 
+def erank(vals): return vals.sum() / vals.max()
+
+def srank(vals): return (vals * vals).sum() / (vals.max() ** 2)
+
+
 @profile
 def main():
     parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
@@ -246,7 +251,6 @@ def main():
 
                             norms2_hess = ((Ah * A).sum(dim=1) * (Bh * B).sum(dim=1))
                             norms2_jac = ((Aj * A).sum(dim=1) * (Bj * B).sum(dim=1))
-
 
                             current[layer].norm += norms.sum()
                             current_histograms[layer].norms.extend(torch.sqrt(norms))
@@ -496,8 +500,23 @@ def main():
 
                 hess_A = u.symeig_pos_evals(hess.AA / n)
                 hess_B = u.symeig_pos_evals(hess.BB / n)
+                fish_A = u.symeig_pos_evals(fish.AA / n)
+                fish_B = u.symeig_pos_evals(fish.BB / n)
+                jac_A = u.symeig_pos_evals(jac.AA / n)
+                jac_B = u.symeig_pos_evals(jac.BB / n)
+                u.log_scalars({f'layer-{i}/hessA_erank': erank(hess_A)})
+                u.log_scalars({f'layer-{i}/hessB_erank': erank(hess_B)})
+                u.log_scalars({f'layer-{i}/fishA_erank': erank(fish_A)})
+                u.log_scalars({f'layer-{i}/fishB_erank': erank(fish_B)})
+                u.log_scalars({f'layer-{i}/jacA_erank': erank(jac_A)})
+                u.log_scalars({f'layer-{i}/jacB_erank': erank(jac_B)})
+                gl.event_writer.add_histogram(f'layer-{i}/hist_hess_eig', u.outer(hess_A, hess_B).flatten(), gl.get_global_step())
+                gl.event_writer.add_histogram(f'layer-{i}/hist_fish_eig', u.outer(hess_A, hess_B).flatten(), gl.get_global_step())
+                gl.event_writer.add_histogram(f'layer-{i}/hist_jac_eig', u.outer(hess_A, hess_B).flatten(), gl.get_global_step())
 
                 s.hess_l2 = max(hess_A) * max(hess_B)
+                s.jac_l2 = max(jac_A) * max(jac_B)
+                s.fish_l2 = max(fish_A) * max(fish_B)
                 s.hess_trace = hess.diag.sum() / n
 
                 s.jain1_sto = 1/(s.hess_trace + 2 * s.hess_l2)
@@ -510,13 +529,10 @@ def main():
                             train_regrets_opt_ / test_regrets_opt_).median()  # ratio between train and test regret, large means overfitting
                 u.log_scalars(u.nest_stats(f'layer-{i}', s))
 
-                def erank(vals): return vals.sum() / vals.max()
-                def srank(vals): return (vals * vals).sum() / (vals.max() ** 2)
-
                 # compute stats that would let you bound rho
                 if i == 0:  # only compute this once, for output layer
-                    hhh = hessians[model.layers[-1]].BB
-                    fff = fishers[model.layers[-1]].BB
+                    hhh = hessians[model.layers[-1]].BB / n
+                    fff = fishers[model.layers[-1]].BB / n
                     d = fff.shape[0]
                     L = u.lyapunov_spectral(hhh, 2 * fff, cond=1e-8)
                     L_evals = u.symeig_pos_evals(L)
@@ -543,10 +559,6 @@ def main():
                         # s.jain1_lr = (1 / b) * s.jain1_sto + (b - 1) / b * s.jain1_det
                         # s.jain1_lr = 1 / s.jain1_lr
 
-                        jac_A = u.symeig_pos_evals(jac.AA / n)
-                        jac_B = u.symeig_pos_evals(jac.BB / n)
-
-                        s.jac_l2 = max(jac_A) * max(jac_B)
                         # hess.diag_trace, jac.diag_trace
 
                         # Version 2 of Jain stochastic rates, use Jacobian squared for curvature
@@ -563,15 +575,7 @@ def main():
                         u.log_spectrum(f'layer-{i}/fish_A', fish_A)
                         u.log_spectrum(f'layer-{i}/fish_B', fish_B)
 
-                        fish_A = u.symeig_pos_evals(fish.AA / n)
-                        fish_B = u.symeig_pos_evals(fish.BB / n)
-
                         u.log_scalars({f'layer-{i}/trace_ratio': fish_B.sum()/hess_B.sum()})
-
-                        u.log_scalars({f'layer-{i}/hessA_erank': erank(hess_A)})
-                        u.log_scalars({f'layer-{i}/hessB_erank': erank(hess_B)})
-                        u.log_scalars({f'layer-{i}/fishA_erank': erank(fish_A)})
-                        u.log_scalars({f'layer-{i}/fishB_erank': erank(fish_B)})
 
                         L = torch.eig(u.lyapunov_spectral(hess.BB, 2*fish.BB, cond=1e-8))[0]
                         L = L[:, 0]  # extract real part
