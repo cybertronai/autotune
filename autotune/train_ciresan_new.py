@@ -504,6 +504,7 @@ def main():
                 fish_B = u.symeig_pos_evals(fish.BB / n)
                 jac_A = u.symeig_pos_evals(jac.AA / n)
                 jac_B = u.symeig_pos_evals(jac.BB / n)
+
                 u.log_scalars({f'layer-{i}/hessA_erank': erank(hess_A)})
                 u.log_scalars({f'layer-{i}/hessB_erank': erank(hess_B)})
                 u.log_scalars({f'layer-{i}/fishA_erank': erank(fish_A)})
@@ -568,12 +569,14 @@ def main():
                         s.jain2_lr = 1 / s.jain2_lr
 
                         u.log_spectrum(f'layer-{i}/hess_A', hess_A)
-                        u.log_spectrum(f'layer-{i}/hess_B', hess_B)
-                        u.log_spectrum(f'layer-{i}/hess_AB', u.outer(hess_A, hess_B).flatten())
-                        u.log_spectrum(f'layer-{i}/jac_A', jac_A)
-                        u.log_spectrum(f'layer-{i}/jac_B', jac_B)
-                        u.log_spectrum(f'layer-{i}/fish_A', fish_A)
-                        u.log_spectrum(f'layer-{i}/fish_B', fish_B)
+                        u.log_spectrum(f'layer-{i}/hess_B', hess_B, discard_head=10)
+                        u.log_spectrum(f'layer-{i}/jac_B', jac_B, discard_head=10)
+                        u.log_spectrum(f'layer-{i}/fish_B', fish_B, discard_head=10)
+
+                        # disable slow spectra
+                        # u.log_spectrum(f'layer-{i}/hess_AB', u.outer(hess_A, hess_B).flatten(), discard_head=10*768)
+                        # u.log_spectrum(f'layer-{i}/jac_A', jac_A)
+                        # u.log_spectrum(f'layer-{i}/fish_A', fish_A, discard_head=768)
 
                         u.log_scalars({f'layer-{i}/trace_ratio': fish_B.sum()/hess_B.sum()})
 

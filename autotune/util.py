@@ -1097,11 +1097,14 @@ def pinv_square_root(mat: torch.Tensor, eps=1e-4) -> torch.Tensor:
     return u @ torch.diag(si) @ v.t()
 
 
-def symeig_pos_evals(mat: torch.Tensor) -> torch.Tensor:
+def symeig_pos_evals(mat: torch.Tensor, do_filter=True) -> torch.Tensor:
     """Returns positive eigenvalues from symeig in decreasing order (to match order of .svd())"""
 
     s, u = torch.symeig(mat, eigenvectors=False)
-    return torch.flip(filter_evals(s, remove_negative=True), dims=[0])
+    if do_filter:
+        s = filter_evals(s, remove_negative=True)
+
+    return torch.flip(s, dims=[0])
 
 
 def svd_pos_svals(mat):
@@ -1114,9 +1117,7 @@ def svd_pos_svals(mat):
 def filter_evals(vals, cond=None, remove_small=True, remove_negative=True):
     """Given list of eigenvalues or singular values, remove values indistinguishable from noise and/or small values."""
     orig_vals = vals
-    if cond is None:
-        cond = get_condition(vals.dtype)
-    above_cutoff = (abs(vals) > cond * torch.max(abs(vals)))
+    above_cutoff = (abs(vals) > 1e-7 * torch.max(abs(vals)))
     if remove_small:
         vals = vals[above_cutoff]
     if remove_negative:
@@ -1988,7 +1989,7 @@ except NameError:
 
 
 @profile
-def log_spectrum(tag, vals: torch.Tensor, loglog=True, discard_tiny=False):
+def log_spectrum(tag, vals: torch.Tensor, loglog=True, discard_tiny=False, discard_head=0):
     """Given eigenvalues or singular values in decreasing order, log this plg."""
 
     if 'darwin' in platform.system().lower():
@@ -2005,9 +2006,17 @@ def log_spectrum(tag, vals: torch.Tensor, loglog=True, discard_tiny=False):
     if loglog:
         y = torch.log10(y)
         x = torch.log10(x)
+
+    if discard_head:
+        if discard_head < len(x):
+            x = x[discard_head:]
+            y = y[discard_head:]
+        else:
+            print(f"warning, tried to discard {discard_head} entries from {len(x)} total")
+
     fig, ax = plt.subplots()
     x, y = to_numpys(x, y)
-    markerline, stemlines, baseline = ax.stem(x, y, markerfmt='bo', basefmt='r-', bottom=min(y))
+    markerline, stemlines, baseline = ax.stem(x, y, markerfmt='bo', basefmt='r-', bottom=min(y), use_line_collection=True)
     plt.setp(baseline, color='r', linewidth=2)
     gl.event_writer.add_figure(tag=tag, figure=fig, global_step=gl.get_global_step())
 
