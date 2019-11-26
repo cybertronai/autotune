@@ -467,53 +467,6 @@ def test_diagonal_hessian():
     u.check_equal(hess[0], [425., 225., 680., 360.])
 
 
-def test_full_hessian_xent():
-    u.seed_random(1)
-    torch.set_default_dtype(torch.float64)
-
-    batch_size = 1
-    d = [2, 2]
-    o = d[-1]
-    n = batch_size
-    train_steps = 1
-
-    model: u.SimpleModel = u.SimpleFullyConnected(d, nonlin=True, bias=True)
-    model.layers[0].weight.data.copy_(torch.eye(2))
-    autograd_lib.register(model)
-    loss_fn = torch.nn.CrossEntropyLoss()
-
-    data = u.to_logits(torch.tensor([[0.7, 0.3]]))
-    targets = torch.tensor([0])
-
-    data = data.repeat([3, 1])
-    targets = targets.repeat([3])
-    n = len(data)
-
-    activations = {}
-    hess = defaultdict(float)
-
-    def save_activations(layer, a, _):
-        activations[layer] = a
-
-    with autograd_lib.module_hook(save_activations):
-        Y = model(data)
-        loss = loss_fn(Y, targets)
-
-    def compute_hess(layer, _, B):
-        A = activations[layer]
-        BA = torch.einsum("nl,ni->nli", B, A)
-        hess[layer] += torch.einsum('nli,nkj->likj', BA, BA)
-
-    with autograd_lib.module_hook(compute_hess):
-        autograd_lib.backward_hessian(Y, loss='CrossEntropy', retain_graph=True)
-
-    # check against autograd
-    # 0.1459
-    hess_autograd = u.hessian(loss, model.layers[0].weight)
-    hess0 = hess[model.layers[0]] / n
-    u.check_equal(hess_autograd, hess0)
-
-
 def test_full_hessian_xent_multibatch():
     u.seed_random(1)
     torch.set_default_dtype(torch.float64)
@@ -1051,6 +1004,7 @@ def test_grad_norms():
 
 
 if __name__ == '__main__':
+    # test_hessian_trace()
     # test_gradient_norms()
     # test_full_hessian()
     # test_diagonal_hessian()
@@ -1060,17 +1014,16 @@ if __name__ == '__main__':
     #  test_kfac_hessian()
     # test_full_hessian_xent()
     #    test_full_hessian_xent_multibatch()
-    test_full_hessian_xent_kfac()
-    test_full_hessian_xent_kfac2()
+    # test_full_hessian_xent_kfac()
+    # test_full_hessian_xent_kfac2()
     # test_full_hessian_xent_mnist()
-    test_full_hessian_xent_mnist_multilayer()
-    test_kfac_jacobian_mnist()
+    # test_full_hessian_xent_mnist_multilayer()
+    # test_kfac_jacobian_mnist()
     #    _test_kfac_jacobian_mnist()
-    test_kfac_fisher_mnist()
-
-    test_grad_norms()
+    # test_kfac_fisher_mnist()
+    # test_grad_norms()
     # test_hooks()
     # test_activations_contextmanager()
     # test_jacobian()
     # test_backprop()
-    # u.run_all_tests(sys.modules[__name__])
+    u.run_all_tests(sys.modules[__name__])

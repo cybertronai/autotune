@@ -7,6 +7,10 @@ from typing import Callable
 import torch
 import torch.nn as nn
 
+from collections import defaultdict
+
+import torch.nn.functional as F
+
 
 class Net(nn.Module):
     def __init__(self, d):
@@ -368,6 +372,130 @@ def test_hessian_multibatch():
     u.check_close(cov.H.value(), hess2)
 
 
+def test_hessian_trace():
+    u.seed_random(1)
+    torch.set_default_dtype(torch.float64)
+
+    batch_size = 1
+    d = [2, 2]
+    o = d[-1]
+    n = batch_size
+
+    model: u.SimpleModel = u.SimpleFullyConnected(d, nonlin=True, bias=True)
+    model.layers[0].weight.data.copy_(torch.eye(2))
+    autograd_lib.register(model)
+    loss_fn = torch.nn.CrossEntropyLoss()
+
+    data = u.to_logits(torch.tensor([[0.7, 0.3]]))
+    targets = torch.tensor([0])
+
+    data = data.repeat([3, 1])
+    targets = targets.repeat([3])
+    n = len(data)
+
+    activations = {}
+    hess_trace = defaultdict(float)
+
+    def save_activations(layer, a, _):
+        activations[layer] = a
+
+    with autograd_lib.module_hook(save_activations):
+        Y = model(data)
+        loss = loss_fn(Y, targets)
+
+    def compute_hess_trace(layer, _, B):
+        A = activations[layer]
+        norms2 = (A*A).sum(dim=1) * (B*B).sum(dim=1)  #  torch.einsum("ni,nj->ij", B * B, A * A).reshape(-1)
+        hess_trace[layer] += norms2.sum()
+
+    with autograd_lib.module_hook(compute_hess_trace):
+        autograd_lib.backward_hessian(Y, loss='CrossEntropy', retain_graph=True)
+
+    hess_autograd = u.hessian(loss, model.layers[0].weight)
+
+    hess_trace0 = hess_trace[model.layers[0]] / n
+    u.check_equal(u.make_square(hess_autograd).trace(), hess_trace0)
+
+
+def test_hessian_trace_conv():
+    """Test conv hessian computation using factored and regular method."""
+
+    u.seed_random(1)
+    unfold = torch.nn.functional.unfold
+    fold = torch.nn.functional.fold
+
+    import numpy as np
+
+    u.seed_random(1)
+    N, Xc, Xh, Xw = 3, 2, 3, 7
+    dd = [Xc, 2]
+
+    Kh, Kw = 2, 3
+    Oh, Ow = Xh - Kh + 1, Xw - Kw + 1
+    model = u.SimpleConvolutional(dd, kernel_size=(Kh, Kw), bias=True).double()
+
+    weight_buffer = model.layers[0].weight.data
+
+    # output channels, input channels, height, width
+    assert weight_buffer.shape == (dd[1], dd[0], Kh, Kw)
+
+    input_dims = N, Xc, Xh, Xw
+    size = int(np.prod(input_dims))
+    X = torch.arange(0, size).reshape(*input_dims).double()
+
+    def loss_fn(data):
+        err = data.reshape(len(data), -1)
+        return torch.sum(err * err) / 2 / len(data)
+
+    layer = model.layers[0]
+    output = model(X)
+    loss = loss_fn(output)
+    loss.backward()
+
+    u.check_equal(layer.activations, X)
+
+    assert layer.backprops_list[0].shape == layer.output.shape
+    assert layer.output.shape == (N, dd[1], Oh, Ow)
+
+    out_unf = layer.weight.view(layer.weight.size(0), -1) @ unfold(layer.activations, (Kh, Kw))
+    assert out_unf.shape == (N, dd[1], Oh * Ow)
+    reshaped_bias = layer.bias.reshape(1, dd[1], 1)  # (Co,) -> (1, Co, 1)
+    out_unf = out_unf + reshaped_bias
+
+    u.check_equal(fold(out_unf, (Oh, Ow), (1, 1)), output)  # two alternative ways of reshaping
+    u.check_equal(out_unf.view(N, dd[1], Oh, Ow), output)
+
+    # Unfold produces patches with output dimension merged, while in backprop they are not merged
+    # Hence merge the output (width/height) dimension
+    assert unfold(layer.activations, (Kh, Kw)).shape == (N, Xc * Kh * Kw, Oh * Ow)
+    assert layer.backprops_list[0].shape == (N, dd[1], Oh, Ow)
+
+    grads_bias = layer.backprops_list[0].sum(dim=(2, 3)) * N
+    mean_grad_bias = grads_bias.sum(dim=0) / N
+    u.check_equal(mean_grad_bias, layer.bias.grad)
+
+    Bt = layer.backprops_list[0] * N   # remove factor of N applied during loss batch averaging
+    assert Bt.shape == (N, dd[1], Oh, Ow)
+    Bt = Bt.reshape(N, dd[1], Oh*Ow)
+    At = unfold(layer.activations, (Kh, Kw))
+    assert At.shape == (N, dd[0] * Kh * Kw, Oh*Ow)
+
+    grad_unf = torch.einsum('ijk,ilk->ijl', Bt, At)
+    assert grad_unf.shape == (N, dd[1], dd[0] * Kh * Kw)
+
+    grads = grad_unf.reshape((N, dd[1], dd[0], Kh, Kw))
+    u.check_equal(grads.mean(dim=0), layer.weight.grad)
+
+    # compute per-example gradients using autograd, compare against manual computation
+    for i in range(N):
+        u.clear_backprops(model)
+        output = model(X[i:i + 1, ...])
+        loss = loss_fn(output)
+        loss.backward()
+        u.check_equal(grads[i], layer.weight.grad)
+        u.check_equal(grads_bias[i], layer.bias.grad)
+
+
 def _test_refactored_stats():
     gl.project_name = 'test'
     gl.logdir_base = '/tmp/runs'
@@ -429,7 +557,93 @@ def _test_refactored_stats():
     #grad_cov = KronFactored(covA, covJ.cov, covJ.cross)
 
 
+class TinyNet(nn.Module):
+    def __init__(self, nonlin=True):
+        super(TinyNet, self).__init__()
+        self.nonlin = nonlin
+        self.conv1 = nn.Conv2d(1, 2, 2, 1)
+        self.conv2 = nn.Conv2d(2, 2, 2, 1)
+        self.fc1 = nn.Linear(2, 2)
+        self.fc2 = nn.Linear(2, 10)
+
+    def forward(self, x):            # 28x28
+        x = F.max_pool2d(x, 4, 4)    # 7x7
+        x = self.conv1(x)    # 6x6
+        if self.nonlin:
+            x = F.relu(x)
+        x = F.max_pool2d(x, 2, 2)    # 3x3
+        x = self.conv2(x)    # 2x2
+        if self.nonlin:
+            x = F.relu(x)
+        x = F.max_pool2d(x, 2, 2)    # 1x1
+        x = x.view(-1, 2 * 1 * 1)    # C * W * H
+        x = self.fc1(x)
+        if self.nonlin:
+            x = F.relu(x)
+        x = self.fc2(x)
+        return x
+
+
 def test_hessian_conv():
+    u.seed_random(1)
+
+    model = TinyNet(nonlin=False)
+    n = 3
+
+    data = torch.rand(n, 1, 28, 28)
+    targets = torch.LongTensor(n).random_(0, 10)
+    layers = list(model.modules())[1:]
+
+    autograd_lib.register(model)
+    loss_fn = torch.nn.CrossEntropyLoss()
+
+    activations = {}
+    hess = defaultdict(float)
+    hess_bias = defaultdict(float)
+
+    def save_activations(layer, A, _):
+        activations[layer] = A.detach()
+
+    with autograd_lib.module_hook(save_activations):
+        output = model(data)
+        loss = loss_fn(output, targets)
+
+    def compute_hess(layer, _, B):
+        layer_type = autograd_lib._layer_type(layer)
+        if layer_type not in ('Conv2d', 'Linear'):
+            return
+
+        A = activations[layer]
+        n = A.shape[0]
+
+        if layer_type == 'Conv2d':
+            Kh, Kw = layer.kernel_size
+            di, do = layer.in_channels, layer.out_channels
+            A = F.unfold(A, (Kh, Kw))    # n, di * Kh * Kw, Oh * Ow
+            B = B.reshape(n, do, -1)                       # n, do, Oh * Ow
+            BA = torch.einsum('nij,nkj->nik', B, A)        # n, do, di * Kh * Kw
+            BA2 = torch.einsum('nij->ni', B)               # n, do
+        else:  # layer_type == 'Linear':
+            BA = torch.einsum("nl,ni->nli", B, A)          # n, do, di
+            BA2 = B                                        # n, do
+
+        hess[layer] += torch.einsum('nli,nkj->likj', BA, BA)
+        hess_bias[layer] += torch.einsum('ni,nj->ij', BA2, BA2)
+
+    with autograd_lib.module_hook(compute_hess):
+        autograd_lib.backward_hessian(output, 'CrossEntropy', retain_graph=True)
+
+    for layer in layers:
+        hess_autograd = u.hessian(loss, layer.weight)
+        hess0 = hess[layer] / n
+        u.check_equal(hess0, hess_autograd.reshape(hess0.shape))
+
+        hess_autograd_bias = u.hessian(loss, layer.bias)
+        hess0_bias = hess_bias[layer] / n
+        u.check_equal(hess0_bias, hess_autograd_bias.reshape(hess0_bias.shape))
+
+
+def test_hessian_conv_old():
     """Test conv hessian computation using factored and regular method."""
 
     u.seed_random(1)
@@ -653,8 +867,6 @@ def _test_new_setup():
         pass
 
 
-
-
 if __name__ == '__main__':
     #  _test_factored_hessian()
     # test_hessian_multibatch()
@@ -662,4 +874,6 @@ if __name__ == '__main__':
     # test_explicit_hessian_refactored()
     #    u.run_all_tests(sys.modules[__name__])
 
-    u.run_all_tests(sys.modules[__name__])
+    # u.run_all_tests(sys.modules[__name__])
+    test_hessian_trace()
+    test_hessian_conv()

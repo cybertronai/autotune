@@ -1183,7 +1183,7 @@ def extend_backprops(storage: ModuleDict):
 def module_hook(hook: Callable):
     """Context manager for running given hook on forward or backward."""
 
-    # TODO(y): maybe add checking for arg types on hook to catch forward/backward hook mismatches
+    # TODO(y): maybe add checking for arg names on hook to catch forward/backward hook mismatches
     # TODO(y): use weak ref for the hook handles so they are removed when model goes out of scope
     assert global_settings.hook_handles, "Global hooks have not been registered. Make sure to call .register(model) on your model"
     forward_hook_called = [False]

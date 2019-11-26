@@ -1778,7 +1778,7 @@ class SimpleConvolutional(SimpleModel):
         """
 
         Args:log
-            d: list of channels, ie [2, 2] to have 2 conv layers with 2 channels
+            d: list of channel depths, ie [2, 2] to have 2 conv layers with 2 channels each
         """
         super().__init__()
         self.layers: List[nn.Module] = []
@@ -2698,7 +2698,9 @@ def copy_stats(shared_stats, stats):
     return None
 
 
-def skip_nans(t): return t[torch.isfinite(t)]
+def skip_nans(t):
+    """Return tensor with all inf/NaN entries removed"""
+    return t[torch.isfinite(t)]
 
 
 # list replacement. Workaround for AttrDict automatically converting list objects to Tuple
@@ -2717,7 +2719,7 @@ class MyList:
         return self.storage
 
 
-def divide_attributes(d, n):
+def divide_attributes(d: dict, n):
     """Helper util to divide all tensor attributes of d by n, return result as new AttrDict"""
 
     result = AttrDict()
@@ -2725,3 +2727,10 @@ def divide_attributes(d, n):
         if type(d[val]) == torch.Tensor:
             result[val] = d[val] / n
     return result
+
+
+def make_square(t: torch.Tensor):
+    """Turns tensor into square matrix."""
+    rows = int(math.sqrt(t.numel()))
+    assert rows*rows == t.numel(), "Tensor can't be turned into square matrix"
+    return t.reshape(rows, rows)

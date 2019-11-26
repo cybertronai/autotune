@@ -109,6 +109,7 @@ def main():
     parser.add_argument('--curv', type=str, default='kfac',
                         help='decomposition to use for curvature estimates: zero_order, kfac, isserlis or full')
     parser.add_argument('--log_spectra', type=int, default=0)
+    parser.add_argument('--log_sparsity', type=int, default=0)
 
     u.seed_random(1)
     gl.args = parser.parse_args()
