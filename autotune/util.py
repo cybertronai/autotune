@@ -2734,3 +2734,7 @@ def make_square(t: torch.Tensor):
     rows = int(math.sqrt(t.numel()))
     assert rows*rows == t.numel(), "Tensor can't be turned into square matrix"
     return t.reshape(rows, rows)
+
+
+def trace(t: torch.Tensor):
+    return make_square(t).trace()

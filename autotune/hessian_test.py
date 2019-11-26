@@ -405,8 +405,8 @@ def test_hessian_trace():
 
     def compute_hess_trace(layer, _, B):
         A = activations[layer]
-        norms2 = (A*A).sum(dim=1) * (B*B).sum(dim=1)  #  torch.einsum("ni,nj->ij", B * B, A * A).reshape(-1)
-        hess_trace[layer] += norms2.sum()
+        #norms2 = (A*A).sum(dim=1) * (B*B).sum(dim=1)  #  torch.einsum("ni,nj->ij", B * B, A * A).reshape(-1)
+        hess_trace[layer] += torch.einsum("ni,nj->ij", B * B, A * A).sum()
 
     with autograd_lib.module_hook(compute_hess_trace):
         autograd_lib.backward_hessian(Y, loss='CrossEntropy', retain_graph=True)
@@ -643,6 +643,66 @@ def test_hessian_conv():
         u.check_equal(hess0_bias, hess_autograd_bias.reshape(hess0_bias.shape))
 
 
+def test_hessian_trace_conv():
+    u.seed_random(1)
+
+    model = TinyNet(nonlin=False)
+    n = 3
+
+    data = torch.rand(n, 1, 28, 28)
+    targets = torch.LongTensor(n).random_(0, 10)
+    layers = list(model.modules())[1:]
+
+    autograd_lib.register(model)
+    loss_fn = torch.nn.CrossEntropyLoss()
+
+    activations = {}
+    hess_trace = defaultdict(float)
+    hess_bias_trace = defaultdict(float)
+
+    def save_activations(layer, A, _):
+        activations[layer] = A.detach()
+
+    with autograd_lib.module_hook(save_activations):
+        output = model(data)
+        loss = loss_fn(output, targets)
+
+    def compute_hess_trace(layer, _, B):
+        layer_type = autograd_lib._layer_type(layer)
+        if layer_type not in ('Conv2d', 'Linear'):
+            return
+
+        A = activations[layer]
+        n = A.shape[0]
+
+        if layer_type == 'Conv2d':
+            Kh, Kw = layer.kernel_size
+            di, do = layer.in_channels, layer.out_channels
+            A = F.unfold(A, (Kh, Kw))                      # n, di * Kh * Kw, Oh * Ow
+            B = B.reshape(n, do, -1)                       # n, do, Oh * Ow
+            BA = torch.einsum('nij,nkj->nik', B, A)        # n, do, di * Kh * Kw
+            BA2 = torch.einsum('nij->ni', B)               # n, do
+
+            # hess_trace[layer] += torch.einsum("nij,nkj->ik", B * B, A * A).sum()
+            # hess_bias_trace[layer] += (B * B).sum()
+            hess_trace[layer] += (BA*BA).sum()
+            hess_bias_trace[layer] += (BA2 * BA2).sum()
+
+        else:  # layer_type == 'Linear':
+            hess_trace[layer] += torch.einsum("ni,nj->ij", B * B, A * A).sum()
+            hess_bias_trace[layer] += (B * B).sum()
+
+    with autograd_lib.module_hook(compute_hess_trace):
+        autograd_lib.backward_hessian(output, 'CrossEntropy', retain_graph=True)
+
+    for layer in layers:
+        hess_autograd = u.hessian(loss, layer.weight)
+        u.check_equal(hess_trace[layer] / n, u.trace(hess_autograd))
+
+        hess_autograd_bias = u.hessian(loss, layer.bias)
+        u.check_equal(hess_bias_trace[layer] / n, u.trace(hess_autograd_bias))
+
+
 def test_hessian_conv_old():
     """Test conv hessian computation using factored and regular method."""
 
@@ -877,3 +937,4 @@ if __name__ == '__main__':
     # u.run_all_tests(sys.modules[__name__])
     test_hessian_trace()
     test_hessian_conv()
+    test_hessian_trace_conv()
