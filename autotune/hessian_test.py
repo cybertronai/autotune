@@ -417,84 +417,6 @@ def test_hessian_trace():
     u.check_equal(u.make_square(hess_autograd).trace(), hess_trace0)
 
 
-def test_hessian_trace_conv():
-    """Test conv hessian computation using factored and regular method."""
-
-    u.seed_random(1)
-    unfold = torch.nn.functional.unfold
-    fold = torch.nn.functional.fold
-
-    import numpy as np
-
-    u.seed_random(1)
-    N, Xc, Xh, Xw = 3, 2, 3, 7
-    dd = [Xc, 2]
-
-    Kh, Kw = 2, 3
-    Oh, Ow = Xh - Kh + 1, Xw - Kw + 1
-    model = u.SimpleConvolutional(dd, kernel_size=(Kh, Kw), bias=True).double()
-
-    weight_buffer = model.layers[0].weight.data
-
-    # output channels, input channels, height, width
-    assert weight_buffer.shape == (dd[1], dd[0], Kh, Kw)
-
-    input_dims = N, Xc, Xh, Xw
-    size = int(np.prod(input_dims))
-    X = torch.arange(0, size).reshape(*input_dims).double()
-
-    def loss_fn(data):
-        err = data.reshape(len(data), -1)
-        return torch.sum(err * err) / 2 / len(data)
-
-    layer = model.layers[0]
-    output = model(X)
-    loss = loss_fn(output)
-    loss.backward()
-
-    u.check_equal(layer.activations, X)
-
-    assert layer.backprops_list[0].shape == layer.output.shape
-    assert layer.output.shape == (N, dd[1], Oh, Ow)
-
-    out_unf = layer.weight.view(layer.weight.size(0), -1) @ unfold(layer.activations, (Kh, Kw))
-    assert out_unf.shape == (N, dd[1], Oh * Ow)
-    reshaped_bias = layer.bias.reshape(1, dd[1], 1)  # (Co,) -> (1, Co, 1)
-    out_unf = out_unf + reshaped_bias
-
-    u.check_equal(fold(out_unf, (Oh, Ow), (1, 1)), output)  # two alternative ways of reshaping
-    u.check_equal(out_unf.view(N, dd[1], Oh, Ow), output)
-
-    # Unfold produces patches with output dimension merged, while in backprop they are not merged
-    # Hence merge the output (width/height) dimension
-    assert unfold(layer.activations, (Kh, Kw)).shape == (N, Xc * Kh * Kw, Oh * Ow)
-    assert layer.backprops_list[0].shape == (N, dd[1], Oh, Ow)
-
-    grads_bias = layer.backprops_list[0].sum(dim=(2, 3)) * N
-    mean_grad_bias = grads_bias.sum(dim=0) / N
-    u.check_equal(mean_grad_bias, layer.bias.grad)
-
-    Bt = layer.backprops_list[0] * N   # remove factor of N applied during loss batch averaging
-    assert Bt.shape == (N, dd[1], Oh, Ow)
-    Bt = Bt.reshape(N, dd[1], Oh*Ow)
-    At = unfold(layer.activations, (Kh, Kw))
-    assert At.shape == (N, dd[0] * Kh * Kw, Oh*Ow)
-
-    grad_unf = torch.einsum('ijk,ilk->ijl', Bt, At)
-    assert grad_unf.shape == (N, dd[1], dd[0] * Kh * Kw)
-
-    grads = grad_unf.reshape((N, dd[1], dd[0], Kh, Kw))
-    u.check_equal(grads.mean(dim=0), layer.weight.grad)
-
-    # compute per-example gradients using autograd, compare against manual computation
-    for i in range(N):
-        u.clear_backprops(model)
-        output = model(X[i:i + 1, ...])
-        loss = loss_fn(output)
-        loss.backward()
-        u.check_equal(grads[i], layer.weight.grad)
-        u.check_equal(grads_bias[i], layer.bias.grad)
-
 
 def _test_refactored_stats():
     gl.project_name = 'test'
@@ -658,7 +580,7 @@ def test_hessian_trace_conv():
 
     activations = {}
     hess_trace = defaultdict(float)
-    hess_bias_trace = defaultdict(float)
+    hessb_trace = defaultdict(float)
 
     def save_activations(layer, A, _):
         activations[layer] = A.detach()
@@ -679,28 +601,38 @@ def test_hessian_trace_conv():
             Kh, Kw = layer.kernel_size
             di, do = layer.in_channels, layer.out_channels
             A = F.unfold(A, (Kh, Kw))                      # n, di * Kh * Kw, Oh * Ow
+            num_patches = A.shape[-1]
             B = B.reshape(n, do, -1)                       # n, do, Oh * Ow
             BA = torch.einsum('nij,nkj->nik', B, A)        # n, do, di * Kh * Kw
             BA2 = torch.einsum('nij->ni', B)               # n, do
 
-            # hess_trace[layer] += torch.einsum("nij,nkj->ik", B * B, A * A).sum()
-            # hess_bias_trace[layer] += (B * B).sum()
-            hess_trace[layer] += (BA*BA).sum()
-            hess_bias_trace[layer] += (BA2 * BA2).sum()
+            hess_trace[layer] += (BA * BA).sum()
+            hessb_trace[layer] += (BA2 * BA2).sum()
+
+            # Alternatives:
+            #  hess_trace[layer] += ((A.sum(dim=2) * A.sum(dim=2)).sum(dim=1) * (BA2 * BA2).sum(dim=1)).sum()  # off by 1300
+            #  hess_trace[layer] += ((A * A).sum(dim=1) * (B * B).sum(dim=1)).sum() # off by 0.4738
+            #  hess_trace[layer] += ((A * A).sum(dim=1) * (B * B).sum(dim=1)).sum() / num_patches  # off by 0.0132
+            #  hess_trace[layer] += ((A * A).sum(dim=[1, 2]) * (BA2 * BA2).sum(dim=1)).sum()  # off by 36
+            #  hess_trace[layer] += ((A.sum(dim=2) * A.sum(dim=2)).sum(dim=1) * (B.sum(dim=2) * B.sum(dim=2)).sum(dim=1)).sum()  # off by 1304
+            #  hess_trace[layer] += ((A * A).sum(dim=[1, 2]) * (B * B).sum(dim=[1, 2])).sum()  # off by 17.4417
+            #  hess_trace[layer] += ((A * A).sum(dim=[1, 2]) * (B * B).sum(dim=[1, 2])).sum() / num_patches  # off by 0.4845
 
         else:  # layer_type == 'Linear':
-            hess_trace[layer] += torch.einsum("ni,nj->ij", B * B, A * A).sum()
-            hess_bias_trace[layer] += (B * B).sum()
+            # hess_trace[layer] += torch.einsum("ni,nj->ij", B * B, A * A).sum()
+            hess_trace[layer] += ((A*A).sum(dim=1) * (B*B).sum(dim=1)).sum()
+            hessb_trace[layer] += (B * B).sum()
 
     with autograd_lib.module_hook(compute_hess_trace):
         autograd_lib.backward_hessian(output, 'CrossEntropy', retain_graph=True)
 
     for layer in layers:
         hess_autograd = u.hessian(loss, layer.weight)
+        # print(hess_trace[layer] / n / u.trace(hess_autograd))
         u.check_equal(hess_trace[layer] / n, u.trace(hess_autograd))
 
-        hess_autograd_bias = u.hessian(loss, layer.bias)
-        u.check_equal(hess_bias_trace[layer] / n, u.trace(hess_autograd_bias))
+        hessb_autograd = u.hessian(loss, layer.bias)
+        u.check_equal(hessb_trace[layer] / n, u.trace(hessb_autograd))
 
 
 def test_hessian_conv_old():
