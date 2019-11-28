@@ -1243,6 +1243,11 @@ def check_symmetric(mat):
         print(f"warning, matrix not symmetric: {discrepancy}")
 
 
+def check_close_reshape(a0, b0, *args, **kwargs) -> None:
+    check_close(a0, b0.reshape(a0.shape), *args, **kwargs)
+
+
+# TODO(y): rename args to observed, truth
 def check_close(a0, b0, rtol=1e-5, atol=1e-8, label: str = '') -> None:
     """Convenience method for check_equal with tolerances defaulting to typical errors observed in neural network
     ops in float32 precision."""

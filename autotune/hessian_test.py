@@ -13,13 +13,13 @@ import torch.nn.functional as F
 
 
 class Net(nn.Module):
-    def __init__(self, d):
-        super().__init__()
-        self.w = nn.Linear(d, 1, bias=False)
+def __init__(self, d):
+    super().__init__()
+    self.w = nn.Linear(d, 1, bias=False)
 
-    def forward(self, x: torch.Tensor):
-        result = self.w(x)
-        return result
+def forward(self, x: torch.Tensor):
+    result = self.w(x)
+    return result
 
 
 def test_simple_hessian():
@@ -624,11 +624,11 @@ def test_hessian_trace_conv():
             hessb_trace[layer] += (B * B).sum()
 
     with autograd_lib.module_hook(compute_hess_trace):
-        autograd_lib.backward_hessian(output, 'CrossEntropy', retain_graph=True)
+        autograd_lib.backward_hessian(output, 'CrossEntropy', retain_graph=True, sampled=False)
 
     for layer in layers:
         hess_autograd = u.hessian(loss, layer.weight)
-        # print(hess_trace[layer] / n / u.trace(hess_autograd))
+        print(hess_trace[layer] / n / u.trace(hess_autograd))
         u.check_equal(hess_trace[layer] / n, u.trace(hess_autograd))
 
         hessb_autograd = u.hessian(loss, layer.bias)
