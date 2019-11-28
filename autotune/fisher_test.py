@@ -56,7 +56,10 @@ class TinyNet(nn.Module):
 
 
 def test_diag_conv():
-    """Test computing quantities on diagonal of empirical Fisher"""
+    """Test computing quantities of diagonal of empirical Fisher.
+
+    Einsum optimizations: https://colab.research.google.com/drive/16nKr_LmiiH8pgGkF1gNNahK83WVCpqk4#scrollTo=GxySBytnyx4a
+    """
 
     u.seed_random(1)
     supported_layers = ('Linear', 'Conv2d')
