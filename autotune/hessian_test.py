@@ -13,9 +13,9 @@ import torch.nn.functional as F
 
 
 class Net(nn.Module):
-def __init__(self, d):
-    super().__init__()
-    self.w = nn.Linear(d, 1, bias=False)
+    def __init__(self, d):
+        super().__init__()
+        self.w = nn.Linear(d, 1, bias=False)
 
 def forward(self, x: torch.Tensor):
     result = self.w(x)
