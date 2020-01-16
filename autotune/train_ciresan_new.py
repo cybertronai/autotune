@@ -35,7 +35,6 @@ import torch
 import torch.nn.functional as F
 import wandb
 
-print('asdfsdf')
 # for line profiling
 try:
     # noinspection PyUnboundLocalVariable
@@ -90,7 +89,7 @@ def main():
 
     parser.add_argument('--dataset_size', type=int, default=60000)
     parser.add_argument('--train_steps', type=int, default=100, help="this many train steps between stat collection")
-    parser.add_argument('--stats_steps', type=int, default=1000000, help="total number of curvature stats collections")
+    parser.add_argument('--stats_steps', type=int, default=1000000, help="total number of outer loops steps")
 
     parser.add_argument('--full_batch', type=int, default=0, help='do stats on the whole dataset')
     parser.add_argument('--lr', type=float, default=1e-3)
@@ -108,8 +107,16 @@ def main():
     parser.add_argument('--sampled', type=int, default=0)
     parser.add_argument('--curv', type=str, default='kfac',
                         help='decomposition to use for curvature estimates: zero_order, kfac, isserlis or full')
+
+    # logging flags, can reduce logging for efficiency
     parser.add_argument('--log_spectra', type=int, default=0)
     parser.add_argument('--log_sparsity', type=int, default=0)
+    parser.add_argument('--log_l2', type=int, default=0, help='log l2 norms (to deprecate?)')
+    parser.add_argument('--log_mismatch', type=int, default=0, help='log stats related to last layer spectrum')
+    parser.add_argument('--log_histograms', type=int, default=1)
+    parser.add_argument('--log_hess_evals', type=int, default=0)
+    parser.add_argument('--log_fish_evals', type=int, default=0)
+    parser.add_argument('--log_jac_evals', type=int, default=0)
 
     u.seed_random(1)
     gl.args = parser.parse_args()
@@ -223,108 +230,108 @@ def main():
                         output = model(data)
                         loss = loss_fn(output, targets) * len(output)
 
+                @profile
                 def compute_stats(layer, _, B):
                     A = activations[layer]
                     if current == fishers:
                         backprops[layer] = B
 
                     # about 27ms per layer
-                    with u.timeit('compute_stats'):
-                        current[layer].BB += torch.einsum("ni,nj->ij", B, B)  # TODO(y): index consistency
-                        current[layer].diag += torch.einsum("ni,nj->ij", B * B, A * A)
-                        current[layer].BA += torch.einsum("ni,nj->ij", B, A)
-                        current[layer].a += torch.einsum("ni->i", A)
-                        current[layer].b += torch.einsum("nk->k", B)
-                        current[layer].norm2 += ((A * A).sum(dim=1) * (B * B).sum(dim=1)).sum()
+                    current[layer].BB += torch.einsum("ni,nj->ij", B, B)  # TODO(y): index consistency
+                    current[layer].diag += torch.einsum("ni,nj->ij", B * B, A * A)
+                    current[layer].BA += torch.einsum("ni,nj->ij", B, A)
+                    current[layer].a += torch.einsum("ni->i", A)
+                    current[layer].b += torch.einsum("nk->k", B)
+                    current[layer].norm2 += ((A * A).sum(dim=1) * (B * B).sum(dim=1)).sum()
 
-                        # compute curvatures in direction of all gradiennts
-                        if current is fishers:
-                            assert args.stats_num_batches == 1, "not tested on more than one stats step, currently reusing aggregated moments"
-                            hess = hessians[layer]
-                            jac = jacobians[layer]
-                            Bh, Ah = B @ hess.BB / n, A @ forward_stats[layer].AA / n
-                            Bj, Aj = B @ jac.BB / n, A @ forward_stats[layer].AA / n
-                            norms = ((A * A).sum(dim=1) * (B * B).sum(dim=1))
+                    # compute curvatures in direction of all gradiennts
+                    if current is fishers:
+                        assert args.stats_num_batches == 1, "not tested on more than one stats step, currently reusing aggregated moments"
+                        hess = hessians[layer]
+                        jac = jacobians[layer]
+                        Bh, Ah = B @ hess.BB / n, A @ forward_stats[layer].AA / n
+                        Bj, Aj = B @ jac.BB / n, A @ forward_stats[layer].AA / n
+                        norms = ((A * A).sum(dim=1) * (B * B).sum(dim=1))
 
-                            current[layer].min_norm2 = min(norms)
-                            current[layer].median_norm2 = torch.median(norms)
-                            current[layer].max_norm2 = max(norms)
+                        current[layer].min_norm2 = min(norms)
+                        current[layer].median_norm2 = torch.median(norms)
+                        current[layer].max_norm2 = max(norms)
 
-                            norms2_hess = ((Ah * A).sum(dim=1) * (Bh * B).sum(dim=1))
-                            norms2_jac = ((Aj * A).sum(dim=1) * (Bj * B).sum(dim=1))
+                        norms2_hess = ((Ah * A).sum(dim=1) * (Bh * B).sum(dim=1))
+                        norms2_jac = ((Aj * A).sum(dim=1) * (Bj * B).sum(dim=1))
 
-                            current[layer].norm += norms.sum()
-                            current_histograms[layer].norms.extend(torch.sqrt(norms))
-                            current[layer].curv_hess += (skip_nans(norms2_hess / norms)).sum()
-                            current_histograms[layer].curv_hess.extend(skip_nans(norms2_hess / norms))
-                            current[layer].curv_hess_max += (skip_nans(norms2_hess / norms)).max()
-                            current[layer].curv_hess_median += (skip_nans(norms2_hess / norms)).median()
+                        current[layer].norm += norms.sum()
+                        current_histograms[layer].norms.extend(torch.sqrt(norms))
+                        current[layer].curv_hess += (skip_nans(norms2_hess / norms)).sum()
+                        current_histograms[layer].curv_hess.extend(skip_nans(norms2_hess / norms))
+                        current[layer].curv_hess_max += (skip_nans(norms2_hess / norms)).max()
+                        current[layer].curv_hess_median += (skip_nans(norms2_hess / norms)).median()
 
-                            current_histograms[layer].curv_jac.extend(skip_nans(norms2_jac / norms))
-                            current[layer].curv_jac += (skip_nans(norms2_jac / norms)).sum()
-                            current[layer].curv_jac_max += (skip_nans(norms2_jac / norms)).max()
-                            current[layer].curv_jac_median += (skip_nans(norms2_jac / norms)).median()
+                        current_histograms[layer].curv_jac.extend(skip_nans(norms2_jac / norms))
+                        current[layer].curv_jac += (skip_nans(norms2_jac / norms)).sum()
+                        current[layer].curv_jac_max += (skip_nans(norms2_jac / norms)).max()
+                        current[layer].curv_jac_median += (skip_nans(norms2_jac / norms)).median()
 
-                            current[layer].a_sparsity += torch.sum(A <= 0).float() / A.numel()
-                            current[layer].b_sparsity += torch.sum(B <= 0).float() / B.numel()
+                        current[layer].a_sparsity += torch.sum(A <= 0).float() / A.numel()
+                        current[layer].b_sparsity += torch.sum(B <= 0).float() / B.numel()
 
-                            current[layer].mean_activation += torch.mean(A)
-                            current[layer].mean_activation2 += torch.mean(A*A)
-                            current[layer].mean_backprop = torch.mean(B)
-                            current[layer].mean_backprop2 = torch.mean(B*B)
+                        current[layer].mean_activation += torch.mean(A)
+                        current[layer].mean_activation2 += torch.mean(A*A)
+                        current[layer].mean_backprop = torch.mean(B)
+                        current[layer].mean_backprop2 = torch.mean(B*B)
 
-                            current[layer].norms_hess += torch.sqrt(norms2_hess).sum()
-                            current_histograms[layer].norms_hess.extend(torch.sqrt(norms2_hess))
-                            current[layer].norms_jac += norms2_jac.sum()
-                            current_histograms[layer].norms_jac.extend(torch.sqrt(norms2_jac))
+                        current[layer].norms_hess += torch.sqrt(norms2_hess).sum()
+                        current_histograms[layer].norms_hess.extend(torch.sqrt(norms2_hess))
+                        current[layer].norms_jac += norms2_jac.sum()
+                        current_histograms[layer].norms_jac.extend(torch.sqrt(norms2_jac))
 
-                            normalized_moments = copy.copy(hessians[layer])
-                            normalized_moments.AA = forward_stats[layer].AA
-                            normalized_moments = u.divide_attributes(normalized_moments, n)
+                        normalized_moments = copy.copy(hessians[layer])
+                        normalized_moments.AA = forward_stats[layer].AA
+                        normalized_moments = u.divide_attributes(normalized_moments, n)
 
-                            train_regrets_ = autograd_lib.offset_losses(A, B, alpha=lr, offset=0, m=normalized_moments,
-                                                                        approx=args.curv)
-                            test_regrets1_ = autograd_lib.offset_losses(A, B, alpha=lr, offset=1, m=normalized_moments,
-                                                                        approx=args.curv)
-                            test_regrets2_ = autograd_lib.offset_losses(A, B, alpha=lr, offset=2, m=normalized_moments,
-                                                                        approx=args.curv)
-                            test_regrets_opt_ = autograd_lib.offset_losses(A, B, alpha=None, offset=2,
-                                                                           m=normalized_moments, approx=args.curv)
-                            train_regrets_opt_ = autograd_lib.offset_losses(A, B, alpha=None, offset=0,
-                                                                            m=normalized_moments, approx=args.curv)
-                            cosines_ = autograd_lib.offset_cosines(A, B)
-                            train_regrets[layer].extend(train_regrets_)
-                            test_regrets1[layer].extend(test_regrets1_)
-                            test_regrets2[layer].extend(test_regrets2_)
-                            train_regrets_opt[layer].extend(train_regrets_opt_)
-                            test_regrets_opt[layer].extend(test_regrets_opt_)
-                            cosines[layer].extend(cosines_)
-                            dot_products[layer].extend(autograd_lib.offset_dotprod(A, B))
+                        train_regrets_ = autograd_lib.offset_losses(A, B, alpha=lr, offset=0, m=normalized_moments,
+                                                                    approx=args.curv)
+                        test_regrets1_ = autograd_lib.offset_losses(A, B, alpha=lr, offset=1, m=normalized_moments,
+                                                                    approx=args.curv)
+                        test_regrets2_ = autograd_lib.offset_losses(A, B, alpha=lr, offset=2, m=normalized_moments,
+                                                                    approx=args.curv)
+                        test_regrets_opt_ = autograd_lib.offset_losses(A, B, alpha=None, offset=2,
+                                                                       m=normalized_moments, approx=args.curv)
+                        train_regrets_opt_ = autograd_lib.offset_losses(A, B, alpha=None, offset=0,
+                                                                        m=normalized_moments, approx=args.curv)
+                        cosines_ = autograd_lib.offset_cosines(A, B)
+                        train_regrets[layer].extend(train_regrets_)
+                        test_regrets1[layer].extend(test_regrets1_)
+                        test_regrets2[layer].extend(test_regrets2_)
+                        train_regrets_opt[layer].extend(train_regrets_opt_)
+                        test_regrets_opt[layer].extend(test_regrets_opt_)
+                        cosines[layer].extend(cosines_)
+                        dot_products[layer].extend(autograd_lib.offset_dotprod(A, B))
 
-                        # statistics of the form g.Sigma.g
-                        elif current == quad_fishers:
-                            hess = hessians[layer]
-                            sigma = fishers[layer]
-                            jac = jacobians[layer]
-                            Bs, As = B @ sigma.BB / n, A @ forward_stats[layer].AA / n
-                            Bh, Ah = B @ hess.BB / n, A @ forward_stats[layer].AA / n
-                            Bj, Aj = B @ jac.BB / n, A @ forward_stats[layer].AA / n
+                    # statistics of the form g.Sigma.g
+                    elif current == quad_fishers:
+                        hess = hessians[layer]
+                        sigma = fishers[layer]
+                        jac = jacobians[layer]
+                        Bs, As = B @ sigma.BB / n, A @ forward_stats[layer].AA / n
+                        Bh, Ah = B @ hess.BB / n, A @ forward_stats[layer].AA / n
+                        Bj, Aj = B @ jac.BB / n, A @ forward_stats[layer].AA / n
 
-                            norms = ((A * A).sum(dim=1) * (B * B).sum(dim=1))
-                            norms2_hess = ((Ah * A).sum(dim=1) * (Bh * B).sum(dim=1))
-                            norms2_jac = ((Aj * A).sum(dim=1) * (Bj * B).sum(dim=1))
-                            norms_sigma = ((As * A).sum(dim=1) * (Bs * B).sum(dim=1))
+                        norms = ((A * A).sum(dim=1) * (B * B).sum(dim=1))
+                        norms2_hess = ((Ah * A).sum(dim=1) * (Bh * B).sum(dim=1))
+                        norms2_jac = ((Aj * A).sum(dim=1) * (Bj * B).sum(dim=1))
+                        norms_sigma = ((As * A).sum(dim=1) * (Bs * B).sum(dim=1))
 
-                            current[layer].norm += norms.sum()  # TODO(y) remove, redundant with norm2 above
-                            current[layer].curv_sigma += (skip_nans(norms_sigma / norms)).sum()
-                            current[layer].curv_sigma_max = skip_nans(norms_sigma / norms).max()
-                            current[layer].curv_sigma_median = skip_nans(norms_sigma / norms).median()
-                            current[layer].curv_hess += skip_nans(norms2_hess / norms).sum()
-                            current[layer].curv_hess_max += skip_nans(norms2_hess / norms).max()
-                            current[layer].lyap_hess_mean += skip_nans(norms_sigma / norms2_hess).mean()
-                            current[layer].lyap_hess_max = max(skip_nans(norms_sigma/norms2_hess))
-                            current[layer].lyap_jac_mean += skip_nans(norms_sigma / norms2_jac).mean()
-                            current[layer].lyap_jac_max = max(skip_nans(norms_sigma/norms2_jac))
+                        current[layer].norm += norms.sum()  # TODO(y) remove, redundant with norm2 above
+                        current[layer].curv_sigma += (skip_nans(norms_sigma / norms)).sum()
+                        current[layer].curv_sigma_max = skip_nans(norms_sigma / norms).max()
+                        current[layer].curv_sigma_median = skip_nans(norms_sigma / norms).median()
+                        current[layer].curv_hess += skip_nans(norms2_hess / norms).sum()
+                        current[layer].curv_hess_max += skip_nans(norms2_hess / norms).max()
+                        current[layer].lyap_hess_mean += skip_nans(norms_sigma / norms2_hess).mean()
+                        current[layer].lyap_hess_max = max(skip_nans(norms_sigma/norms2_hess))
+                        current[layer].lyap_jac_mean += skip_nans(norms_sigma / norms2_jac).mean()
+                        current[layer].lyap_jac_max = max(skip_nans(norms_sigma/norms2_jac))
 
                 print('backward')
                 with u.timeit("backprop_H"):
@@ -346,6 +353,8 @@ def main():
                         loss.backward()  # 60 ms
 
             print('summarize')
+
+            aggregated_stats = {}
             for (i, layer) in enumerate(model.layers):
                 stats_dict = {'hessian': hessians, 'jacobian': jacobians, 'fisher': fishers}
 
@@ -381,14 +390,15 @@ def main():
                     # normalize for mean loss
                     BB = stats.BB / n
                     AA = stats.AA / n
-                    # A_evals, _ = torch.symeig(AA)   # averaging 120ms per hit, 90 hits
-                    # B_evals, _ = torch.symeig(BB)
 
-                    # s.kfac_l2 = torch.max(A_evals) * torch.max(B_evals)    # 60x larger than diag_l2. layer0/hess has down/up phase transition. layer5/jacobian has up/down phase transition
                     s.kfac_trace = torch.trace(AA) * torch.trace(BB)  # 0/hess down/up tr, 5/jac sharp phase transition
-                    s.kfac_fro = torch.norm(stats.AA) * torch.norm(
-                        stats.BB)  # 0/hess has down/up tr, 5/jac up/down transition
-                    # s.kfac_erank = s.kfac_trace / s.kfac_l2   # first layer has 25, rest 15, all layers go down except last, last noisy
+                    # if args.log_l2:
+                    #    A_evals, _ = torch.symeig(AA)   # averaging 120ms per hit, 90 hits
+                    #    B_evals, _ = torch.symeig(BB)
+                    #    s.kfac_l2 = torch.max(A_evals) * torch.max(B_evals)    # 60x larger than diag_l2. layer0/hess has down/up phase transition. layer5/jacobian has up/down phase transition
+                    #    s.kfac_erank = s.kfac_trace / s.kfac_l2   # first layer has 25, rest 15, all layers go down except last, last noisy
+
+                    s.kfac_fro = torch.norm(stats.AA) * torch.norm(stats.BB)  # 0/hess has down/up tr, 5/jac up/down transition
                     # s.kfac_erank_fro = s.kfac_trace / s.kfac_fro / max(stats.BA.shape)
 
                     s.diversity = (stats.norm2 / n) / u.norm_squared(
@@ -398,7 +408,8 @@ def main():
                     # average difference normalized by average diagonal magnitude
                     diag_kfac = torch.einsum('ll,ii->li', BB, AA)
                     s.kfac_error = (torch.abs(diag_kfac - diag)).mean() / torch.mean(diag.abs())
-                    u.log_scalars(u.nest_stats(f'layer-{i}/{stats_name}', s))
+
+                    aggregated_stats.update(u.nest_stats(f'layer-{i}/{stats_name}', s))
 
                 # openai batch size stat
                 s = AttrDict()
@@ -499,40 +510,40 @@ def main():
                 s.lr3 = 2 / (L2 * robust_diversity)
                 s.lr4 = 2 / (L2 * dotprod_diversity)
 
-                hess_A = u.symeig_pos_evals(hess.AA / n)
-                hess_B = u.symeig_pos_evals(hess.BB / n)
-                fish_A = u.symeig_pos_evals(fish.AA / n)
-                fish_B = u.symeig_pos_evals(fish.BB / n)
-                jac_A = u.symeig_pos_evals(jac.AA / n)
-                jac_B = u.symeig_pos_evals(jac.BB / n)
+                [hess_A, hess_B, jac_A, jac_B, fish_A, fish_B] = [None]*6
+                if args.log_hess_evals:
+                    hess_A = u.symeig_pos_evals(hess.AA / n)
+                    hess_B = u.symeig_pos_evals(hess.BB / n)
+                    u.log_scalars({f'layer-{i}/hessA_erank': erank(hess_A)})
+                    u.log_scalars({f'layer-{i}/hessB_erank': erank(hess_B)})
+                    gl.event_writer.add_histogram(f'layer-{i}/hist_hess_eig', u.outer(hess_A, hess_B).flatten(), gl.get_global_step())
+                    s.hess_l2 = max(hess_A) * max(hess_B)
+                    s.jain1_sto = 1/(s.hess_trace + 2 * s.hess_l2)
+                    s.jain1_det = 1/s.hess_l2
+                    s.jain1_lr = (1 / b) * (1/s.jain1_sto) + (b - 1) / b * (1/s.jain1_det)
+                    s.jain1_lr = 2 / s.jain1_lr
+                if args.log_fish_evals:
+                    fish_A = u.symeig_pos_evals(fish.AA / n)
+                    fish_B = u.symeig_pos_evals(fish.BB / n)
+                    u.log_scalars({f'layer-{i}/fishA_erank': erank(fish_A)})
+                    u.log_scalars({f'layer-{i}/fishB_erank': erank(fish_B)})
+                    gl.event_writer.add_histogram(f'layer-{i}/hist_fish_eig', u.outer(fish_A, fish_B).flatten(), gl.get_global_step())
+                    s.fish_l2 = max(fish_A) * max(fish_B)
+                if args.log_jac_evals:
+                    jac_A = u.symeig_pos_evals(jac.AA / n)
+                    jac_B = u.symeig_pos_evals(jac.BB / n)
+                    u.log_scalars({f'layer-{i}/jacA_erank': erank(jac_A)})
+                    u.log_scalars({f'layer-{i}/jacB_erank': erank(jac_B)})
+                    gl.event_writer.add_histogram(f'layer-{i}/hist_jac_eig', u.outer(jac_A, jac_B).flatten(), gl.get_global_step())
+                    s.jac_l2 = max(jac_A) * max(jac_B)
 
-                u.log_scalars({f'layer-{i}/hessA_erank': erank(hess_A)})
-                u.log_scalars({f'layer-{i}/hessB_erank': erank(hess_B)})
-                u.log_scalars({f'layer-{i}/fishA_erank': erank(fish_A)})
-                u.log_scalars({f'layer-{i}/fishB_erank': erank(fish_B)})
-                u.log_scalars({f'layer-{i}/jacA_erank': erank(jac_A)})
-                u.log_scalars({f'layer-{i}/jacB_erank': erank(jac_B)})
-                gl.event_writer.add_histogram(f'layer-{i}/hist_hess_eig', u.outer(hess_A, hess_B).flatten(), gl.get_global_step())
-                gl.event_writer.add_histogram(f'layer-{i}/hist_fish_eig', u.outer(hess_A, hess_B).flatten(), gl.get_global_step())
-                gl.event_writer.add_histogram(f'layer-{i}/hist_jac_eig', u.outer(hess_A, hess_B).flatten(), gl.get_global_step())
-
-                s.hess_l2 = max(hess_A) * max(hess_B)
-                s.jac_l2 = max(jac_A) * max(jac_B)
-                s.fish_l2 = max(fish_A) * max(fish_B)
                 s.hess_trace = hess.diag.sum() / n
-
-                s.jain1_sto = 1/(s.hess_trace + 2 * s.hess_l2)
-                s.jain1_det = 1/s.hess_l2
-
-                s.jain1_lr = (1 / b) * (1/s.jain1_sto) + (b - 1) / b * (1/s.jain1_det)
-                s.jain1_lr = 2 / s.jain1_lr
-
                 s.regret_ratio = (
                             train_regrets_opt_ / test_regrets_opt_).median()  # ratio between train and test regret, large means overfitting
-                u.log_scalars(u.nest_stats(f'layer-{i}', s))
+                aggregated_stats.update(u.nest_stats(f'layer-{i}', s))
 
                 # compute stats that would let you bound rho
-                if i == 0:  # only compute this once, for output layer
+                if args.log_mismatch and i == 0:  # only compute this once, for output layer
                     hhh = hessians[model.layers[-1]].BB / n
                     fff = fishers[model.layers[-1]].BB / n
                     d = fff.shape[0]
@@ -549,11 +560,12 @@ def main():
                     u.log_spectrum(f'mismatch/lyapunov', L_evals, loglog=True)
                     u.log_spectrum(f'mismatch/lyapunov_cheap', Lcheap_evals, loglog=True)
 
-                gl.event_writer.add_histogram(f'layer-{i}/hist_grad_norms', u.to_numpy(fishers_histograms[layer].norms.value()), gl.get_global_step())
-                gl.event_writer.add_histogram(f'layer-{i}/hist_grad_norms_hess', u.to_numpy(fishers_histograms[layer].norms_hess.value()), gl.get_global_step())
-                gl.event_writer.add_histogram(f'layer-{i}/hist_curv_jac', u.to_numpy(fishers_histograms[layer].curv_jac.value()), gl.get_global_step())
-                gl.event_writer.add_histogram(f'layer-{i}/hist_curv_hess', u.to_numpy(fishers_histograms[layer].curv_hess.value()), gl.get_global_step())
-                gl.event_writer.add_histogram(f'layer-{i}/hist_cosines', u.to_numpy(cosines[layer]), gl.get_global_step())
+                if args.log_histograms:
+                    gl.event_writer.add_histogram(f'layer-{i}/hist_grad_norms', u.to_numpy(fishers_histograms[layer].norms.value()), gl.get_global_step())
+                    gl.event_writer.add_histogram(f'layer-{i}/hist_grad_norms_hess', u.to_numpy(fishers_histograms[layer].norms_hess.value()), gl.get_global_step())
+                    gl.event_writer.add_histogram(f'layer-{i}/hist_curv_jac', u.to_numpy(fishers_histograms[layer].curv_jac.value()), gl.get_global_step())
+                    gl.event_writer.add_histogram(f'layer-{i}/hist_curv_hess', u.to_numpy(fishers_histograms[layer].curv_hess.value()), gl.get_global_step())
+                    gl.event_writer.add_histogram(f'layer-{i}/hist_cosines', u.to_numpy(cosines[layer]), gl.get_global_step())
 
                 if args.log_spectra:
                     with u.timeit('spectrum'):
@@ -601,6 +613,7 @@ def main():
 
                         u.log_scalars({f'layer-{i}/rho': d/erank(L)})
                         u.log_scalars({f'layer-{i}/rho_cheap': d/erank(L_cheap)})
+            u.log_scalars(aggregated_stats)
 
         model.train()
         with u.timeit('train'):

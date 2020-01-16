@@ -11,15 +11,30 @@ from collections import defaultdict
 
 import torch.nn.functional as F
 
+import torch
+import numpy as np
+import opt_einsum as oe
+import sys
 
-class Net(nn.Module):
-    def __init__(self, d):
-        super().__init__()
-        self.w = nn.Linear(d, 1, bias=False)
+import math
+import scipy
+import torch
+import torch.nn as nn
 
-def forward(self, x: torch.Tensor):
-    result = self.w(x)
-    return result
+from torch import autograd
+
+class timeit:
+    def __init__(self, tag=""):
+        self.tag = tag
+
+    def __enter__(self):
+        self.start = time.perf_counter()
+        return self
+
+    def __exit__(self, *args):
+        self.end = time.perf_counter()
+        interval_ms = 1000 * (self.end - self.start)
+        print(f"{interval_ms:8.2f}   {self.tag}")
 
 
 def test_simple_hessian():
@@ -714,6 +729,44 @@ def test_hessian_conv_old():
         u.check_equal(grads_bias[i], layer.bias.grad)
 
 
+def simple_model(d, num_layers):
+    """Creates simple linear neural network initialized to identity"""
+    layers = []
+    for i in range(num_layers):
+        layer = nn.Linear(d, d, bias=False)
+        layer.weight.data.copy_(2*torch.eye(d))
+        layers.append(layer)
+    return torch.nn.Sequential(*layers)
+
+
+def lsqr_loss(x):
+  return 0.5*(x*x).sum()
+
+
+def sqr(x): return x*x
+
+
+def test_hvp_pytorch():
+    dims = 1
+    depth = 4
+    model = simple_model(dims, depth)
+
+    x = 3 * torch.ones(dims)
+    x.requires_grad = True
+
+    loss = lsqr_loss(model(x))
+    model.zero_grad()
+
+    for i in range(depth):
+        grad_f, = autograd.grad(loss, model[i].weight, create_graph=True)
+
+        # hessian is (2^{depth-1} * x)^2
+        v = 5 * torch.ones(grad_f.numel())
+        z = grad_f.flatten() @ v
+        hvp, = autograd.grad(z, model[i].weight, retain_graph=True)
+        print(hvp.item() == (v * sqr(2 ** (depth - 1) * x)).item())
+
+
 def _test_explicit_hessian_refactored():
 
     """Check computation of hessian of loss(B'WA) from https://github.com/yaroslavvb/kfac_pytorch/blob/master/derivation.pdf
@@ -867,6 +920,7 @@ if __name__ == '__main__':
     #    u.run_all_tests(sys.modules[__name__])
 
     # u.run_all_tests(sys.modules[__name__])
-    test_hessian_trace()
-    test_hessian_conv()
-    test_hessian_trace_conv()
+    # test_hessian_trace()
+    # test_hessian_conv()
+    # test_hessian_trace_conv()
+    test_hvp_pytorch()

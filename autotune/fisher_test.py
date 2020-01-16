@@ -127,6 +127,7 @@ def test_fisher_diagonal():
             assert tuple(A.shape) == (n, di * Kh * Kw, Oh * Ow)
             B = B.reshape(n, do, -1)                       # n, do, Oh * Ow
 
+            # Cov diagonal
             result_slow = torch.einsum('nlp,nip,nlq,niq->li', B, A, B, A)  # do, di * Kh * Kw
             result_fast = u.square(torch.einsum('nlp,nip->nli', B, A)).sum(dim=0)  # O(n,d_in,d_out)
             u.check_close(result_slow, result_fast)
