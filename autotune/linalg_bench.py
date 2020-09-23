@@ -6,7 +6,6 @@ from typing import Optional, Tuple, Callable
 # import torch
 import scipy
 import torch
-from torchcurv.optim import SecondOrderOptimizer
 
 
 import torch.nn as nn
@@ -123,9 +122,8 @@ def linalg_bench():
             result = scipy.linalg.qr(H)
             #print(result[0, 0])
 
-        with timeit(f"qr-pivoting"):
-            result = scipy.linalg.qr(H, pivoting=True)
-            #print(result[0, 0])
+        with timeit(f"cholesky"):
+            result = scipy.linalg.cholesky(H)
 
         with timeit(f"svd"):
             result = scipy.linalg.svd(H)
