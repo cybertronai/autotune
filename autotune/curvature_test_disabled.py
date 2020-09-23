@@ -5,8 +5,8 @@ import sys
 from typing import Optional, Tuple, Callable
 
 # import torch
-import torch.nn as nn
-from torchcurv.optim import SecondOrderOptimizer
+#import torch.nn as nn
+#from torchcurv.optim import SecondOrderOptimizer
 
 from util import *
 

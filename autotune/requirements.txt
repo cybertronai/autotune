@@ -1,3 +1,5 @@
 attrdict
 tensorboard
 wandb
+opt_einsum
+pytest

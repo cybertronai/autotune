@@ -37,8 +37,8 @@ except Exception as e:
 from torchvision import datasets, transforms
 import torch
 
-from torchcurv.optim import SecondOrderOptimizer, VIOptimizer
-from torchcurv.utils import Logger
+#from torchcurv.optim import SecondOrderOptimizer, VIOptimizer
+#from torchcurv.utils import Logger
 
 DATASET_MNIST = 'MNIST'
 IMAGE_SIZE = 28

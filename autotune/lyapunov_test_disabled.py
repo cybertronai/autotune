@@ -6,7 +6,7 @@ from typing import Optional, Tuple, Callable
 # import torch
 import scipy
 import torch
-from torchcurv.optim import SecondOrderOptimizer
+# from torchcurv.optim import SecondOrderOptimizer
 
 import torch.nn as nn
 

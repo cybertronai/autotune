@@ -90,7 +90,7 @@ def test_symsqrt():
     u.check_close(mat, smat @ smat)
 
     def randomly_rotate(X):
-        """Randomly rotate d,n data matrix X"""
+        """Randomly rotate/reflect d,n data matrix X"""
         d, n = X.shape
         z = torch.randn((d, d), dtype=X.dtype)
         q, r = torch.qr(z)
@@ -117,7 +117,7 @@ def test_symsqrt():
     cov = u.Kron(X @ X.t(), Y @ Y.t())
     sqrt, rank = cov.symsqrt(return_rank=True)
     assert rank == d * d
-    u.check_close(sqrt @ sqrt, cov, rtol=1e-4)
+    u.check_close(sqrt @ sqrt, cov, rtol=1e-3, atol=1e-3)
 
     X = torch.tensor([[7., 0, 0, 0, 0]]).t()
     X = randomly_rotate(X)

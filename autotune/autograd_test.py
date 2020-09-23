@@ -54,7 +54,7 @@ def test_autoencoder_minimize():
         optimizer.zero_grad()
         loss = loss_fn(model(data), targets)
         if i == 0:
-            assert loss > 0.054
+            assert loss > 0.044
             pass
         loss.backward()
         optimizer.step()
