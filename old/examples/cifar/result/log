@@ -1,0 +1,312 @@
+[
+    {
+        "epoch": 1,
+        "iteration": 1,
+        "elapsed_time": 0.2493915789964376,
+        "accuracy": 0,
+        "loss": 1921.7003173828125,
+        "lr": 0.001,
+        "step_ms": 0,
+        "predict.0.weight": {
+            "p_shape": [
+                8,
+                784
+            ],
+            "p_norm": 2.274707794189453,
+            "p_pre_norm": 1.6363341808319092,
+            "g_norm": 1542.1634521484375,
+            "upd_norm": 1.5421401262283325,
+            "noise_scale": 0
+        },
+        "predict.2.weight": {
+            "p_shape": [
+                1,
+                8
+            ],
+            "p_norm": 0.6344881653785706,
+            "p_pre_norm": 0.48316285014152527,
+            "g_norm": 225.08790588378906,
+            "upd_norm": 0.22508791089057922,
+            "noise_scale": 0
+        }
+    },
+    {
+        "epoch": 1,
+        "iteration": 51,
+        "elapsed_time": 1.0972666419984307,
+        "accuracy": 0,
+        "loss": 1989.5,
+        "lr": 0.001,
+        "step_ms": 847.8750630019931,
+        "predict.0.weight": {
+            "p_shape": [
+                8,
+                784
+            ],
+            "p_norm": 83.00005340576172,
+            "p_pre_norm": 82.9516830444336,
+            "g_norm": 48.44132614135742,
+            "upd_norm": 0.04844099283218384,
+            "noise_scale": 0
+        },
+        "predict.2.weight": {
+            "p_shape": [
+                1,
+                8
+            ],
+            "p_norm": 204.46437072753906,
+            "p_pre_norm": 204.3463592529297,
+            "g_norm": 118.02818298339844,
+            "upd_norm": 0.11802532523870468,
+            "noise_scale": 0
+        }
+    },
+    {
+        "epoch": 1,
+        "iteration": 101,
+        "elapsed_time": 2.001331042003585,
+        "accuracy": 0,
+        "loss": 1958.5,
+        "lr": 0.001,
+        "step_ms": 904.0644000051543,
+        "predict.0.weight": {
+            "p_shape": [
+                8,
+                784
+            ],
+            "p_norm": 83.43365478515625,
+            "p_pre_norm": 83.43338775634766,
+            "g_norm": 0.2496553659439087,
+            "upd_norm": 0.00024975964333862066,
+            "noise_scale": 0
+        },
+        "predict.2.weight": {
+            "p_shape": [
+                1,
+                8
+            ],
+            "p_norm": 205.52110290527344,
+            "p_pre_norm": 205.52049255371094,
+            "g_norm": 0.6082899570465088,
+            "upd_norm": 0.0006093229167163372,
+            "noise_scale": 0
+        }
+    },
+    {
+        "epoch": 1,
+        "iteration": 151,
+        "elapsed_time": 2.9079922620003344,
+        "accuracy": 0,
+        "loss": 1929.5,
+        "lr": 0.001,
+        "step_ms": 906.6612199967494,
+        "predict.0.weight": {
+            "p_shape": [
+                8,
+                784
+            ],
+            "p_norm": 83.43586730957031,
+            "p_pre_norm": 83.43586730957031,
+            "g_norm": 0.0012866517063230276,
+            "upd_norm": 5.861684027053116e-09,
+            "noise_scale": 0
+        },
+        "predict.2.weight": {
+            "p_shape": [
+                1,
+                8
+            ],
+            "p_norm": 205.52650451660156,
+            "p_pre_norm": 205.52650451660156,
+            "g_norm": 0.0031349859200417995,
+            "upd_norm": 0.0,
+            "noise_scale": 0
+        }
+    },
+    {
+        "epoch": 1,
+        "iteration": 201,
+        "elapsed_time": 3.7821902629948454,
+        "accuracy": 0,
+        "loss": 1743.0,
+        "lr": 0.001,
+        "step_ms": 874.198000994511,
+        "predict.0.weight": {
+            "p_shape": [
+                8,
+                784
+            ],
+            "p_norm": 83.43586730957031,
+            "p_pre_norm": 83.43586730957031,
+            "g_norm": 6.631092674069805e-06,
+            "upd_norm": 1.8189894035458565e-12,
+            "noise_scale": 0
+        },
+        "predict.2.weight": {
+            "p_shape": [
+                1,
+                8
+            ],
+            "p_norm": 205.52650451660156,
+            "p_pre_norm": 205.52650451660156,
+            "g_norm": 1.6156989659066312e-05,
+            "upd_norm": 0.0,
+            "noise_scale": 0
+        }
+    },
+    {
+        "epoch": 1,
+        "iteration": 251,
+        "elapsed_time": 4.682283556001494,
+        "accuracy": 0,
+        "loss": 1724.0,
+        "lr": 0.001,
+        "step_ms": 900.0932930066483,
+        "predict.0.weight": {
+            "p_shape": [
+                8,
+                784
+            ],
+            "p_norm": 83.43586730957031,
+            "p_pre_norm": 83.43586730957031,
+            "g_norm": 3.4175307916939346e-08,
+            "upd_norm": 0.0,
+            "noise_scale": 0
+        },
+        "predict.2.weight": {
+            "p_shape": [
+                1,
+                8
+            ],
+            "p_norm": 205.52650451660156,
+            "p_pre_norm": 205.52650451660156,
+            "g_norm": 8.326938427671848e-08,
+            "upd_norm": 0.0,
+            "noise_scale": 0
+        }
+    },
+    {
+        "epoch": 1,
+        "iteration": 301,
+        "elapsed_time": 5.601320148998639,
+        "accuracy": 0,
+        "loss": 2041.0,
+        "lr": 0.001,
+        "step_ms": 919.0365929971449,
+        "predict.0.weight": {
+            "p_shape": [
+                8,
+                784
+            ],
+            "p_norm": 83.43586730957031,
+            "p_pre_norm": 83.43586730957031,
+            "g_norm": 1.761328166649534e-10,
+            "upd_norm": 0.0,
+            "noise_scale": 0
+        },
+        "predict.2.weight": {
+            "p_shape": [
+                1,
+                8
+            ],
+            "p_norm": 205.52650451660156,
+            "p_pre_norm": 205.52650451660156,
+            "g_norm": 4.2915118680930675e-10,
+            "upd_norm": 0.0,
+            "noise_scale": 0
+        }
+    },
+    {
+        "epoch": 1,
+        "iteration": 351,
+        "elapsed_time": 6.546206308004912,
+        "accuracy": 0,
+        "loss": 1838.5,
+        "lr": 0.001,
+        "step_ms": 944.8861590062734,
+        "predict.0.weight": {
+            "p_shape": [
+                8,
+                784
+            ],
+            "p_norm": 83.43586730957031,
+            "p_pre_norm": 83.43586730957031,
+            "g_norm": 9.077483773337058e-13,
+            "upd_norm": 0.0,
+            "noise_scale": 0
+        },
+        "predict.2.weight": {
+            "p_shape": [
+                1,
+                8
+            ],
+            "p_norm": 205.52650451660156,
+            "p_pre_norm": 205.52650451660156,
+            "g_norm": 2.2117455436565514e-12,
+            "upd_norm": 0.0,
+            "noise_scale": 0
+        }
+    },
+    {
+        "epoch": 1,
+        "iteration": 401,
+        "elapsed_time": 7.524086492994684,
+        "accuracy": 0,
+        "loss": 1576.5,
+        "lr": 0.001,
+        "step_ms": 977.8801849897718,
+        "predict.0.weight": {
+            "p_shape": [
+                8,
+                784
+            ],
+            "p_norm": 83.43586730957031,
+            "p_pre_norm": 83.43586730957031,
+            "g_norm": 4.678287905045221e-15,
+            "upd_norm": 0.0,
+            "noise_scale": 0
+        },
+        "predict.2.weight": {
+            "p_shape": [
+                1,
+                8
+            ],
+            "p_norm": 205.52650451660156,
+            "p_pre_norm": 205.52650451660156,
+            "g_norm": 1.139882476196329e-14,
+            "upd_norm": 0.0,
+            "noise_scale": 0
+        }
+    },
+    {
+        "epoch": 1,
+        "iteration": 451,
+        "elapsed_time": 8.471139746005065,
+        "accuracy": 0,
+        "loss": 1768.0,
+        "lr": 0.001,
+        "step_ms": 947.053253010381,
+        "predict.0.weight": {
+            "p_shape": [
+                8,
+                784
+            ],
+            "p_norm": 83.43586730957031,
+            "p_pre_norm": 83.43586730957031,
+            "g_norm": 2.4110533108881318e-17,
+            "upd_norm": 0.0,
+            "noise_scale": 0
+        },
+        "predict.2.weight": {
+            "p_shape": [
+                1,
+                8
+            ],
+            "p_norm": 205.52650451660156,
+            "p_pre_norm": 205.52650451660156,
+            "g_norm": 5.874690973399786e-17,
+            "upd_norm": 0.0,
+            "noise_scale": 0
+        }
+    }
+]
