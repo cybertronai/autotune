@@ -1,1 +1,3 @@
 attrdict
+tensorboard
+wandb

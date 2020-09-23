@@ -7,7 +7,7 @@ import os
 import ncluster
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--name', type=str, default='gpubox',
+parser.add_argument('--name', type=str, default='g4box',
                     help="instance name")
 parser.add_argument('--image-name', type=str,
                     default='Deep Learning AMI (Ubuntu 18.04) Version 33.0',
@@ -30,6 +30,10 @@ def main():
   jupyter_config_fn = _create_jupyter_config(args.password)
   remote_config_fn = '~/.jupyter/jupyter_notebook_config.py'
   task.upload(jupyter_config_fn, remote_config_fn)
+
+  
+  remote_config_fn = '~/.jupyter/jupyter_notebook_config.json'
+  task.upload(f'{module_path}/jupyter_notebook_config.json', remote_config_fn)
 
   # upload sample notebook and start Jupyter server
   task.run('mkdir -p /ncluster/notebooks')
@@ -56,7 +60,7 @@ def main():
 def _create_jupyter_config(password):
   from notebook.auth import passwd
   sha = passwd(args.password)
-  local_config_fn = f'{module_path}/gpubox_jupyter_notebook_config.py'
+  local_config_fn = f'{module_path}/gpubox/gpubox_jupyter_notebook_config.py'
   temp_config_fn = '/tmp/' + os.path.basename(local_config_fn)
   os.system(f'cp {local_config_fn} {temp_config_fn}')
   _replace_lines(temp_config_fn, 'c.NotebookApp.password',
