@@ -1683,6 +1683,7 @@ class SimpleFullyConnected2(SimpleModel2):
                 self.all_layers.append(nn.Dropout(p=0.5))
         self.predict = torch.nn.Sequential(*self.all_layers)
 
+        self.to(gl.device)
         super()._finalize()
 
     def forward(self, x: torch.Tensor):
@@ -2393,7 +2394,7 @@ def per_example_hess(A_t, Bh_t, bias=False):
     Hi = torch.einsum('onij,onkl->nijkl', Jb2, Jb2)
     Hmean3 = Hi.mean(dim=0)
     Hmean3 = Hmean3.reshape((out_dim * in_dim, out_dim * in_dim))
-    check_close(Hmean, Hmean3)
+    check_close(Hmean, Hmean3, atol=1e-6, rtol=1e-4)
 
     # flatten last two pairs of dimensions for form d^2/dvec dvec
     Hi = Hi.reshape(n, out_dim * in_dim, out_dim * in_dim)

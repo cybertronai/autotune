@@ -274,11 +274,13 @@ def test_lyapunov_lstsq():
     X = u.lyapunov_svd(A, 2 * A)
     # print(X)
     # print(torch.svd(X)[1])
-    # torch.set_default_dtype(torch.float32)
+    # torch.set_default_dtype(torch.float32)xfu
 
+
+module_path = os.path.dirname(os.path.abspath(__file__))
 
 def test_robust_svd():
-    mat = np.genfromtxt('test/gesvd_crash.txt', delimiter=",")
+    mat = np.genfromtxt(f'{module_path}/test/gesvd_crash.txt', delimiter=",")
     mat = torch.tensor(mat).type(torch.get_default_dtype())
     U, S, V = u.robust_svd(mat)
     mat2 = U @ torch.diag(S) @ V.T

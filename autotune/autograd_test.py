@@ -417,8 +417,8 @@ def test_hessian():
 
     # check first few per-example Hessians
     Hi, Hb_i = u.per_example_hess(A_t, Bh_t, bias=True)
-    u.check_close(H, Hi.mean(dim=0))
-    u.check_close(Hb, Hb_i.mean(dim=0), atol=2e-6, rtol=1e-5)
+    u.check_close(H, Hi.mean(dim=0), atol=1e-4, rtol=1e-6)
+    u.check_close(Hb, Hb_i.mean(dim=0), atol=2e-4, rtol=1e-5)
 
     for xi in range(5):
         loss = loss_fn(model(data[xi:xi + 1, ...]), targets[xi:xi + 1])
