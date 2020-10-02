@@ -119,85 +119,116 @@ def _setup_toy_model():
     Bs = u.from_numpy(Bs).float()
     model = PairedLookup(As, Bs)
     autograd_lib.register(model)
-    return As, Bs, model
+    return  u.ToyDataset(), model
 
 
 def test_toy_jacobian():
     """Test Jacobian propagation for toy problem."""
-    As, Bs, model = _setup_toy_model()
+    dataset, model = _setup_toy_model()
     d = 2
     AA = [torch.zeros(d, d)]
     BB = [torch.zeros(d, d)]
-    ABAB = [torch.zeros(d, d, d, d)]
+    X2 = [torch.zeros(d, d, d, d)]
+    X2X2 = [torch.zeros(d, d, d, d)]
 
     batch_size = 1
-    dataset = u.ToyDataset()
     assert len(dataset) % batch_size == 0
     train_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
     activations = {}
-    for a in As:
-        data = u.from_numpy(a)
-        data = data.unsqueeze(0)   # add batch dimension
+    n = 0
+    for data, _ in train_loader:
+        n += len(data)
         def save_activations(layer, A, _): activations[layer] = A
         with autograd_lib.module_hook(save_activations):
             output = model(data)
 
         def save_backprops(layer, _, B):
             A = activations[layer]
-            n = A.shape[0]
             AA[0] += torch.einsum("ni,nj->ij", A, A)
             BB[0] += torch.einsum("ni,nj->ij", B, B)
-            xs = torch.einsum("ni,nj->nij", A, B).reshape(n, -1)
-            ABAB[0] += torch.einsum("ni,nj,nk,nl->ijkl", A, B, A, B)
-            print(xs)
+            X2[0] += torch.einsum("ni,nj,nk,nl->ijkl", A, B, A, B)
+            X2X2[0] += torch.einsum("ni,nj,nk,nl,nk,nl,np,nq->ijpq", A, B, A, B, A, B, A, B)
         with autograd_lib.module_hook(save_backprops):
             autograd_lib.backward_jacobian(output)
 
-    n = len(As)
-    ABAB[0] /= n
-    AA[0] /= n
-    BB[0] /= n
+    X2 = X2[0] / n
+    X2X2 = X2X2[0] / n
+    AA = AA[0] / n
+    BB = BB[0] / n
+    X2 = X2.reshape(d**2, d**2)
+    X2X2 = X2X2.reshape(d ** 2, d ** 2)
+
     # XX'
-    truth = [[14/3, -4, 10, -(14/3)], [-4, 6, -(14/3), 4], [10, -(14/3), 83/  3, -10], [-(14/3), 4, -10, 14/3]]
-    u.check_equal(ABAB[0].reshape(d**2, d**2), truth)
+    truth = [[14/3, -4, 10, -(14/3)], [-4, 6, -(14/3), 4], [10, -(14/3), 83/3, -10], [-(14/3), 4, -10, 14/3]]
+    u.check_equal(X2, truth)
 
     # AA'\otimes BB'
     truth = [[22/3, -4, 22/3, -4], [-4, 4, -4, 4], [22/3, -4, 121/9, -(22/3)], [-4,   4, -(22/3), 22/3]]
-    u.check_equal(u.kron(AA[0], BB[0]), truth)
+    u.check_equal(u.kron(AA, BB), truth)
+
+    truth = [[1004/3, -168, 918, -(1004/3)], [-168, 168, -(1004/3),   168], [918, -(1004/3), 8129/3, -918], [-(1004/3), 168, -918, 1004/3]]
+    u.check_equal(X2X2, truth)
+
+    rho_sto = u.spectral_radius_real(X2X2@u.pinv(2*X2))
+    u.check_close(1/rho_sto, 0.02)
+
+    rho_det = u.spectral_radius_real(X2)/2
+    u.check_close(1/rho_det, 2*0.0271278)
 
 
-def test_offline_toy():
-    """Offline estimation of stochastic alpha and deterministic alpha"""
+def test_gauss12_offline():
+    """Gaussian 1, 2"""
 
-    As, Bs, model = _setup_toy_model()
     d = 2
     AA = [torch.zeros(d, d)]
     BB = [torch.zeros(d, d)]
-    ABAB = [torch.zeros(d, d, d, d)]
+    X2 = [torch.zeros(d, 1, d, 1)]
+    X2X2 = [torch.zeros(d, 1, d, 1)]
 
+    num_steps = 10
+    batch_size = 100000
+
+    # todo: add random rotation
+    sigma = torch.diag(torch.tensor([1., 2]))
+    u.seed_random(1)
+    m = torch.distributions.multivariate_normal.MultivariateNormal(torch.zeros(2), sigma)
+    model = u.SimpleFullyConnected2([2, 1])
+    autograd_lib.register(model)
     activations = {}
-    for a in As:
-        data = u.from_numpy(a)
-        data = data.unsqueeze(0)   # add batch dimension
+
+    n = 0
+    for i in range(num_steps):
+        data = m.sample([batch_size])
+
+        n += len(data)
         def save_activations(layer, A, _): activations[layer] = A
         with autograd_lib.module_hook(save_activations):
             output = model(data)
 
         def save_backprops(layer, _, B):
             A = activations[layer]
-            n = A.shape[0]
             AA[0] += torch.einsum("ni,nj->ij", A, A)
             BB[0] += torch.einsum("ni,nj->ij", B, B)
-            xs = torch.einsum("ni,nj->nij", A, B).reshape(n, -1)
-            ABAB[0] += torch.einsum("ni,nj,nk,nl->ijkl", A, B, A, B)
-            print(xs)
+            X2[0] += torch.einsum("ni,nj,nk,nl->ijkl", A, B, A, B)
+            X2X2[0] += torch.einsum("ni,nj,nk,nl,nk,nl,np,nq->ijpq", A, B, A, B, A, B, A, B)
         with autograd_lib.module_hook(save_backprops):
             autograd_lib.backward_jacobian(output)
 
-    n = len(As)
-    ABAB[0] /= n
+    X2 = X2[0] / n
+    X2 = X2.reshape(d, d)
+    u.check_close(X2, [[1, 0], [0, 2]], atol=0.004)
+    X2X2 = X2X2[0] / n
+    X2X2 = X2X2.reshape([d, d])
+    u.check_close(X2X2, [[5, 0], [0, 14]], atol=0.1)
+    AA = AA[0] / n
+    BB = BB[0] / n
 
+    rho_sto = u.spectral_radius_real(X2X2@u.pinv(2*X2))
+    u.check_close(1/rho_sto, 1/3.5)
+
+    rho_det = u.spectral_radius_real(X2)/2
+    u.check_close(1/rho_det, 1, atol=0.01)
 
 
 def main():

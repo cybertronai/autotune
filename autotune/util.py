@@ -1088,6 +1088,11 @@ def eig_real(mat: torch.Tensor) -> torch.Tensor:
     return re_part
 
 
+def spectral_radius_real(mat: torch.Tensor) -> torch.Tensor:
+    """Returns spectral radius of given matrix, assuming eigenvalues have no imaginary parts"""
+    return torch.max(eig_real(mat))
+
+
 def pinv_square_root(mat: torch.Tensor, eps=1e-4) -> torch.Tensor:
     nan_check(mat)
     u, s, v = robust_svd(mat)
