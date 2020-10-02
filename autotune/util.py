@@ -1369,6 +1369,7 @@ def seed_random(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
+
 class TinyMNIST(datasets.MNIST):
     """Custom-size MNIST autoencoder dataset for debugging. Generates data/target images with reduced resolution and 0
     channels. When provided with original 28, 28 resolution, generates standard 1 channel MNIST dataset.
@@ -2676,10 +2677,6 @@ def dot_product(A, B):
     return (A * B).sum()  # computes tr(AB')
 
 
-if __name__ == '__main__':
-    run_all_tests(sys.modules[__name__])
-
-
 # import matplotlib.pyplot as plt
 #
 #
@@ -2744,3 +2741,35 @@ def make_square(t: torch.Tensor):
 
 def trace(t: torch.Tensor):
     return make_square(t).trace()
+
+
+##### Utiliites for learning rates
+
+import torch.utils.data as data
+class ToyDataset(data.Dataset):
+    def __init__(self):
+        super().__init__()
+
+        avals, bvals = [[1, 3], [2, 1], [-1, -1]], [[3, -1], [1, -2], [-1, 1]]
+        self.data = torch.tensor(avals).float()
+        self.targets = torch.tensor(bvals).float()
+        self.data, self.targets = self.data.to(gl.device), self.targets.to(gl.device)
+
+    def __getitem__(self, index):
+        return self.data[index], self.targets[index]
+
+    def __len__(self):
+        return len(self.data)
+
+
+if __name__ == '__main__':
+    run_all_tests(sys.modules[__name__])
+
+    dataset = ToyDataset()
+    train_loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False)
+    train_iter = u.infinite_iter(train_loader)
+
+    for i in range(4):
+        data, targets = next(train_iter)
+        print(data, targets)
+
