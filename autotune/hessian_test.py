@@ -911,6 +911,9 @@ def _test_new_setup():
     with autograd_lib.module_hooks(accumulate_moments):
         pass
 
+    torch.set_default_dtype(torch.float32)
+
+
 
 if __name__ == '__main__':
     #  _test_factored_hessian()

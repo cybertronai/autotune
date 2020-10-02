@@ -58,6 +58,8 @@ _global_enforce_fresh_backprop: bool = False  # global switch to catch double ba
 _global_backprops_prefix = ''  # hooks save backprops to, ie param.{_backprops_prefix}backprops_list
 
 
+print("development version of autograd-lib")
+
 class LayerStats:
     # Some notation/background from https://docs.google.com/document/d/19Jmh4spbSAnAGX_eq7WSFPgLzrpJEhiZRpjX1jSYObo/edit#heading=h.9fi55aowtmgy
     sparsity: torch.Tensor
@@ -1127,6 +1129,8 @@ def _hack_update_gradient_norms_squared(layer: nn.Module, backprops: torch.Tenso
 
 
 def unregister():
+    print("development version of autograd-lib")
+
     # TODO(y): switch to tensor backward hooks
     for handle in global_settings.hook_handles:
         handle.remove()
@@ -1396,6 +1400,8 @@ def backward_jacobian(output, sampled=False, retain_graph=False) -> None:
 def backward_hessian(output, loss='CrossEntropy', sampled=False, retain_graph=False) -> None:
     assert loss in ('CrossEntropy',), f"Only CrossEntropy loss is supported, got {loss}"
     assert u.is_matrix(output)
+
+    # TODO(y): defer to backward_jacobian for LeastSquares loss
 
     # use Cholesky-like decomposition from https://www.wolframcloud.com/obj/yaroslavvb/newton/square-root-formulas.nb
     n, o = output.shape
