@@ -732,6 +732,39 @@ def lyapunov_spectral(A, B, cond=None):
     return X
 
 
+def sylvester(A, B, C, cond=None):
+    def to_real(evals):
+        re_part = evals[:, 0]  # extract real part
+        im_part = evals[:, 1]  # extract real part
+        if im_part.sum() / evals.max() > 1e-7:
+            print("Warning, eig_real is discarding non-zero imaginary parts")
+        return re_part
+
+    DA, T = torch.eig(A, eigenvectors=True)
+    DA = to_real(DA)
+
+    DB, U = torch.eig(B, eigenvectors=True)
+    DB = to_real(DB)
+
+    s = DA.unsqueeze(1) + DB.unsqueeze(0)
+    if cond is None:
+        cond = get_condition(DA.dtype)
+    cutoff = cond * max(max(DA), max(DB))
+
+    s = torch.where(s > cutoff, s, torch.tensor(0.).to(s.device))
+    s = torch.where(s > 0, 1 / s, s)
+    Y = (torch.inverse(T) @ C @ U) * s
+    return T @ Y @ torch.inverse(U)
+
+
+def test_sylvester():
+    A = u.from_numpy([[3, 2], [2, 3]]).float()
+    B = u.from_numpy([[5, 2], [2, 5]]).float()
+    C = u.from_numpy([[4, 0], [0, 4]]).float()
+    result = sylvester(A, B, C)
+    u.check_close(result, [[0.666667, -0.333333], [-0.333333, 0.666667]])
+
+
 def lyapunov_svd(A, C, rtol=1e-4, eps=1e-7, use_svd=False):
     """Solve AX+XA=C using SVD"""
 
@@ -1075,7 +1108,7 @@ def eig_real(mat: torch.Tensor) -> torch.Tensor:
     """Wrapper around torch.eig which discards imaginary values and returns result in descending order.
 
     Prints warning when non-zero imaginary parts detected, see "Criteria for the reality of matrix eigenvalues"
-    Products of symmetric matrices are not symmetric but have eigenvalues for no imaginary parts.
+    Products of symmetric matrices are not symmetric but have eigenvalues with no imaginary parts.
     https://link.springer.com/article/10.1007%2FBF01195188
     """
 
