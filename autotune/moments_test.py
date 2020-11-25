@@ -435,6 +435,7 @@ def accumulate_moments(train_loader, model, n=0):
     return moments
 
 
+#  https://www.wolframcloud.com/obj/yaroslavvb/newton/wicks-factoring.nb
 def test_integer():
     # test forward, backward on exact dataset
     d = 2
@@ -469,9 +470,16 @@ def test_integer():
     def dot(x, y):
         return torch.dot(x.flatten(), y.flatten())
 
-    def wicks_forward(X):
+    def wicks_forward_matrix(X):
         BA0 = u.outer(m.b, m.a)
         return m.BB @ X @ m.AA + (m.AB @ X @ m.AB).T + m.BA*dot(X, m.BA) - 2*u.outer(m.b, m.a)*dot(BA0, X)
+
+    def wicks_forward_indexed(X):
+        ein = torch.einsum
+        return (ein('ik,jl,ji->lk', m.AA, m.BB, X) +  # m.BB @ X @ m.AA,      kfac term
+                ein('il,jk,ji->lk', m.AB, m.BA, X) +   # (m.AB @ X @ m.AB).T, cross term
+                ein('ij,kl,ji->lk', m.AB, m.AB, X) -   # m.BA*dot(X, m.BA),   flat term
+                2 * ein('i,j,k,l,ji->lk', m.a, m.b, m.a, m.b, X))  # 2*u.outer(m.b, m.a)*dot(BA0, X)
 
     def kfac_backward(Y):
         return u.pinv(m.BB) @ Y @ u.pinv(m.AA)
@@ -480,7 +488,8 @@ def test_integer():
     u.check_equal(kfac_forward_indexed(X), [[10432, 14016], [2176, 2208]])
     u.check_equal(kfac_forward_matrix(X),  [[10432, 14016], [2176, 2208]])
 
-    u.check_equal(wicks_forward(X), [[37920, 36192], [4896, -432]])
+    u.check_equal(wicks_forward_matrix(X), [[37920, 36192], [4896, -432]])
+    u.check_equal(wicks_forward_indexed(X), [[37920, 36192], [4896, -432]])
 
     u.check_close(kfac_backward(kfac_forward(X)), X)
 
