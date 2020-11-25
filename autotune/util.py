@@ -934,13 +934,24 @@ def test_sylvester():
     u.check_close(result, [[0, -0.615385], [0.615385, 0]], atol=1e-7)
 
 
-#def tsylvester(A, B, C, cond=None):
-#    """Solve t-Sylvester equation: AX + X'B = C"""
+def tsylvester(A, B, C, cond=None):
+    """Solve t-Sylvester equation: AX + X'B = C"""
 
-#    g = A + B.T
-#    ig = u.pinv(g)
-#    h = (C + C.T) / 2
-#    C - A @ ig @ h - h @ ig.T @ B
+    g = A + B.T
+    ig = u.pinv(g)
+    h = (C + C.T) / 2
+    u2 = sylvester(A@ig, -ig.T @ B, C-A@ig@h - h@ ig.T @ B)
+    u2 = (u2 - u2.T) / 2
+    x = ig@(h+u2)
+    return x
+
+
+def test_tsylvester():
+    A = u.from_numpy([[4, 2], [2, 3]]).float()
+    B = u.from_numpy([[5, 2], [2, 5]]).float()
+    C = u.from_numpy([[4, 0], [0, 4]]).float()
+    result = tsylvester(A, B, C)
+    u.check_close(result, [[0.527473, -0.373626], [-0.186813, 0.686813]])
 
 
 def outer(x, y=None):
