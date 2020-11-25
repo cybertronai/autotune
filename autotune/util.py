@@ -712,6 +712,7 @@ def sym_erank(mat):
 
 
 def lyapunov_spectral(A, B, cond=None):
+    assert False, """Fix to use torch.where(abs(s) > 0, 1 / s, s) in pseudo-inverse part"""
     u.check_symmetric(A)
     u.check_symmetric(B)
 
@@ -730,39 +731,6 @@ def lyapunov_spectral(A, B, cond=None):
     # cancel small asymetries introduces by multiplication by small numbers
     X = (X + X.t()) / 2
     return X
-
-
-def sylvester(A, B, C, cond=None):
-    def to_real(evals):
-        re_part = evals[:, 0]  # extract real part
-        im_part = evals[:, 1]  # extract real part
-        if im_part.sum() / evals.max() > 1e-7:
-            print("Warning, eig_real is discarding non-zero imaginary parts")
-        return re_part
-
-    DA, T = torch.eig(A, eigenvectors=True)
-    DA = to_real(DA)
-
-    DB, U = torch.eig(B, eigenvectors=True)
-    DB = to_real(DB)
-
-    s = DA.unsqueeze(1) + DB.unsqueeze(0)
-    if cond is None:
-        cond = get_condition(DA.dtype)
-    cutoff = cond * max(max(DA), max(DB))
-
-    s = torch.where(s > cutoff, s, torch.tensor(0.).to(s.device))
-    s = torch.where(s > 0, 1 / s, s)
-    Y = (torch.inverse(T) @ C @ U) * s
-    return T @ Y @ torch.inverse(U)
-
-
-def test_sylvester():
-    A = u.from_numpy([[3, 2], [2, 3]]).float()
-    B = u.from_numpy([[5, 2], [2, 5]]).float()
-    C = u.from_numpy([[4, 0], [0, 4]]).float()
-    result = sylvester(A, B, C)
-    u.check_close(result, [[0.666667, -0.333333], [-0.333333, 0.666667]])
 
 
 def lyapunov_svd(A, C, rtol=1e-4, eps=1e-7, use_svd=False):
@@ -799,6 +767,8 @@ def deleteme():
 def lyapunov_svd2(A, C, rtol=1e-4, eps=1e-7, use_svd=False):
     """Solve AX+XA=C using SVD"""
 
+    assert False, "Possible bug in factor>cutoff part, modify to use abs"
+
     # This method doesn't work for singular matrices, so regularize it
     # TODO: can optimize performance by reusing eigenvalues from regularization computations
     # A = regularize_mat(A, eps)
@@ -828,6 +798,8 @@ def lyapunov_svd2(A, C, rtol=1e-4, eps=1e-7, use_svd=False):
 def lyapunov_truncated(A, C, use_svd=False, top_k=None, check_error=False):
     """Truncated solution to AX+XA=C. top_k specified how many dimensions of A to use. If None, use threshold for
     acceptable condition."""
+
+    assert False, "Possible bug in factor>cutoff part, modify to use abs"
 
     rankA = u.rank(A)
     rankC = u.rank(C)
@@ -884,6 +856,8 @@ def truncated_lyapunov_rho(A, C):
     erank: effective rank of X
     ."""
 
+    assert False, "Possible bug in factor>cutoff part, modify to use abs"
+
     C = 2 * C  # to center spectrum at 1
     assert A.shape[0] == A.shape[1]
     assert len(A.shape) == 2
@@ -917,6 +891,56 @@ def truncated_lyapunov_rho(A, C):
     spectrum = filter_evals(S)
 
     return rho, erank, spectrum
+
+
+def sylvester(A, B, C, cond=None):
+    """Solve Sylvester equation: AX + XB = C"""
+
+    def to_real(evals):
+        re_part = evals[:, 0]  # extract real part
+        im_part = evals[:, 1]  # extract real part
+        if im_part.sum() / evals.max() > 1e-7:
+            print("Warning, eig_real is discarding non-zero imaginary parts")
+        return re_part
+
+    DA, T = torch.eig(A, eigenvectors=True)
+    DA = to_real(DA)
+
+    DB, U = torch.eig(B, eigenvectors=True)
+    DB = to_real(DB)
+
+    s = DA.unsqueeze(1) + DB.unsqueeze(0)
+    if cond is None:
+        cond = get_condition(DA.dtype)
+    cutoff = cond * max(max(DA), max(DB))
+
+    s = torch.where(abs(s) > cutoff, s, torch.tensor(0.).to(s.device))
+    s = torch.where(s != 0, 1 / s, s)
+    Y = (torch.inverse(T) @ C @ U) * s
+    return T @ Y @ torch.inverse(U)
+
+
+def test_sylvester():
+    A = u.from_numpy([[3, 2], [2, 3]]).float()
+    B = u.from_numpy([[5, 2], [2, 5]]).float()
+    C = u.from_numpy([[4, 0], [0, 4]]).float()
+    result = sylvester(A, B, C)
+    u.check_close(result, [[0.666667, -0.333333], [-0.333333, 0.666667]])
+
+    A = u.from_numpy([[3 / 7, 1 / 28], [1 / 14, 19 / 56]])
+    B = u.from_numpy([[-(4 / 7), 1 / 14], [1 / 28, -(37 / 56)]])
+    C = u.from_numpy([[0, 1 / 7], [-(1/7), 0]])
+    result = sylvester(A, B, C)
+    u.check_close(result, [[0, -0.615385], [0.615385, 0]], atol=1e-7)
+
+
+#def tsylvester(A, B, C, cond=None):
+#    """Solve t-Sylvester equation: AX + X'B = C"""
+
+#    g = A + B.T
+#    ig = u.pinv(g)
+#    h = (C + C.T) / 2
+#    C - A @ ig @ h - h @ ig.T @ B
 
 
 def outer(x, y=None):
@@ -2782,7 +2806,6 @@ def trace(t: torch.Tensor):
 
 
 ##### Utiliites for learning rates
-
 import torch.utils.data as data
 class ToyDataset(data.Dataset):
     def __init__(self):
