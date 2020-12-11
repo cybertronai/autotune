@@ -101,6 +101,29 @@ def linalg_bench():
         H = X @ X.T
         S = Y @ Y.T
 
+        HH = torch.tensor(H)
+        with timeit(f"torch.symeig"):
+            result = torch.symeig(HH, eigenvectors=True)
+            #print(result[0, 0])
+
+
+        HH = torch.tensor(H)
+        with timeit(f"torch.eig"):
+            result = torch.eig(HH, eigenvectors=True)
+            #print(result[0, 0])
+
+        with timeit(f"numpy.eigh"):
+            result = scipy.linalg.eigh(H)
+
+        with timeit(f"numpy.eig"):
+            result = scipy.linalg.eig(H)
+
+        HH = torch.tensor(H)
+        with timeit(f"scipy.linalg.schur"):
+            result = scipy.linalg.schur(H)
+            #print(result[0, 0])
+        # sys.exit()
+
         with timeit(f"linalg.solve_lyapunov"):
             result = scipy.linalg.solve_lyapunov(H, S)
             #print(result[0,0])

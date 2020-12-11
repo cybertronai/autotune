@@ -749,7 +749,7 @@ def compute_stats(model, attr_name='stats', factored=False, sigma_centering=True
 
             # todo: Lyapunov has to be redone
             with u.timeit(f'rho-{i}'):
-                s.rho, lyap_erank, L_evals = u.truncated_lyapunov_rho(H, sigma)
+                s.rho, lyap_erank, L_evals = u.broken_truncated_lyapunov_rho(H, sigma)
                 s.step_div_1_adjusted = s.step_div_1 / s.rho
 
             with u.timeit(f"batch-{i}"):

@@ -250,6 +250,7 @@ def test_full_hessian():
     activations = {}
 
     hess = defaultdict(float)
+    grad = defaultdict(float)
 
     def save_activations(layer, a, _):
         activations[layer] = a
@@ -266,7 +267,10 @@ def test_full_hessian():
         do = B.shape[1]
 
         BA = torch.einsum("nl,ni->nli", B, A)
-        hess[layer] += torch.einsum('nli,nkj->likj', BA, BA)
+        # hess[layer] += torch.einsum('nli,nkj->likj', BA, BA)
+        u.check_equal(torch.einsum('nl,nk,nj,ni->lkji', B, A, B, A), torch.einsum('nli,nkj->likj', BA, BA))
+        hess[layer] += torch.einsum('nl,nk,nj,ni->lkji', B, A, B, A)
+        grad[layer] += torch.einsum("nl,ni->li", B, A)
 
     with autograd_lib.module_hook(compute_hess):
         autograd_lib.backprop_identity(Y, retain_graph=True)
@@ -274,7 +278,13 @@ def test_full_hessian():
     # check against autograd
     hess_autograd = u.hessian(loss, model.layers[0].weight)
     hess0 = hess[model.layers[0]]
+    grad0 = grad[model.layers[0]]
     u.check_equal(hess_autograd, hess0)
+
+    # check Hessian-vector products
+    hvp1 = torch.einsum('lkji,ji->lk', hess0, grad0)
+    hvp2 = hess0.reshape(4, 4) @ grad0.reshape(4)
+    u.check_equal(hvp1.flatten(), hvp2)
 
     # check against manual solution
     u.check_equal(hess0.reshape(4, 4),

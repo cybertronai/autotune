@@ -170,11 +170,12 @@ def test_toy_jacobian():
     truth = [[1004/3, -168, 918, -(1004/3)], [-168, 168, -(1004/3),   168], [918, -(1004/3), 8129/3, -918], [-(1004/3), 168, -918, 1004/3]]
     u.check_equal(X2X2, truth)
 
-    rho_sto = u.spectral_radius_real(X2X2@u.pinv(2*X2))
-    u.check_close(1/rho_sto, 0.02)
+    def pinv(mat): return torch.pinverse(mat, rcond=1e-6)
+    rho_sto = u.spectral_radius_real(X2X2@pinv(2*X2))
+    u.check_close(1/rho_sto, 0.02, atol=1e-7, rtol=2e-5)
 
     rho_det = u.spectral_radius_real(X2)/2
-    u.check_close(1/rho_det, 2*0.0271278)
+    u.check_close(1/rho_det, 2*0.0271278, atol=1e-7, rtol=2e-5)
 
 
 def test_gauss12_offline():
@@ -476,10 +477,10 @@ def test_integer():
 
     def wicks_forward_indexed(X):
         ein = torch.einsum
-        return (ein('ik,jl,ji->lk', m.AA, m.BB, X) +  # m.BB @ X @ m.AA,      kfac term
-                ein('il,jk,ji->lk', m.AB, m.BA, X) +   # (m.AB @ X @ m.AB).T, cross term
-                ein('ij,kl,ji->lk', m.AB, m.AB, X) -   # m.BA*dot(X, m.BA),   flat term
-                2 * ein('i,j,k,l,ji->lk', m.a, m.b, m.a, m.b, X))  # 2*u.outer(m.b, m.a)*dot(BA0, X)
+        return (ein('ik,jl,ji->lk', m.AA, m.BB, X)  # m.BB @ X @ m.AA,      kfac term
+                + ein('il,jk,ji->lk', m.AB, m.BA, X)   # (m.AB @ X @ m.AB).T, cross term
+                + ein('ij,kl,ji->lk', m.AB, m.AB, X)   # m.BA*dot(X, m.BA),   flat term
+                - 2 * ein('i,j,k,l,ji->lk', m.a, m.b, m.a, m.b, X))  # 2*u.outer(m.b, m.a)*dot(BA0, X)
 
     def kfac_backward(Y):
         return u.pinv(m.BB) @ Y @ u.pinv(m.AA)
@@ -492,9 +493,6 @@ def test_integer():
     u.check_equal(wicks_forward_indexed(X), [[37920, 36192], [4896, -432]])
 
     u.check_close(kfac_backward(kfac_forward(X)), X)
-
-
-
 
 
 def main():

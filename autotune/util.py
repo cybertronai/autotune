@@ -712,7 +712,6 @@ def sym_erank(mat):
 
 
 def lyapunov_spectral(A, B, cond=None):
-    assert False, """Fix to use torch.where(abs(s) > 0, 1 / s, s) in pseudo-inverse part"""
     u.check_symmetric(A)
     u.check_symmetric(B)
 
@@ -722,9 +721,9 @@ def lyapunov_spectral(A, B, cond=None):
     cutoff = cond * max(s)
     s = torch.where(s > cutoff, s, torch.tensor(0.).to(s.device))
 
-    C = U.t() @ B @ U    # TODO(y): throw away eigenvectors corresponding to discarded evals. U=U[:num_eigs]
+    C = U.t() @ B @ U  # TODO(y): throw away eigenvectors corresponding to discarded evals. U=U[:num_eigs]
     s = s.unsqueeze(1) + s.unsqueeze(0)
-    si = torch.where(s > 0, 1 / s, s)
+    si = torch.where(abs(s) > 0, 1 / s, s)
     Y = C * si
     X = U @ Y @ U.t()
 
@@ -849,14 +848,15 @@ def lyapunov_lstsq(A, C):
 
 
 # TODO(y): reuse logic from above
-def truncated_lyapunov_rho(A, C):
+def broken_truncated_lyapunov_rho(A, C):
     """Returns quantities related to spectrum of solution to AX+XA=2C
 
+    This implementation fails for non-positive semidefinite matrices, because of S > cutoff, modify to use abs(S) > cutoff"
     rho: measure of misfit
     erank: effective rank of X
     ."""
 
-    assert False, "Possible bug in factor>cutoff part, modify to use abs"
+    # assert False, "Possible bug in factor>cutoff part, modify to use abs"
 
     C = 2 * C  # to center spectrum at 1
     assert A.shape[0] == A.shape[1]
@@ -893,6 +893,7 @@ def truncated_lyapunov_rho(A, C):
     return rho, erank, spectrum
 
 
+# Implement equation solvers, take test cases from https://www.wolframcloud.com/obj/yaroslavvb/newton/wicks-factoring.nb
 def sylvester(A, B, C, cond=None):
     """Solve Sylvester equation: AX + XB = C"""
 
@@ -924,25 +925,25 @@ def test_sylvester():
     A = u.from_numpy([[3, 2], [2, 3]]).float()
     B = u.from_numpy([[5, 2], [2, 5]]).float()
     C = u.from_numpy([[4, 0], [0, 4]]).float()
-    result = sylvester(A, B, C)
-    u.check_close(result, [[0.666667, -0.333333], [-0.333333, 0.666667]])
+    X = sylvester(A, B, C)
+    u.check_close(A @ X + X @ B - C, 0, atol=1e-6)
+    u.check_close(X, [[0.666667, -0.333333], [-0.333333, 0.666667]])
 
     A = u.from_numpy([[3 / 7, 1 / 28], [1 / 14, 19 / 56]])
     B = u.from_numpy([[-(4 / 7), 1 / 14], [1 / 28, -(37 / 56)]])
-    C = u.from_numpy([[0, 1 / 7], [-(1/7), 0]])
-    result = sylvester(A, B, C)
-    u.check_close(result, [[0, -0.615385], [0.615385, 0]], atol=1e-7)
+    C = u.from_numpy([[0, 1 / 7], [-(1 / 7), 0]])
+    X = sylvester(A, B, C)
+    u.check_close(X, [[0, -0.615385], [0.615385, 0]], atol=1e-7)
 
 
-def tsylvester(A, B, C, cond=None):
+def tsylvester(A, B, C):
     """Solve t-Sylvester equation: AX + X'B = C"""
-
     g = A + B.T
-    ig = u.pinv(g)
+    ig = torch.pinverse(g)
     h = (C + C.T) / 2
-    u2 = sylvester(A@ig, -ig.T @ B, C-A@ig@h - h@ ig.T @ B)
+    u2 = sylvester(A @ ig, -ig.T @ B, C - A @ ig @ h - h @ ig.T @ B)
     u2 = (u2 - u2.T) / 2
-    x = ig@(h+u2)
+    x = ig @ (h + u2)
     return x
 
 
@@ -950,8 +951,121 @@ def test_tsylvester():
     A = u.from_numpy([[4, 2], [2, 3]]).float()
     B = u.from_numpy([[5, 2], [2, 5]]).float()
     C = u.from_numpy([[4, 0], [0, 4]]).float()
-    result = tsylvester(A, B, C)
-    u.check_close(result, [[0.527473, -0.373626], [-0.186813, 0.686813]])
+    X = tsylvester(A, B, C)
+    u.check_close(A @ X + X.T @ B - C, 0, atol=1e-6)
+
+    # stability check against https://www.wolframcloud.com/obj/yaroslavvb/newton/wicks-factoring.nb
+    u.check_close(X, [[0.527473, -0.373626], [-0.186813, 0.686813]])
+
+
+def generalized_tsylvester(a, b, c, d, e):
+    """Solve generalized T-Sylvester BXA+CX'D=E by reducing to T-Sylvester equation"""
+    ia = torch.pinverse(a)
+    ic = torch.pinverse(c)
+    return tsylvester(ic @ b, d @ ia, ic @ e @ ia)
+
+
+def test_generalyzed_tsylvester():
+    A = u.from_numpy([[4, 2], [2, 3]]).float()
+    B = u.from_numpy([[5, 2], [2, 5]]).float()
+    C = u.from_numpy([[4, 0], [0, 4]]).float()
+    D = A
+    E = B
+    X = generalized_tsylvester(A, B, C, D, E)
+    u.check_close(B @ X @ A + C @ X.T @ D - E, 0, atol=1e-6)
+    u.check_close(X, [[0.194481, 0.0123377], [-0.187662, 0.219481]], atol=1e-6)
+
+    # integer example
+    AA = u.from_numpy([[80., 24], [24, 72]])
+    BB = u.from_numpy([[92., -4], [-4, 8]])
+    BA = u.from_numpy([[52., 72], [16, -12]])
+    X0 = u.from_numpy([[1, 2], [3, 4.]])
+    Y = BB @ X0 @ AA + BA @ X0.T @ BA
+    u.check_close(Y, [[27728, 22800], [1760, 1632.]])
+
+    X = generalized_tsylvester(AA, BB, BA, BA, Y)
+    u.check_close(X, [[1, 2], [3, 4]])
+
+
+def dot(a, b): return a.flatten().dot(b.flatten())
+
+
+def generalized_tsylvester_rank1(a, b, c, d, u, y):
+    """Solve generalized T-Sylvester equation with symmetric rank-1 correction:
+    BXA + CX'D + Utr (X'U) = Y
+    """
+
+    divAU = generalized_tsylvester(a, b, c, d, u)
+    divAX = generalized_tsylvester(a, b, c, d, y)
+    mult = dot(u, divAX) / (1 + dot(u, divAU))
+    X = divAX - mult * divAU
+    return X
+
+
+def test_generalized_tsylvester_rank1():
+    A = u.from_numpy([[4, 2], [2, 3]]).float()
+    B = u.from_numpy([[5, 2], [2, 5]]).float()
+    C = u.from_numpy([[4, 0], [0, 4]]).float()
+    D = A
+    U = B
+    Y = C
+    X = generalized_tsylvester_rank1(A, B, C, D, U, Y)
+    error = B @ X @ A + C @ X.T @ D + U * dot(X, U) - Y
+    u.check_close(torch.norm(error), 0, atol=1e-5)
+
+    AA = u.from_numpy([[80., 24], [24, 72]])
+    BB = u.from_numpy([[92., -4], [-4, 8]])
+    BA = u.from_numpy([[52., 72], [16, -12]])
+    Y = u.from_numpy([[37920., 36912], [4896, -720]])
+    X = generalized_tsylvester_rank1(AA, BB, BA, BA, BA, Y)
+    u.check_close(X, [[1, 2], [3, 4]])
+
+
+def generalized_tsylvester_rank2(a, b, c, d, u, v, y):
+    """Solve generalized T-Sylvester equation with symmetric rank-2 correction:
+     BXA + CX'D + Utr(X'U) - V tr(X'V) = Y
+     """
+
+    divAU = generalized_tsylvester_rank1(a, b, c, d, u, v)
+    divAX = generalized_tsylvester_rank1(a, b, c, d, u, y)
+    mult = dot(v, divAX) / (1 - dot(v, divAU))
+    X = divAX + mult * divAU
+    return X
+
+
+def test_generalized_tsylvester_rank2():
+    A = u.from_numpy([[4, 2], [2, 3]]).float()
+    B = u.from_numpy([[5, 2], [2, 5]]).float()
+    C = u.from_numpy([[4, 0], [0, 4]]).float()
+    D = A
+    U = B
+    V = C
+    Y = C
+    X = generalized_tsylvester_rank2(A, B, C, D, U, V, Y)
+    error = B @ X @ A + C @ X.T @ D + U * dot(X, U) - V * dot(X, V) - Y
+    u.check_close(torch.norm(error), 0, atol=1e-4)
+
+    AA = u.from_numpy([[1.83594, 1.09983, 0.999175], [1.09983, 1.74923, 1.20888], [0.999175, 1.20888, 1.48607]])
+    BB = u.from_numpy([[1.4659, 1.08034, 0.910838], [1.08034, 1.59386, 0.995559], [0.910838, 0.995559, 1.53567]])
+    BA = u.from_numpy([[0.866753, 1.14879, 1.11141], [0.809443, 0.990439, 1.09661], [0.965865, 0.90189, 0.912142]])
+    BA0 = u.from_numpy([[1.41421, 1.41421, 1.41421], [1.41421, 1.41421, 1.41421], [1.41421, 1.41421, 1.41421]])
+    Y = u.from_numpy([[0.718651, 0.0868673, -0.414943], [1.06205, 0.455515, -0.0225735], [1.85086, 0.95267, 0.281521]])
+    X = u.from_numpy([[0.0811524, -0.0716398, -0.443607], [0.0968046, 0.139093, 0.0840564], [0.725787, 0.333468, -0.452901]])
+    error = BB @ X @ AA + BA @ X.T @ BA + BA * dot(X, BA) - BA0 * dot(X, BA0) - Y
+    u.check_close(error, 0, atol=2e-5)
+    X = generalized_tsylvester_rank2(AA, BB, BA, BA, BA, BA0, Y)
+    error = BB @ X @ AA + BA @ X.T @ BA + BA * dot(X, BA) - BA0 * dot(X, BA0) - Y
+    u.check_close(error, 0, atol=2e-5)
+
+    AA = u.from_numpy([[80., 24], [24, 72]])
+    BB = u.from_numpy([[92., -4], [-4, 8]])
+    BA = u.from_numpy([[52., 72], [16, -12]])
+    A = u.from_numpy([0., 6])
+    B = u.from_numpy([5., -2])
+    BA0 = math.sqrt(2.) * u.outer(B, A)
+    Y = u.from_numpy([[37920., 36192], [4896, -432]])
+    X = generalized_tsylvester_rank2(AA, BB, BA, BA, BA, BA0, Y)
+    u.check_close(X, [[1, 2], [3, 4]])
 
 
 def outer(x, y=None):
@@ -1115,7 +1229,11 @@ def hessian(y: torch.Tensor, x: torch.Tensor):
     return jacobian(jacobian(y, x, create_graph=True), x)
 
 
-def pinv(mat: torch.Tensor, cond=None) -> torch.Tensor:
+def pinv(mat: torch.Tensor) -> torch.Tensor:
+    return torch.pinverse(mat, rcond=1e-5)
+
+
+def old_pinv(mat: torch.Tensor, cond=None) -> torch.Tensor:
     """Computes pseudo-inverse of mat, treating eigenvalues below eps as 0.
 
         cond : float or None
@@ -1127,12 +1245,20 @@ def pinv(mat: torch.Tensor, cond=None) -> torch.Tensor:
     # Take cut-off logic from scipy
     # https://github.com/ilayn/scipy/blob/0f4c793601ecdd74fc9826ac02c9b953de99403a/scipy/linalg/basic.py#L1307
 
-    # assert False, "Disabled due to numerical instability, see test_pinverse"
+    #    assert False, "broken, see test_pinv for non-symmetric breakage, test_pinverse for numerical stability problem"
     nan_check(mat)
     u, s, v = robust_svd(mat)
+
+    # 1e3 * 1.1920929e-07 vs 1e6 * 2.220446049250313e-16
     if cond in [None, -1]:
         cond = torch.max(s) * max(mat.shape) * np.finfo(np.dtype('float32')).eps
     rank = torch.sum(s > cond)
+
+    neg_rank = torch.sum(s < 0)
+    assert neg_rank == 0, "Doesn't work for non-positive definite matrices"
+
+    # TODO, make work for indefinite matrices
+    # u.pinv(tensor([[ 52.,  72.], [ 16., -12.]])) doesn't match torch.pinverse(...)
 
     u = u[:, :rank]
     u /= s[:rank]
@@ -1440,7 +1566,6 @@ def seed_random(seed: int) -> None:
     np.random.seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
-
 
 
 class TinyMNIST(datasets.MNIST):
@@ -2096,7 +2221,8 @@ def log_spectrum(tag, vals: torch.Tensor, loglog=True, discard_tiny=False, disca
 
     fig, ax = plt.subplots()
     x, y = to_numpys(x, y)
-    markerline, stemlines, baseline = ax.stem(x, y, markerfmt='bo', basefmt='r-', bottom=min(y), use_line_collection=True)
+    markerline, stemlines, baseline = ax.stem(x, y, markerfmt='bo', basefmt='r-', bottom=min(y),
+                                              use_line_collection=True)
     plt.setp(baseline, color='r', linewidth=2)
     gl.event_writer.add_figure(tag=tag, figure=fig, global_step=gl.get_global_step())
 
@@ -2808,7 +2934,7 @@ def divide_attributes(d: dict, n):
 def make_square(t: torch.Tensor):
     """Turns tensor into square matrix."""
     rows = int(math.sqrt(t.numel()))
-    assert rows*rows == t.numel(), "Tensor can't be turned into square matrix"
+    assert rows * rows == t.numel(), "Tensor can't be turned into square matrix"
     return t.reshape(rows, rows)
 
 
@@ -2818,6 +2944,8 @@ def trace(t: torch.Tensor):
 
 ##### Utiliites for learning rates
 import torch.utils.data as data
+
+
 class ToyDataset(data.Dataset):
     def __init__(self):
         super().__init__()
@@ -2834,14 +2962,18 @@ class ToyDataset(data.Dataset):
         return len(self.data)
 
 
-if __name__ == '__main__':
-    run_all_tests(sys.modules[__name__])
-
+def test_toy_dataset():
     dataset = ToyDataset()
     train_loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False)
     train_iter = u.infinite_iter(train_loader)
 
+    data, targets = None, None
     for i in range(4):
         data, targets = next(train_iter)
-        print(data, targets)
+    u.check_equal(data, u.from_numpy([[1., 3.]]))
+    u.check_equal(targets, u.from_numpy([[3., -1.]]))
+
+
+if __name__ == '__main__':
+    run_all_tests(sys.modules[__name__])
 

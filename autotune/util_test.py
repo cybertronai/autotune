@@ -131,7 +131,13 @@ def test_symsqrt():
 
 
 @pytest.mark.skip(reason="fails, need to redo pinv implementation")
-def atest_pinv():
+def test_pinv():
+    mat = u.from_numpy([[52., 72.], [16., -12.]])
+    u.check_close(u.pinv(mat), torch.pinverse(mat))
+
+
+@pytest.mark.skip(reason="fails, need to redo pinv implementation")
+def test_pinv2():
     a = torch.tensor([[2., 7, 9], [1, 9, 8], [2, 7, 5]])
     b = torch.tensor([[6., 6, 1], [10, 7, 7], [7, 10, 10]])
     C = u.Kron(a, b)
@@ -159,7 +165,7 @@ def atest_pinv():
     u.check_close(C.pinv(), Ci, rtol=1e-5, atol=1e-6)
 
 
-def test_pinverse():
+def test_pinv3():
 
     def subtest(dtype):
         # {{11041, 13359, 15023, 18177}, {13359, 16165, 18177, 21995}, {15023, 18177, 20453, 24747}, {18177, 21995, 24747, 29945}}
@@ -185,6 +191,9 @@ def test_pinverse():
 
 def test_l2_norm():
     mat = torch.tensor([[1, 1], [0, 1]]).float()
+    #    print(u.l2_norm(ii).dtype)
+
+    print('----', torch.get_default_dtype())
     u.check_equal(u.l2_norm(mat), 0.5 * (1 + math.sqrt(5)))
     ii = torch.eye(5)
     u.check_equal(u.l2_norm(ii), 1)
@@ -242,6 +251,7 @@ def test_symsqrt_neg():
     u.check_close(mat, smat @ smat)
 
 
+@pytest.mark.skip(reason="not finished")
 def test_truncated_lyapunov():
     d = 100
     n = 1000
@@ -255,6 +265,7 @@ def test_truncated_lyapunov():
     u.check_close(u.erank(X), shared_rank, rtol=1e-2)
 
 
+@pytest.mark.skip(reason="not finished")
 def test_lyapunov_lstsq():
     torch.manual_seed(1)
     torch.set_default_dtype(torch.float64)
@@ -274,11 +285,13 @@ def test_lyapunov_lstsq():
     X = u.lyapunov_svd(A, 2 * A)
     # print(X)
     # print(torch.svd(X)[1])
-    # torch.set_default_dtype(torch.float32)xfu
+    torch.set_default_dtype(torch.float32)
 
 
 module_path = os.path.dirname(os.path.abspath(__file__))
 
+
+@pytest.mark.skip(reason="not finished")
 def test_robust_svd():
     mat = np.genfromtxt(f'{module_path}/test/gesvd_crash.txt', delimiter=",")
     mat = torch.tensor(mat).type(torch.get_default_dtype())
@@ -398,6 +411,9 @@ def test_kron():
     x = torch.rand((d1*d2))
     #    print((u.vec(A@X@B)-u.kron(B.t(), A) @ x).norm())
 
+    torch.set_default_dtype(torch.float32)
+
+
 
 def test_contiguous():
 
@@ -418,5 +434,5 @@ if __name__ == '__main__':
     # test_robust_svd()
     # test_contiguous()
     #    test_kron()
-    test_pinverse()
-#    u.run_all_tests(sys.modules[__name__])
+    # test_pinverse()
+    u.run_all_tests(sys.modules[__name__])

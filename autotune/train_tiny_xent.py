@@ -198,7 +198,7 @@ def main():
                         s.regret_gradient = loss_direction(g, s.step_openai)
 
                     with u.timeit(f'rho-{i}'):
-                        s.rho, s.lyap_erank, lyap_evals = u.truncated_lyapunov_rho(H, sigma)
+                        s.rho, s.lyap_erank, lyap_evals = u.broken_truncated_lyapunov_rho(H, sigma)
                         s.step_div_1_adjusted = s.step_div_1/s.rho
 
                     with u.timeit(f"batch-{i}"):
